@@ -18,6 +18,16 @@ out/
 .env.local
 .env.*.local
 *.env
+backend/.env
+frontend/.env
+agent-service/.env
+workers/.env
+
+# Sensitive configuration files (keep .example versions)
+application-local.yml
+application-dev.yml
+**/secrets.yml
+**/credentials.yml
 
 # IDE
 .vscode/
