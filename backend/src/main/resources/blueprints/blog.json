@@ -1,0 +1,83 @@
+{
+  "id": "personal-blog",
+  "name": "个人博客系统",
+  "description": "简约风格的个人博客系统，支持Markdown文章发布、标签分类、评论互动和关于我页面。",
+  "category": "内容媒体",
+  "subcategory": "博客CMS",
+  "keywords": ["博客", "文章", "CMS", "日记", "Markdown", "写作"],
+  "complexity": "SIMPLE",
+  "referenceUrl": "https://wordpress.org",
+  "constraints": {
+    "techStack": "SpringBoot 3.x + MyBatisPlus",
+    "database": "PostgreSQL",
+    "auth": "Admin Only (Single User) or JWT",
+    "apiStyle": "RESTful"
+  },
+  "schema": [
+    {
+      "tableName": "users",
+      "comment": "管理员用户表",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "username", "type": "VARCHAR(50)", "constraints": "NOT NULL UNIQUE"},
+        {"name": "password", "type": "VARCHAR(100)", "constraints": "NOT NULL"},
+        {"name": "nickname", "type": "VARCHAR(50)"},
+        {"name": "email", "type": "VARCHAR(100)"}
+      ]
+    },
+    {
+      "tableName": "posts",
+      "comment": "文章表",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "title", "type": "VARCHAR(200)", "constraints": "NOT NULL"},
+        {"name": "slug", "type": "VARCHAR(200)", "constraints": "UNIQUE", "comment": "URL友好的别名"},
+        {"name": "summary", "type": "VARCHAR(500)", "comment": "文章摘要"},
+        {"name": "content", "type": "TEXT", "constraints": "NOT NULL", "comment": "Markdown原始内容"},
+        {"name": "html_content", "type": "TEXT", "comment": "渲染后的HTML(可选)"},
+        {"name": "status", "type": "VARCHAR(20)", "constraints": "DEFAULT 'DRAFT'", "comment": "状态: DRAFT, PUBLISHED"},
+        {"name": "view_count", "type": "INT", "constraints": "DEFAULT 0"},
+        {"name": "published_at", "type": "TIMESTAMP"},
+        {"name": "created_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"},
+        {"name": "updated_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"}
+      ]
+    },
+    {
+      "tableName": "tags",
+      "comment": "标签表",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "name", "type": "VARCHAR(50)", "constraints": "NOT NULL UNIQUE"}
+      ]
+    },
+    {
+      "tableName": "post_tags",
+      "comment": "文章标签关联表",
+      "columns": [
+        {"name": "post_id", "type": "BIGINT", "constraints": "NOT NULL"},
+        {"name": "tag_id", "type": "BIGINT", "constraints": "NOT NULL"},
+        {"name": "PRIMARY KEY", "type": "COMPOSITE", "columns": ["post_id", "tag_id"]}
+      ]
+    },
+    {
+      "tableName": "comments",
+      "comment": "评论表",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "post_id", "type": "BIGINT", "constraints": "NOT NULL"},
+        {"name": "nickname", "type": "VARCHAR(50)", "constraints": "NOT NULL", "comment": "访客昵称"},
+        {"name": "email", "type": "VARCHAR(100)", "comment": "访客邮箱"},
+        {"name": "content", "type": "VARCHAR(1000)", "constraints": "NOT NULL"},
+        {"name": "is_approved", "type": "BOOLEAN", "constraints": "DEFAULT TRUE", "comment": "是否审核通过"},
+        {"name": "created_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"}
+      ]
+    }
+  ],
+  "features": [
+    "文章发布与Markdown编辑",
+    "文章列表分页与搜索",
+    "标签管理与标签云展示",
+    "访客评论功能",
+    "关于我页面内容管理"
+  ]
+}

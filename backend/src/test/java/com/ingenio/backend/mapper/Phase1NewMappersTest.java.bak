@@ -1,0 +1,294 @@
+package com.ingenio.backend.mapper;
+
+import com.ingenio.backend.e2e.BaseE2ETest;
+import com.ingenio.backend.entity.*;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Phase 1新增Mapper集成测试
+ *
+ * 验证内容：
+ * - 7个新表的Mapper自动注入
+ * - 基本CRUD操作（Create, Read）
+ * - 数据持久化和查询
+ *
+ * 测试策略：
+ * - 继承BaseE2ETest，使用TestContainers PostgreSQL
+ * - 零Mock策略：真实数据库操作
+ * - 事务回滚：每个测试后自动清理数据
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+@Transactional
+class Phase1NewMappersTest extends BaseE2ETest {
+
+    @Autowired(required = false)
+    private UserMapper userMapper;
+
+    @Autowired(required = false)
+    private MultimodalInputMapper multimodalInputMapper;
+
+    @Autowired(required = false)
+    private ScrapeTaskMapper scrapeTaskMapper;
+
+    @Autowired(required = false)
+    private TemplateMapper templateMapper;
+
+    @Autowired(required = false)
+    private TemplateCategoryMapper templateCategoryMapper;
+
+    @Autowired(required = false)
+    private TemplateUsageMapper templateUsageMapper;
+
+    @Autowired(required = false)
+    private MCPDynamicTableMapper mcpDynamicTableMapper;
+
+    @Autowired(required = false)
+    private MCPAuthConfigMapper mcpAuthConfigMapper;
+
+    // 测试用户ID（用于满足外键约束）
+    private UUID testUserId;
+    private UUID testTenantId;
+
+    @org.junit.jupiter.api.BeforeEach
+    public void setUpTestData() {
+        if (userMapper != null) {
+            // 先生成租户ID（UUID类型）
+            testTenantId = UUID.randomUUID();
+
+            // 创建测试用户（满足外键约束）
+            // 注意：UserEntity.tenantId是String类型，需要转换
+            UserEntity testUser = UserEntity.builder()
+                .tenantId(testTenantId.toString()) // 转换为String
+                .username("test-user-" + System.currentTimeMillis())
+                .email("test@ingenio.test")
+                .passwordHash("test-password-hash")
+                .createdAt(java.time.LocalDateTime.now())
+                .updatedAt(java.time.LocalDateTime.now())
+                .build();
+            userMapper.insert(testUser);
+            testUserId = testUser.getId();
+        } else {
+            testUserId = UUID.randomUUID();
+            testTenantId = UUID.randomUUID();
+        }
+    }
+
+    @Test
+    void testMultimodalInputMapperExists() {
+        assertThat(multimodalInputMapper).as("MultimodalInputMapper应该被Spring注入").isNotNull();
+    }
+
+    @Test
+    void testScrapeTaskMapperExists() {
+        assertThat(scrapeTaskMapper).as("ScrapeTaskMapper应该被Spring注入").isNotNull();
+    }
+
+    @Test
+    void testTemplateMapperExists() {
+        assertThat(templateMapper).as("TemplateMapper应该被Spring注入").isNotNull();
+    }
+
+    @Test
+    void testTemplateCategoryMapperExists() {
+        assertThat(templateCategoryMapper).as("TemplateCategoryMapper应该被Spring注入").isNotNull();
+    }
+
+    @Test
+    void testTemplateUsageMapperExists() {
+        assertThat(templateUsageMapper).as("TemplateUsageMapper应该被Spring注入").isNotNull();
+    }
+
+    @Test
+    void testMCPDynamicTableMapperExists() {
+        assertThat(mcpDynamicTableMapper).as("MCPDynamicTableMapper应该被Spring注入").isNotNull();
+    }
+
+    @Test
+    void testMCPAuthConfigMapperExists() {
+        assertThat(mcpAuthConfigMapper).as("MCPAuthConfigMapper应该被Spring注入").isNotNull();
+    }
+
+    @Test
+    void testMultimodalInputCRUD() {
+        if (multimodalInputMapper == null) return;
+
+        // Given
+        MultimodalInputEntity entity = MultimodalInputEntity.builder()
+            .tenantId(testTenantId)
+            .userId(testUserId)
+            .inputType("text")
+            .textContent("测试文本输入")
+            .processingStatus("pending")
+            .metadata(new HashMap<>())
+            .createdAt(java.time.LocalDateTime.now())
+            .updatedAt(java.time.LocalDateTime.now())
+            .build();
+
+        // When - Insert
+        int result = multimodalInputMapper.insert(entity);
+
+        // Then
+        assertThat(result).isEqualTo(1);
+        assertThat(entity.getId()).isNotNull();
+
+        // When - Select
+        MultimodalInputEntity saved = multimodalInputMapper.selectById(entity.getId());
+
+        // Then
+        assertThat(saved).isNotNull();
+        assertThat(saved.getTextContent()).isEqualTo("测试文本输入");
+    }
+
+    @Test
+    void testScrapeTaskCRUD() {
+        if (scrapeTaskMapper == null) return;
+
+        // Given
+        ScrapeTaskEntity entity = ScrapeTaskEntity.builder()
+            .tenantId(testTenantId)
+            .userId(testUserId)
+            .targetUrl("https://example.com")
+            .scrapeType("full")
+            .scrapeStatus("pending")
+            .scrapeConfig(new HashMap<>())
+            .metadata(new HashMap<>())
+            .createdAt(java.time.LocalDateTime.now())
+            .updatedAt(java.time.LocalDateTime.now())
+            .build();
+
+        // When
+        int result = scrapeTaskMapper.insert(entity);
+
+        // Then
+        assertThat(result).isEqualTo(1);
+        assertThat(entity.getId()).isNotNull();
+
+        ScrapeTaskEntity saved = scrapeTaskMapper.selectById(entity.getId());
+        assertThat(saved.getTargetUrl()).isEqualTo("https://example.com");
+    }
+
+    @Test
+    void testTemplateCRUD() {
+        if (templateMapper == null) return;
+
+        // Given
+        TemplateEntity entity = TemplateEntity.builder()
+            .tenantId(testTenantId)
+            .name("test-template")
+            .displayName("测试模板")
+            .description("这是一个测试模板")
+            .templateType("community")
+            .status("draft")
+            .usageCount(0)
+            .ratingCount(0)
+            .tags(List.of("test", "demo")) // JSONB类型，与JacksonTypeHandler兼容
+            .templateContent(new HashMap<>())
+            .metadata(new HashMap<>())
+            .createdAt(java.time.LocalDateTime.now())
+            .updatedAt(java.time.LocalDateTime.now())
+            .build();
+
+        // When
+        int result = templateMapper.insert(entity);
+
+        // Then
+        assertThat(result).isEqualTo(1);
+        assertThat(entity.getId()).isNotNull();
+
+        TemplateEntity saved = templateMapper.selectById(entity.getId());
+        assertThat(saved.getDisplayName()).isEqualTo("测试模板");
+        assertThat(saved.getTags()).containsExactly("test", "demo");
+    }
+
+    @Test
+    void testTemplateCategoryCRUD() {
+        if (templateCategoryMapper == null) return;
+
+        // Given
+        TemplateCategoryEntity entity = TemplateCategoryEntity.builder()
+            .name("test-category")
+            .displayName("测试分类")
+            .description("测试分类描述")
+            .sortOrder(1)
+            .metadata(new HashMap<>())
+            .createdAt(java.time.LocalDateTime.now())
+            .updatedAt(java.time.LocalDateTime.now())
+            .build();
+
+        // When
+        int result = templateCategoryMapper.insert(entity);
+
+        // Then
+        assertThat(result).isEqualTo(1);
+        assertThat(entity.getId()).isNotNull();
+
+        TemplateCategoryEntity saved = templateCategoryMapper.selectById(entity.getId());
+        assertThat(saved.getDisplayName()).isEqualTo("测试分类");
+    }
+
+    @Test
+    void testMCPDynamicTableCRUD() {
+        if (mcpDynamicTableMapper == null) return;
+
+        // Given
+        MCPDynamicTableEntity entity = MCPDynamicTableEntity.builder()
+            .tenantId(testTenantId)
+            .tableName("test_dynamic_table")
+            .displayName("测试动态表")
+            .datasourceType("postgresql")
+            .schemaDefinition(new HashMap<>())
+            .datasourceConfig(new HashMap<>())
+            .syncStrategy("manual")
+            .status("active")
+            .metadata(new HashMap<>())
+            .createdAt(java.time.LocalDateTime.now())
+            .updatedAt(java.time.LocalDateTime.now())
+            .build();
+
+        // When
+        int result = mcpDynamicTableMapper.insert(entity);
+
+        // Then
+        assertThat(result).isEqualTo(1);
+        assertThat(entity.getId()).isNotNull();
+
+        MCPDynamicTableEntity saved = mcpDynamicTableMapper.selectById(entity.getId());
+        assertThat(saved.getTableName()).isEqualTo("test_dynamic_table");
+    }
+
+    @Test
+    void testMCPAuthConfigCRUD() {
+        if (mcpAuthConfigMapper == null) return;
+
+        // Given
+        MCPAuthConfigEntity entity = MCPAuthConfigEntity.builder()
+            .tenantId(testTenantId)
+            .configName("test-auth-config")
+            .displayName("测试认证配置")
+            .authType("oauth2")
+            .authConfig(new HashMap<>())
+            .status("active")
+            .metadata(new HashMap<>())
+            .createdAt(java.time.LocalDateTime.now())
+            .updatedAt(java.time.LocalDateTime.now())
+            .build();
+
+        // When
+        int result = mcpAuthConfigMapper.insert(entity);
+
+        // Then
+        assertThat(result).isEqualTo(1);
+        assertThat(entity.getId()).isNotNull();
+
+        MCPAuthConfigEntity saved = mcpAuthConfigMapper.selectById(entity.getId());
+        assertThat(saved.getConfigName()).isEqualTo("test-auth-config");
+    }
+}

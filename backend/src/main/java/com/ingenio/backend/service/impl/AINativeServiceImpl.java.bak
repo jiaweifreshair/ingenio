@@ -1,0 +1,93 @@
+package com.ingenio.backend.service.impl;
+
+import com.ingenio.backend.common.exception.BusinessException;
+import com.ingenio.backend.common.exception.ErrorCode;
+import com.ingenio.backend.service.AINativeService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.util.*;
+
+/**
+ * AI Native 产品支持服务实现类
+ * 实现 Agent 组件/MCP 调用功能
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AINativeServiceImpl implements AINativeService {
+
+    /**
+     * 生成 AI 功能代码
+     * TODO: 实现完整的代码生成逻辑
+     */
+    @Override
+    public AICodeResult generateAICode(List<AIFeature> aiFeatures) {
+        log.info("开始生成 AI 功能代码: featureCount={}", aiFeatures.size());
+
+        // TODO: 实现代码生成
+        // 1. 根据 AI 功能类型生成对应的前端组件代码
+        // 2. 生成后端 API 代码（调用 MCP 或直接调用 AI 服务）
+        // 3. 生成配置文件
+
+        AICodeResult result = new AICodeResult();
+        result.setFrontendComponents(new HashMap<>());
+        result.setBackendAPIs(new HashMap<>());
+        result.setConfigFiles(new HashMap<>());
+
+        for (AIFeature feature : aiFeatures) {
+            // 生成前端组件代码
+            String componentCode = generateFrontendComponent(feature);
+            result.getFrontendComponents().put(feature.getId(), componentCode);
+
+            // 生成后端 API 代码
+            String apiCode = generateBackendAPI(feature);
+            result.getBackendAPIs().put(feature.getId() + "API", apiCode);
+        }
+
+        log.info("AI 功能代码生成完成: components={}, apis={}",
+            result.getFrontendComponents().size(), result.getBackendAPIs().size());
+        return result;
+    }
+
+    /**
+     * 调用 MCP 服务
+     * TODO: 实现 MCP 协议调用
+     */
+    @Override
+    public MCPResponse callMCP(String server, String tool, Map<String, Object> params) {
+        log.info("调用 MCP 服务: server={}, tool={}", server, tool);
+
+        // TODO: 实现 MCP 协议调用
+        // 1. 根据 server 名称获取 MCP 服务器配置
+        // 2. 构建 MCP 请求
+        // 3. 发送请求并解析响应
+
+        MCPResponse response = new MCPResponse();
+        response.setSuccess(false);
+        response.setError("MCP 调用功能待实现");
+
+        throw new BusinessException(ErrorCode.NOT_IMPLEMENTED, "MCP 调用功能待实现");
+    }
+
+    /**
+     * 生成前端组件代码
+     */
+    private String generateFrontendComponent(AIFeature feature) {
+        // TODO: 根据 feature.type 生成对应的 React 组件代码
+        return "// TODO: 生成 " + feature.getType() + " 组件代码";
+    }
+
+    /**
+     * 生成后端 API 代码
+     */
+    private String generateBackendAPI(AIFeature feature) {
+        // TODO: 根据 feature 配置生成后端 API 代码
+        return "// TODO: 生成 " + feature.getType() + " API 代码";
+    }
+}
+

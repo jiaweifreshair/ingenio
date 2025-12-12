@@ -1,0 +1,306 @@
+package com.ingenio.backend.service.impl;
+
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.ingenio.backend.common.annotation.RequireOwnership;
+import com.ingenio.backend.common.exception.BusinessException;
+import com.ingenio.backend.common.exception.ErrorCode;
+import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.mapper.AppSpecMapper;
+import com.ingenio.backend.service.AppSpecService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * AppSpec Service实现类
+ * 提供AppSpec规范的完整业务逻辑，包括创建、查询、版本管理、状态更新等
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class AppSpecServiceImpl extends ServiceImpl<AppSpecMapper, AppSpecEntity> implements AppSpecService {
+
+    private final AppSpecMapper appSpecMapper;
+
+    /**
+     * 创建AppSpec
+     *
+     * @param tenantId 租户ID - 用于租户隔离
+     * @param userId 用户ID - 创建者
+     * @param specContent AppSpec JSON内容
+     * @return 创建的AppSpec实体
+     * @throws BusinessException 当参数校验失败或创建失败时抛出
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public AppSpecEntity createAppSpec(UUID tenantId, UUID userId, Map<String, Object> specContent) {
+        // 参数校验
+        if (tenantId == null || userId == null || specContent == null || specContent.isEmpty()) {
+            log.error("创建AppSpec失败: 参数不能为空 - tenantId={}, userId={}", tenantId, userId);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        // 构建AppSpec实体
+        Instant now = Instant.now();
+        AppSpecEntity appSpec = AppSpecEntity.builder()
+                .id(UUID.randomUUID()) // 生成UUID作为主键
+                .tenantId(tenantId)
+                .createdByUserId(userId)
+                .specContent(specContent)
+                .version(1) // 初始版本为1
+                .parentVersionId(null) // 根版本无父版本
+                .status(AppSpecEntity.Status.DRAFT.getValue())
+                .qualityScore(0) // 初始质量评分为0，等待验证
+                .createdAt(now) // 手动设置创建时间
+                .updatedAt(now) // 手动设置更新时间
+                .metadata(new HashMap<>())
+                .build();
+
+        // 保存到数据库
+        if (!save(appSpec)) {
+            log.error("创建AppSpec失败: 数据库保存失败 - tenantId={}, userId={}", tenantId, userId);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        log.info("创建AppSpec成功: id={}, tenantId={}, userId={}, version={}",
+                appSpec.getId(), tenantId, userId, appSpec.getVersion());
+        return appSpec;
+    }
+
+    /**
+     * 根据ID和租户ID查询AppSpec（租户隔离）
+     *
+     * @param id AppSpec ID
+     * @param tenantId 租户ID - 确保租户隔离
+     * @return AppSpec实体
+     * @throws BusinessException 当AppSpec不存在时抛出
+     */
+    @Override
+    public AppSpecEntity getByIdAndTenantId(UUID id, UUID tenantId) {
+        if (id == null || tenantId == null) {
+            log.error("查询AppSpec失败: 参数不能为空 - id={}, tenantId={}", id, tenantId);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        AppSpecEntity appSpec = appSpecMapper.findByIdAndTenantId(id, tenantId);
+        if (appSpec == null) {
+            log.warn("AppSpec不存在: id={}, tenantId={}", id, tenantId);
+            throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
+        }
+
+        return appSpec;
+    }
+
+    /**
+     * 分页查询用户的AppSpec列表
+     *
+     * @param tenantId 租户ID
+     * @param userId 用户ID
+     * @param current 当前页码（从1开始）
+     * @param size 每页数量
+     * @return 分页结果
+     */
+    @Override
+    public Page<AppSpecEntity> pageByUser(UUID tenantId, UUID userId, Long current, Long size) {
+        if (tenantId == null || userId == null) {
+            log.error("分页查询AppSpec失败: 参数不能为空 - tenantId={}, userId={}", tenantId, userId);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        // 构建分页对象
+        Page<AppSpecEntity> page = new Page<>(current, size);
+
+        // 执行分页查询
+        appSpecMapper.selectPageByTenantIdAndUserId(page, tenantId, userId);
+        return page;
+    }
+
+    /**
+     * 根据状态查询AppSpec列表
+     *
+     * @param tenantId 租户ID
+     * @param status 状态（draft/validated/generated/published）
+     * @return AppSpec列表
+     */
+    @Override
+    public List<AppSpecEntity> listByStatus(UUID tenantId, String status) {
+        if (tenantId == null || status == null || status.isEmpty()) {
+            log.error("查询AppSpec列表失败: 参数不能为空 - tenantId={}, status={}", tenantId, status);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        return appSpecMapper.findByTenantIdAndStatus(tenantId, status);
+    }
+
+    /**
+     * 更新AppSpec状态
+     *
+     * @param id AppSpec ID
+     * @param status 新状态
+     * @throws BusinessException 当AppSpec不存在或更新失败时抛出
+     */
+    @Override
+    @RequireOwnership(resourceType = "appspec", idParam = "id")
+    @Transactional(rollbackFor = Exception.class)
+    public void updateStatus(UUID id, String status) {
+        if (id == null || status == null || status.isEmpty()) {
+            log.error("更新AppSpec状态失败: 参数不能为空 - id={}, status={}", id, status);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        // 查询AppSpec
+        AppSpecEntity appSpec = getById(id);
+        if (appSpec == null) {
+            log.warn("更新AppSpec状态失败: AppSpec不存在 - id={}", id);
+            throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
+        }
+
+        // 更新状态
+        appSpec.setStatus(status);
+        if (!updateById(appSpec)) {
+            log.error("更新AppSpec状态失败: 数据库更新失败 - id={}, status={}", id, status);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        log.info("更新AppSpec状态成功: id={}, oldStatus={}, newStatus={}",
+                id, appSpec.getStatus(), status);
+    }
+
+    /**
+     * 更新AppSpec质量评分
+     *
+     * @param id AppSpec ID
+     * @param qualityScore 质量评分（0-100）
+     * @throws BusinessException 当AppSpec不存在、评分超出范围或更新失败时抛出
+     */
+    @Override
+    @RequireOwnership(resourceType = "appspec", idParam = "id")
+    @Transactional(rollbackFor = Exception.class)
+    public void updateQualityScore(UUID id, Integer qualityScore) {
+        if (id == null || qualityScore == null) {
+            log.error("更新AppSpec质量评分失败: 参数不能为空 - id={}, qualityScore={}", id, qualityScore);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        // 校验评分范围
+        if (qualityScore < 0 || qualityScore > 100) {
+            log.error("更新AppSpec质量评分失败: 评分超出范围 - id={}, qualityScore={}", id, qualityScore);
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "质量评分必须在0-100之间");
+        }
+
+        // 查询AppSpec
+        AppSpecEntity appSpec = getById(id);
+        if (appSpec == null) {
+            log.warn("更新AppSpec质量评分失败: AppSpec不存在 - id={}", id);
+            throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
+        }
+
+        // 更新质量评分
+        Integer oldScore = appSpec.getQualityScore();
+        appSpec.setQualityScore(qualityScore);
+
+        // 根据评分自动更新状态
+        if (qualityScore >= 80) {
+            appSpec.setStatus(AppSpecEntity.Status.VALIDATED.getValue());
+        }
+
+        if (!updateById(appSpec)) {
+            log.error("更新AppSpec质量评分失败: 数据库更新失败 - id={}, qualityScore={}", id, qualityScore);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        log.info("更新AppSpec质量评分成功: id={}, oldScore={}, newScore={}, status={}",
+                id, oldScore, qualityScore, appSpec.getStatus());
+    }
+
+    /**
+     * 创建AppSpec的新版本
+     *
+     * @param parentId 父版本ID
+     * @param specContent 新的AppSpec内容
+     * @return 新版本AppSpec实体
+     * @throws BusinessException 当父版本不存在或创建失败时抛出
+     */
+    @Override
+    @RequireOwnership(resourceType = "appspec", idParam = "parentId")
+    @Transactional(rollbackFor = Exception.class)
+    public AppSpecEntity createVersion(UUID parentId, Map<String, Object> specContent) {
+        if (parentId == null || specContent == null || specContent.isEmpty()) {
+            log.error("创建AppSpec版本失败: 参数不能为空 - parentId={}", parentId);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        // 查询父版本
+        AppSpecEntity parentAppSpec = getById(parentId);
+        if (parentAppSpec == null) {
+            log.warn("创建AppSpec版本失败: 父版本不存在 - parentId={}", parentId);
+            throw new BusinessException(ErrorCode.APPSPEC_VERSION_NOT_FOUND);
+        }
+
+        // 构建新版本AppSpec实体
+        Instant now = Instant.now();
+        AppSpecEntity newVersion = AppSpecEntity.builder()
+                .id(UUID.randomUUID()) // 生成UUID作为主键
+                .tenantId(parentAppSpec.getTenantId())
+                .createdByUserId(parentAppSpec.getCreatedByUserId())
+                .specContent(specContent)
+                .version(parentAppSpec.getVersion() + 1) // 版本号递增
+                .parentVersionId(parentId) // 设置父版本ID
+                .status(AppSpecEntity.Status.DRAFT.getValue())
+                .qualityScore(0) // 新版本重新评分
+                .createdAt(now) // 手动设置创建时间
+                .updatedAt(now) // 手动设置更新时间
+                .metadata(new HashMap<>())
+                .build();
+
+        // 保存到数据库
+        if (!save(newVersion)) {
+            log.error("创建AppSpec版本失败: 数据库保存失败 - parentId={}", parentId);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        log.info("创建AppSpec版本成功: newId={}, parentId={}, newVersion={}",
+                newVersion.getId(), parentId, newVersion.getVersion());
+        return newVersion;
+    }
+
+    /**
+     * 删除AppSpec（软删除）
+     *
+     * @param id AppSpec ID
+     * @param tenantId 租户ID - 确保租户隔离
+     * @throws BusinessException 当AppSpec不存在或删除失败时抛出
+     */
+    @Override
+    @RequireOwnership(resourceType = "appspec", idParam = "id")
+    @Transactional(rollbackFor = Exception.class)
+    public void softDelete(UUID id, UUID tenantId) {
+        if (id == null || tenantId == null) {
+            log.error("删除AppSpec失败: 参数不能为空 - id={}, tenantId={}", id, tenantId);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        // 查询AppSpec（租户隔离）
+        AppSpecEntity appSpec = getByIdAndTenantId(id, tenantId);
+        if (appSpec == null) {
+            log.warn("删除AppSpec失败: AppSpec不存在 - id={}, tenantId={}", id, tenantId);
+            throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
+        }
+
+        // 执行软删除
+        if (!removeById(id)) {
+            log.error("删除AppSpec失败: 数据库删除失败 - id={}, tenantId={}", id, tenantId);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        log.info("删除AppSpec成功: id={}, tenantId={}", id, tenantId);
+    }
+}

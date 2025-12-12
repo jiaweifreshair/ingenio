@@ -1,0 +1,948 @@
+package com.ingenio.backend.service;
+
+import com.ingenio.backend.entity.IndustryTemplateEntity;
+import com.ingenio.backend.mapper.IndustryTemplateMapper;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.core.annotation.Order;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.util.*;
+
+/**
+ * 行业模板数据初始化器
+ *
+ * Phase X.4 Task 5: 初始化40+行业模板数据
+ *
+ * 功能特性：
+ * 1. 自动初始化40+个行业模板数据
+ * 2. 幂等性设计：基于name去重，避免重复插入
+ * 3. 7大类别覆盖：电商/教育/社交/生活服务/企业管理/金融科技/内容媒体
+ * 4. 每个模板包含完整的元数据：关键词、参考URL、复杂度、特性等
+ *
+ * 使用方式：
+ * - 应用启动时自动执行（CommandLineRunner）
+ * - 仅在数据库为空或缺少模板时插入
+ * - 可通过日志查看初始化结果
+ *
+ * 数据分布：
+ * - 电商类: 8个模板
+ * - 教育类: 6个模板
+ * - 社交类: 6个模板
+ * - 生活服务类: 7个模板
+ * - 企业管理类: 5个模板
+ * - 金融科技类: 4个模板
+ * - 内容媒体类: 5个模板
+ * 总计: 41个模板
+ *
+ * @author Claude
+ * @since 2025-11-16 (Phase X.4 Task 5)
+ */
+@Slf4j
+@Component
+@Order(100) // 确保在其他初始化器之后执行
+@RequiredArgsConstructor
+public class TemplateDataInitializer implements CommandLineRunner {
+
+    private final IndustryTemplateMapper templateMapper;
+
+    @Override
+    public void run(String... args) {
+        log.info("======= 开始初始化行业模板数据 =======");
+
+        try {
+            // 统计当前模板数量
+            long currentCount = templateMapper.selectCount(null);
+            log.info("当前数据库中已有 {} 个模板", currentCount);
+
+            // 获取所有待初始化的模板数据
+            List<IndustryTemplateEntity> templates = getAllTemplates();
+            log.info("准备初始化 {} 个模板", templates.size());
+
+            // 幂等性插入：只插入不存在的模板
+            int insertedCount = 0;
+            int skippedCount = 0;
+
+            for (IndustryTemplateEntity template : templates) {
+                // 检查模板是否已存在（基于name去重）
+                LambdaQueryWrapper<IndustryTemplateEntity> wrapper = new LambdaQueryWrapper<>();
+                wrapper.eq(IndustryTemplateEntity::getName, template.getName());
+                Long existingCount = templateMapper.selectCount(wrapper);
+
+                if (existingCount > 0) {
+                    log.debug("模板已存在，跳过: {}", template.getName());
+                    skippedCount++;
+                    continue;
+                }
+
+                // 插入新模板
+                templateMapper.insert(template);
+                log.debug("成功插入模板: {} (分类: {})", template.getName(), template.getCategory());
+                insertedCount++;
+            }
+
+            long finalCount = templateMapper.selectCount(null);
+
+            log.info("======= 模板数据初始化完成 =======");
+            log.info("插入新模板: {} 个", insertedCount);
+            log.info("跳过已存在: {} 个", skippedCount);
+            log.info("数据库总模板数: {} 个", finalCount);
+
+        } catch (Exception e) {
+            log.error("模板数据初始化失败", e);
+            // 不抛出异常，避免影响应用启动
+        }
+    }
+
+    // ==================== 辅助方法 ====================
+
+    /**
+     * 创建实体Map对象
+     *
+     * 简化的实体结构,仅包含name和description
+     * 后续可扩展attributes字段
+     *
+     * @param names 实体名称列表
+     * @return List<Map<String, Object>>格式的实体列表
+     */
+    private List<Map<String, Object>> createEntities(String... names) {
+        List<Map<String, Object>> entities = new ArrayList<>();
+        for (String name : names) {
+            Map<String, Object> entity = new HashMap<>();
+            entity.put("name", name);
+            entity.put("description", name + "实体");
+            entity.put("attributes", new ArrayList<>());
+            entities.add(entity);
+        }
+        return entities;
+    }
+
+    /**
+     * 创建工作流Map对象
+     *
+     * @param name 工作流名称
+     * @param description 工作流描述
+     * @param steps 工作流步骤列表
+     * @return Map<String, Object>格式的工作流对象
+     */
+    private Map<String, Object> createWorkflow(String name, String description, String... steps) {
+        Map<String, Object> workflow = new HashMap<>();
+        workflow.put("name", name);
+        workflow.put("description", description);
+        workflow.put("steps", Arrays.asList(steps));
+        return workflow;
+    }
+
+    /**
+     * 创建多个工作流
+     *
+     * 简化版本,仅包含name作为description的工作流
+     *
+     * @param names 工作流名称列表
+     * @return List<Map<String, Object>>格式的工作流列表
+     */
+    private List<Map<String, Object>> createWorkflows(String... names) {
+        List<Map<String, Object>> workflows = new ArrayList<>();
+        for (String name : names) {
+            workflows.add(createWorkflow(name, name, "步骤1", "步骤2", "步骤3"));
+        }
+        return workflows;
+    }
+
+    // ==================== 模板数据获取 ====================
+
+    /**
+     * 获取所有待初始化的模板数据
+     *
+     * @return 模板列表（41个）
+     */
+    private List<IndustryTemplateEntity> getAllTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        // 1. 电商类 (8个模板)
+        templates.addAll(getEcommerceTemplates());
+
+        // 2. 教育类 (6个模板)
+        templates.addAll(getEducationTemplates());
+
+        // 3. 社交类 (6个模板)
+        templates.addAll(getSocialTemplates());
+
+        // 4. 生活服务类 (7个模板)
+        templates.addAll(getLifestyleTemplates());
+
+        // 5. 企业管理类 (5个模板)
+        templates.addAll(getEnterpriseTemplates());
+
+        // 6. 金融科技类 (4个模板)
+        templates.addAll(getFintechTemplates());
+
+        // 7. 内容媒体类 (5个模板)
+        templates.addAll(getMediaTemplates());
+
+        return templates;
+    }
+
+    /**
+     * 电商类模板 (8个)
+     */
+    private List<IndustryTemplateEntity> getEcommerceTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("综合电商平台模板")
+                .description("参考淘宝/京东的综合电商平台，支持多商家入驻、商品管理、订单流程、支付系统")
+                .category("电商")
+                .subcategory("综合电商")
+                .keywords(Arrays.asList("电商", "商城", "购物", "订单", "支付", "淘宝", "京东"))
+                .referenceUrl("https://www.taobao.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Merchant", "Product", "Order", "Payment"))
+                .features(Arrays.asList("商品浏览", "购物车", "订单管理", "支付集成", "物流跟踪", "评价系统"))
+                .workflows(createWorkflows("用户注册登录", "商品搜索浏览", "加入购物车", "下单支付", "物流配送", "确认收货"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("社交电商平台模板")
+                .description("参考拼多多的社交电商模式，支持拼团、分享返利、社交裂变")
+                .category("电商")
+                .subcategory("社交电商")
+                .keywords(Arrays.asList("拼团", "社交电商", "拼多多", "分享", "裂变", "优惠券"))
+                .referenceUrl("https://www.pinduoduo.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Product", "Group", "Order", "Coupon"))
+                .features(Arrays.asList("拼团购买", "社交分享", "优惠券", "好友助力", "分销返利"))
+                .workflows(createWorkflows("发起拼团", "邀请好友", "成团购买", "分享赚钱"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("生鲜电商平台模板")
+                .description("参考每日优鲜/盒马的生鲜电商，支持冷链配送、次日达、社区团购")
+                .category("电商")
+                .subcategory("生鲜电商")
+                .keywords(Arrays.asList("生鲜", "冷链", "配送", "社区团购", "每日优鲜", "盒马"))
+                .referenceUrl("https://www.missfresh.cn")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Product", "Order", "Warehouse", "DeliveryRoute"))
+                .features(Arrays.asList("新鲜商品", "冷链配送", "时效保证", "社区自提", "预售模式"))
+                .workflows(createWorkflows("选择商品", "选择配送时间", "下单支付", "冷链配送", "社区自提"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("跨境电商平台模板")
+                .description("参考小红书商城/考拉海购的跨境电商，支持海淘、清关、保税仓")
+                .category("电商")
+                .subcategory("跨境电商")
+                .keywords(Arrays.asList("跨境", "海淘", "保税", "小红书", "考拉", "全球购"))
+                .referenceUrl("https://www.xiaohongshu.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Product", "Order", "CustomsDeclaration", "BondedWarehouse"))
+                .features(Arrays.asList("海外商品", "清关服务", "保税仓发货", "正品保证", "多币种支付"))
+                .workflows(createWorkflows("浏览海外商品", "下单购买", "海关清关", "保税仓发货", "国内配送"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("二手交易平台模板")
+                .description("参考闲鱼/转转的二手交易平台，支持C2C交易、担保交易、验货服务")
+                .category("电商")
+                .subcategory("二手交易")
+                .keywords(Arrays.asList("二手", "闲鱼", "转转", "交易", "验货", "C2C"))
+                .referenceUrl("https://www.xianyu.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Item", "Transaction", "Message", "Evaluation"))
+                .features(Arrays.asList("发布闲置", "在线聊天", "担保交易", "验货服务", "芝麻信用"))
+                .workflows(createWorkflows("发布商品", "买家咨询", "议价协商", "下单支付", "验货确认"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("直播电商平台模板")
+                .description("参考淘宝直播/抖音小店的直播电商，支持直播带货、秒杀、优惠券")
+                .category("电商")
+                .subcategory("直播电商")
+                .keywords(Arrays.asList("直播", "带货", "秒杀", "抖音", "淘宝直播", "主播"))
+                .referenceUrl("https://www.douyin.com")
+                .complexityScore(9)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Anchor", "LiveRoom", "Product", "Order", "Coupon"))
+                .features(Arrays.asList("直播间", "实时互动", "商品推送", "秒杀活动", "打赏礼物"))
+                .workflows(createWorkflows("主播开播", "推送商品", "观众下单", "秒杀抢购", "支付发货"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("农产品电商平台模板")
+                .description("参考京东生鲜/拼多多农货的农产品电商，支持产地直采、溯源、预售")
+                .category("电商")
+                .subcategory("农产品电商")
+                .keywords(Arrays.asList("农产品", "生鲜", "产地直采", "溯源", "预售", "助农"))
+                .referenceUrl("https://www.jd.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Farmer", "Product", "Order", "Traceability", "Logistics"))
+                .features(Arrays.asList("产地直采", "溯源系统", "预售模式", "助农扶贫", "品质保证"))
+                .workflows(createWorkflows("农户上架", "消费者预订", "采摘包装", "物流配送", "溯源查询"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("B2B批发平台模板")
+                .description("参考1688/慧聪网的B2B批发平台，支持批量采购、询价、OEM定制")
+                .category("电商")
+                .subcategory("B2B批发")
+                .keywords(Arrays.asList("批发", "B2B", "1688", "采购", "询价", "定制"))
+                .referenceUrl("https://www.1688.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Supplier", "Buyer", "Product", "Inquiry", "Order"))
+                .features(Arrays.asList("批量采购", "在线询价", "样品订购", "OEM定制", "供应链金融"))
+                .workflows(createWorkflows("发布需求", "供应商报价", "样品确认", "批量下单", "供应链融资"))
+                .build());
+
+        return templates;
+    }
+
+    /**
+     * 教育类模板 (6个)
+     */
+    private List<IndustryTemplateEntity> getEducationTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("在线教育平台模板")
+                .description("参考腾讯课堂/网易云课堂的在线教育平台，支持直播授课、录播回放、作业批改")
+                .category("教育")
+                .subcategory("在线教育")
+                .keywords(Arrays.asList("在线教育", "直播", "课程", "学习", "腾讯课堂", "网易云课堂"))
+                .referenceUrl("https://ke.qq.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Teacher", "Student", "Course", "Lesson", "Homework"))
+                .features(Arrays.asList("直播教学", "课程回放", "作业系统", "考试测评", "学习社区"))
+                .workflows(createWorkflows("选课报名", "观看直播", "课后作业", "考试测评", "获得证书"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("K12在线教育模板")
+                .description("参考作业帮/猿辅导的K12在线教育，支持题库、拍照搜题、1对1辅导")
+                .category("教育")
+                .subcategory("K12教育")
+                .keywords(Arrays.asList("K12", "作业帮", "猿辅导", "搜题", "辅导", "题库"))
+                .referenceUrl("https://www.zuoyebang.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Student", "Teacher", "Question", "Answer", "Lesson"))
+                .features(Arrays.asList("拍照搜题", "题库练习", "1对1辅导", "错题本", "学情报告"))
+                .workflows(createWorkflows("拍照搜题", "查看解析", "预约辅导", "在线上课", "查看学情"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("职业教育平台模板")
+                .description("参考得到/混沌大学的职业教育平台，支持知识付费、专栏订阅、社群学习")
+                .category("教育")
+                .subcategory("职业教育")
+                .keywords(Arrays.asList("职业教育", "知识付费", "得到", "混沌", "专栏", "社群"))
+                .referenceUrl("https://www.igetget.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Lecturer", "User", "Column", "Course", "Community"))
+                .features(Arrays.asList("专栏订阅", "音频课程", "社群讨论", "打卡学习", "证书颁发"))
+                .workflows(createWorkflows("订阅专栏", "学习课程", "社群讨论", "打卡分享", "获得证书"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("语言学习平台模板")
+                .description("参考多邻国/流利说的语言学习平台，支持AI口语练习、闯关学习、游戏化设计")
+                .category("教育")
+                .subcategory("语言学习")
+                .keywords(Arrays.asList("语言学习", "多邻国", "流利说", "口语", "AI", "游戏化"))
+                .referenceUrl("https://www.duolingo.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Lesson", "Exercise", "Achievement", "Leaderboard"))
+                .features(Arrays.asList("AI口语练习", "游戏化闯关", "每日打卡", "排行榜", "成就系统"))
+                .workflows(createWorkflows("选择课程", "闯关学习", "AI口语评分", "每日打卡", "获得勋章"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("技能培训平台模板")
+                .description("参考Coursera/Udemy的技能培训平台，支持证书课程、项目实战、就业推荐")
+                .category("教育")
+                .subcategory("技能培训")
+                .keywords(Arrays.asList("技能培训", "证书", "Coursera", "Udemy", "实战", "就业"))
+                .referenceUrl("https://www.coursera.org")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Instructor", "Student", "Course", "Project", "Certificate"))
+                .features(Arrays.asList("证书课程", "项目实战", "作业批改", "同伴评审", "就业推荐"))
+                .workflows(createWorkflows("选择课程", "完成作业", "项目实战", "同伴评审", "获得证书"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("家校互动平台模板")
+                .description("参考晓黑板/ClassIn的家校互动平台，支持作业布置、成绩查询、家长沟通")
+                .category("教育")
+                .subcategory("家校互动")
+                .keywords(Arrays.asList("家校", "作业", "成绩", "沟通", "晓黑板", "ClassIn"))
+                .referenceUrl("https://www.xiaoheiban.cn")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Teacher", "Student", "Parent", "Homework", "Grade"))
+                .features(Arrays.asList("作业布置", "成绩管理", "家长沟通", "班级通知", "学情分析"))
+                .workflows(createWorkflows("布置作业", "学生提交", "教师批改", "家长查看", "反馈沟通"))
+                .build());
+
+        return templates;
+    }
+
+    /**
+     * 社交类模板 (6个)
+     */
+    private List<IndustryTemplateEntity> getSocialTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("即时通讯平台模板")
+                .description("参考微信/QQ的即时通讯平台，支持单聊、群聊、语音视频通话")
+                .category("社交")
+                .subcategory("即时通讯")
+                .keywords(Arrays.asList("即时通讯", "聊天", "微信", "QQ", "消息", "通话"))
+                .referenceUrl("https://weixin.qq.com")
+                .complexityScore(9)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Message", "Group", "Contact", "Call"))
+                .features(Arrays.asList("单聊", "群聊", "语音通话", "视频通话", "朋友圈", "表情包"))
+                .workflows(createWorkflows("添加好友", "发送消息", "创建群聊", "语音通话", "发朋友圈"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("内容社区平台模板")
+                .description("参考知乎/豆瓣的内容社区平台，支持问答、评论、关注、推荐算法")
+                .category("社交")
+                .subcategory("内容社区")
+                .keywords(Arrays.asList("社区", "问答", "知乎", "豆瓣", "评论", "关注"))
+                .referenceUrl("https://www.zhihu.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Question", "Answer", "Comment", "Topic"))
+                .features(Arrays.asList("提问回答", "评论互动", "关注用户", "内容推荐", "专栏创作"))
+                .workflows(createWorkflows("提出问题", "撰写回答", "评论互动", "关注大V", "查看推荐"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("短视频社交平台模板")
+                .description("参考抖音/快手的短视频社交平台，支持视频创作、推荐算法、直播打赏")
+                .category("社交")
+                .subcategory("短视频")
+                .keywords(Arrays.asList("短视频", "抖音", "快手", "创作", "推荐", "直播"))
+                .referenceUrl("https://www.douyin.com")
+                .complexityScore(9)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Creator", "Video", "Comment", "Like", "LiveStream"))
+                .features(Arrays.asList("视频拍摄", "特效编辑", "推荐算法", "直播打赏", "挑战赛"))
+                .workflows(createWorkflows("拍摄视频", "添加特效", "发布作品", "获得推荐", "开启直播"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("图片社交平台模板")
+                .description("参考Instagram/小红书的图片社交平台，支持图片分享、滤镜、标签、种草")
+                .category("社交")
+                .subcategory("图片社交")
+                .keywords(Arrays.asList("图片", "Instagram", "小红书", "滤镜", "种草", "标签"))
+                .referenceUrl("https://www.instagram.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Photo", "Story", "Tag", "Comment"))
+                .features(Arrays.asList("图片分享", "滤镜美化", "标签分类", "Stories", "购物车"))
+                .workflows(createWorkflows("拍摄图片", "添加滤镜", "打上标签", "发布动态", "种草购物"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("兴趣社群平台模板")
+                .description("参考即刻/贴吧的兴趣社群平台，支持话题圈子、动态分享、兴趣匹配")
+                .category("社交")
+                .subcategory("兴趣社群")
+                .keywords(Arrays.asList("兴趣", "社群", "即刻", "贴吧", "圈子", "话题"))
+                .referenceUrl("https://www.okjike.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Topic", "Post", "Circle", "Comment"))
+                .features(Arrays.asList("话题圈子", "动态发布", "兴趣推荐", "活动组织", "打卡签到"))
+                .workflows(createWorkflows("加入圈子", "发布动态", "参与讨论", "组织活动", "每日打卡"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("陌生人社交平台模板")
+                .description("参考陌陌/Soul的陌生人社交平台，支持附近的人、语音匹配、兴趣标签")
+                .category("社交")
+                .subcategory("陌生人社交")
+                .keywords(Arrays.asList("陌生人", "陌陌", "Soul", "匹配", "附近", "语音"))
+                .referenceUrl("https://www.immomo.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Match", "Message", "VoiceRoom", "Tag"))
+                .features(Arrays.asList("附近的人", "兴趣匹配", "语音聊天", "房间聊天", "灵魂测试"))
+                .workflows(createWorkflows("完善资料", "设置标签", "匹配推荐", "发起聊天", "加入房间"))
+                .build());
+
+        return templates;
+    }
+
+    /**
+     * 生活服务类模板 (7个)
+     */
+    private List<IndustryTemplateEntity> getLifestyleTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("民宿预订平台模板")
+                .description("参考Airbnb/途家的民宿预订平台，支持房源搜索、在线预订、评价系统")
+                .category("生活服务")
+                .subcategory("住宿预订")
+                .keywords(Arrays.asList("民宿", "预订", "住宿", "airbnb", "短租", "房源", "在线预订"))
+                .referenceUrl("https://www.airbnb.com")
+                .complexityScore(6)
+                .usageCount(128)
+                .rating(new BigDecimal("4.5"))
+                .isActive(true)
+                .entities(createEntities("User", "Host", "Listing", "Booking", "Review"))
+                .features(Arrays.asList("房源搜索", "在线预订", "支付系统", "评价系统", "房东认证"))
+                .workflows(createWorkflows("搜索房源", "查看详情", "预订房源", "在线支付", "入住评价"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("外卖配送平台模板")
+                .description("参考美团外卖/饿了么的外卖配送平台，支持商家入驻、骑手配送、实时追踪")
+                .category("生活服务")
+                .subcategory("外卖配送")
+                .keywords(Arrays.asList("外卖", "美团", "饿了么", "配送", "餐饮", "订餐"))
+                .referenceUrl("https://www.meituan.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Merchant", "Rider", "Order", "Dish"))
+                .features(Arrays.asList("在线点餐", "骑手配送", "实时追踪", "优惠活动", "会员系统"))
+                .workflows(createWorkflows("选择商家", "点餐下单", "商家接单", "骑手取餐", "配送到家"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("打车出行平台模板")
+                .description("参考滴滴/Uber的打车出行平台，支持快车、专车、拼车、实时定位")
+                .category("生活服务")
+                .subcategory("出行服务")
+                .keywords(Arrays.asList("打车", "滴滴", "Uber", "出行", "专车", "拼车"))
+                .referenceUrl("https://www.didiglobal.com")
+                .complexityScore(9)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Passenger", "Driver", "Order", "Route", "Payment"))
+                .features(Arrays.asList("实时叫车", "智能调度", "路线规划", "拼车优惠", "安全保障"))
+                .workflows(createWorkflows("输入目的地", "呼叫车辆", "司机接单", "实时导航", "到达付款"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("家政服务平台模板")
+                .description("参考58到家/天鹅到家的家政服务平台，支持保洁、搬家、维修、预约上门")
+                .category("生活服务")
+                .subcategory("家政服务")
+                .keywords(Arrays.asList("家政", "保洁", "维修", "搬家", "58到家", "上门"))
+                .referenceUrl("https://www.58.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Worker", "Service", "Order", "Evaluation"))
+                .features(Arrays.asList("在线预约", "上门服务", "技师认证", "透明报价", "服务保障"))
+                .workflows(createWorkflows("选择服务", "预约时间", "技师上门", "完成服务", "评价反馈"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("同城跑腿平台模板")
+                .description("参考闪送/UU跑腿的同城跑腿平台，支持代买代送、排队取号、同城快递")
+                .category("生活服务")
+                .subcategory("跑腿服务")
+                .keywords(Arrays.asList("跑腿", "闪送", "代买", "同城", "配送", "快递"))
+                .referenceUrl("https://www.ishansong.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Courier", "Order", "Address", "Payment"))
+                .features(Arrays.asList("即时下单", "专人直送", "实时追踪", "安全保障", "发票管理"))
+                .workflows(createWorkflows("发起订单", "匹配骑手", "上门取件", "专人直送", "签收确认"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("本地生活服务平台模板")
+                .description("参考大众点评/口碑的本地生活服务平台，支持餐饮、娱乐、美容、优惠券")
+                .category("生活服务")
+                .subcategory("本地生活")
+                .keywords(Arrays.asList("本地生活", "大众点评", "口碑", "团购", "优惠券", "评价"))
+                .referenceUrl("https://www.dianping.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Merchant", "Review", "Coupon", "Order"))
+                .features(Arrays.asList("商户搜索", "用户评价", "团购优惠", "会员积分", "排行榜"))
+                .workflows(createWorkflows("搜索商户", "查看评价", "购买优惠券", "到店核销", "发布评价"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("健身运动平台模板")
+                .description("参考Keep/咕咚的健身运动平台，支持视频教学、运动记录、社区分享")
+                .category("生活服务")
+                .subcategory("健身运动")
+                .keywords(Arrays.asList("健身", "运动", "Keep", "咕咚", "教学", "打卡"))
+                .referenceUrl("https://www.gotokeep.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Course", "Record", "Plan", "Community"))
+                .features(Arrays.asList("视频教学", "运动记录", "训练计划", "社区分享", "线上赛事"))
+                .workflows(createWorkflows("选择课程", "跟练视频", "记录数据", "打卡分享", "参加活动"))
+                .build());
+
+        return templates;
+    }
+
+    /**
+     * 企业管理类模板 (5个)
+     */
+    private List<IndustryTemplateEntity> getEnterpriseTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("CRM客户管理平台模板")
+                .description("参考纷享销客/销售易的CRM平台，支持客户管理、销售流程、数据分析")
+                .category("企业管理")
+                .subcategory("CRM系统")
+                .keywords(Arrays.asList("CRM", "客户管理", "销售", "纷享销客", "销售易", "商机"))
+                .referenceUrl("https://www.fxiaoke.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Customer", "Lead", "Opportunity", "Order", "Report"))
+                .features(Arrays.asList("客户管理", "销售漏斗", "商机跟进", "合同管理", "数据报表"))
+                .workflows(createWorkflows("录入客户", "跟进商机", "创建订单", "合同审批", "数据分析"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("项目管理平台模板")
+                .description("参考Teambition/JIRA的项目管理平台，支持任务分配、进度跟踪、协同办公")
+                .category("企业管理")
+                .subcategory("项目管理")
+                .keywords(Arrays.asList("项目管理", "任务", "协同", "Teambition", "JIRA", "看板"))
+                .referenceUrl("https://www.teambition.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Project", "Task", "Member", "Sprint", "Issue"))
+                .features(Arrays.asList("任务管理", "看板视图", "甘特图", "文档协作", "时间跟踪"))
+                .workflows(createWorkflows("创建项目", "分配任务", "跟踪进度", "协同编辑", "完成交付"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("OA办公系统模板")
+                .description("参考钉钉/企业微信的OA办公系统，支持审批流程、考勤打卡、内部通讯")
+                .category("企业管理")
+                .subcategory("OA系统")
+                .keywords(Arrays.asList("OA", "办公", "钉钉", "企业微信", "审批", "考勤"))
+                .referenceUrl("https://www.dingtalk.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Employee", "Approval", "Attendance", "Message", "Department"))
+                .features(Arrays.asList("审批流程", "考勤打卡", "内部通讯", "日程管理", "公告通知"))
+                .workflows(createWorkflows("发起审批", "上级审批", "考勤打卡", "查看日程", "发布公告"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("进销存管理平台模板")
+                .description("参考用友/金蝶的进销存管理平台，支持采购、销售、库存、财务管理")
+                .category("企业管理")
+                .subcategory("ERP系统")
+                .keywords(Arrays.asList("进销存", "ERP", "用友", "金蝶", "库存", "财务"))
+                .referenceUrl("https://www.yonyou.com")
+                .complexityScore(9)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Supplier", "Product", "Order", "Inventory", "Invoice"))
+                .features(Arrays.asList("采购管理", "销售管理", "库存管理", "财务管理", "报表统计"))
+                .workflows(createWorkflows("采购入库", "销售出库", "库存盘点", "财务对账", "生成报表"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("HR人力资源平台模板")
+                .description("参考北森/Moka的HR人力资源平台，支持招聘、入职、薪酬、绩效管理")
+                .category("企业管理")
+                .subcategory("HR系统")
+                .keywords(Arrays.asList("HR", "人力资源", "招聘", "北森", "Moka", "绩效"))
+                .referenceUrl("https://www.mokahr.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Candidate", "Employee", "Position", "Salary", "Performance"))
+                .features(Arrays.asList("招聘管理", "员工档案", "薪酬管理", "绩效考核", "培训管理"))
+                .workflows(createWorkflows("发布职位", "筛选简历", "面试安排", "入职办理", "绩效评估"))
+                .build());
+
+        return templates;
+    }
+
+    /**
+     * 金融科技类模板 (4个)
+     */
+    private List<IndustryTemplateEntity> getFintechTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("移动支付平台模板")
+                .description("参考支付宝/微信支付的移动支付平台，支持扫码支付、转账、理财")
+                .category("金融科技")
+                .subcategory("移动支付")
+                .keywords(Arrays.asList("支付", "移动支付", "支付宝", "微信支付", "转账", "理财"))
+                .referenceUrl("https://www.alipay.com")
+                .complexityScore(9)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Account", "Transaction", "Card", "Investment"))
+                .features(Arrays.asList("扫码支付", "转账汇款", "信用卡还款", "余额理财", "生活缴费"))
+                .workflows(createWorkflows("绑定银行卡", "扫码支付", "转账汇款", "购买理财", "查看账单"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("互联网理财平台模板")
+                .description("参考蚂蚁财富/天天基金的互联网理财平台，支持基金、股票、保险")
+                .category("金融科技")
+                .subcategory("理财投资")
+                .keywords(Arrays.asList("理财", "基金", "股票", "蚂蚁财富", "天天基金", "投资"))
+                .referenceUrl("https://www.fund.eastmoney.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Fund", "Stock", "Transaction", "Portfolio"))
+                .features(Arrays.asList("基金交易", "股票行情", "智能投顾", "投资组合", "收益分析"))
+                .workflows(createWorkflows("选择产品", "购买理财", "定投设置", "查看收益", "赎回提现"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("互联网保险平台模板")
+                .description("参考众安保险/蚂蚁保的互联网保险平台，支持在线投保、理赔、保单管理")
+                .category("金融科技")
+                .subcategory("互联网保险")
+                .keywords(Arrays.asList("保险", "互联网保险", "众安", "蚂蚁保", "投保", "理赔"))
+                .referenceUrl("https://www.zhongan.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Policy", "Product", "Claim", "Payment"))
+                .features(Arrays.asList("在线投保", "智能核保", "保单管理", "在线理赔", "健康服务"))
+                .workflows(createWorkflows("选择产品", "填写信息", "健康告知", "支付保费", "申请理赔"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("消费金融平台模板")
+                .description("参考花呗/京东白条的消费金融平台，支持分期付款、信用评估、还款管理")
+                .category("金融科技")
+                .subcategory("消费金融")
+                .keywords(Arrays.asList("消费金融", "分期", "花呗", "白条", "信用", "还款"))
+                .referenceUrl("https://www.jd.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Credit", "Loan", "Repayment", "Bill"))
+                .features(Arrays.asList("信用评估", "分期付款", "账单管理", "自动还款", "提额申请"))
+                .workflows(createWorkflows("信用评估", "开通额度", "分期消费", "查看账单", "按时还款"))
+                .build());
+
+        return templates;
+    }
+
+    /**
+     * 内容媒体类模板 (5个)
+     */
+    private List<IndustryTemplateEntity> getMediaTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("新闻资讯平台模板")
+                .description("参考今日头条/腾讯新闻的新闻资讯平台，支持个性化推荐、评论互动")
+                .category("内容媒体")
+                .subcategory("新闻资讯")
+                .keywords(Arrays.asList("新闻", "资讯", "今日头条", "腾讯新闻", "推荐", "阅读"))
+                .referenceUrl("https://www.toutiao.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("Article", "User", "Comment", "Topic", "Tag"))
+                .features(Arrays.asList("个性化推荐", "新闻聚合", "评论互动", "专题报道", "订阅关注"))
+                .workflows(createWorkflows("浏览资讯", "订阅频道", "发表评论", "分享文章", "关注作者"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("长视频平台模板")
+                .description("参考爱奇艺/腾讯视频的长视频平台，支持影视剧、综艺、付费会员")
+                .category("内容媒体")
+                .subcategory("长视频")
+                .keywords(Arrays.asList("视频", "影视", "爱奇艺", "腾讯视频", "会员", "综艺"))
+                .referenceUrl("https://www.iqiyi.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Video", "Series", "Episode", "Subscription"))
+                .features(Arrays.asList("影视点播", "会员特权", "离线下载", "弹幕互动", "投屏播放"))
+                .workflows(createWorkflows("搜索内容", "开通会员", "在线观看", "发送弹幕", "离线下载"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("音频播客平台模板")
+                .description("参考喜马拉雅/荔枝的音频播客平台，支持有声书、播客、音频直播")
+                .category("内容媒体")
+                .subcategory("音频播客")
+                .keywords(Arrays.asList("音频", "播客", "喜马拉雅", "荔枝", "有声书", "电台"))
+                .referenceUrl("https://www.ximalaya.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Audio", "Album", "Comment", "Live"))
+                .features(Arrays.asList("有声内容", "订阅专辑", "音频直播", "离线收听", "播放列表"))
+                .workflows(createWorkflows("搜索专辑", "订阅收听", "评论互动", "收藏下载", "创建播放列表"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("在线漫画平台模板")
+                .description("参考快看漫画/腾讯动漫的在线漫画平台，支持付费阅读、追更提醒")
+                .category("内容媒体")
+                .subcategory("在线漫画")
+                .keywords(Arrays.asList("漫画", "动漫", "快看", "腾讯动漫", "追更", "付费"))
+                .referenceUrl("https://www.kuaikanmanhua.com")
+                .complexityScore(6)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Comic", "Chapter", "Comment", "Purchase"))
+                .features(Arrays.asList("漫画阅读", "付费章节", "追更提醒", "评论互动", "作者签约"))
+                .workflows(createWorkflows("搜索漫画", "订阅追更", "付费解锁", "在线阅读", "发表评论"))
+                .build());
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.randomUUID())
+                .name("知识付费平台模板")
+                .description("参考得到/知乎Live的知识付费平台，支持音频课程、电子书、直播讲座")
+                .category("内容媒体")
+                .subcategory("知识付费")
+                .keywords(Arrays.asList("知识付费", "得到", "知乎Live", "课程", "电子书", "讲座"))
+                .referenceUrl("https://www.igetget.com")
+                .complexityScore(7)
+                .usageCount(0)
+                .rating(BigDecimal.ZERO)
+                .isActive(true)
+                .entities(createEntities("User", "Course", "Ebook", "Live", "Order"))
+                .features(Arrays.asList("音频课程", "电子书", "直播讲座", "学习社群", "证书颁发"))
+                .workflows(createWorkflows("浏览课程", "购买付费", "学习内容", "参与讨论", "获得证书"))
+                .build());
+
+        return templates;
+    }
+}

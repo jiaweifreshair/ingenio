@@ -1,0 +1,61 @@
+package com.ingenio.backend.service;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * SuperDesign AI设计服务接口
+ * 提供页面 No-code 生成优化功能，支持多方案并行与组件代码回注
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+public interface SuperDesignService {
+
+    /**
+     * 生成设计方案
+     * 根据 AppSpec 的 UI 约束生成多个设计方案
+     *
+     * @param appSpec AppSpec JSON
+     * @param count 生成方案数量（默认3个）
+     * @return 设计方案列表
+     */
+    List<DesignCandidate> generateDesigns(Map<String, Object> appSpec, int count);
+
+    /**
+     * 应用设计方案
+     * 将选定的设计方案应用到 AppSpec，更新 customComponents 和 themeVars
+     *
+     * @param appSpecId AppSpec ID
+     * @param designCandidate 选定的设计方案
+     * @return 更新后的 AppSpec
+     */
+    Map<String, Object> applyDesign(String appSpecId, DesignCandidate designCandidate);
+
+    /**
+     * 设计方案候选
+     */
+    class DesignCandidate {
+        private String id;
+        private String previewUrl;
+        private Map<String, String> components; // 组件代码（组件名 -> 代码）
+        private Map<String, String> themeVars; // 主题变量
+        private String license; // 许可证
+        private Double score; // 设计评分
+
+        // Getters and Setters
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getPreviewUrl() { return previewUrl; }
+        public void setPreviewUrl(String previewUrl) { this.previewUrl = previewUrl; }
+        public Map<String, String> getComponents() { return components; }
+        public void setComponents(Map<String, String> components) { this.components = components; }
+        public Map<String, String> getThemeVars() { return themeVars; }
+        public void setThemeVars(Map<String, String> themeVars) { this.themeVars = themeVars; }
+        public String getLicense() { return license; }
+        public void setLicense(String license) { this.license = license; }
+        public Double getScore() { return score; }
+        public void setScore(Double score) { this.score = score; }
+    }
+}
+

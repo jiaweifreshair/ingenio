@@ -1,0 +1,448 @@
+package com.ingenio.backend.agent;
+
+import com.ingenio.backend.agent.dto.ComplexityLevel;
+import com.ingenio.backend.agent.dto.ComplexityScore;
+import com.ingenio.backend.agent.dto.IntentClassificationResult;
+import com.ingenio.backend.agent.dto.RefinedRequirement;
+import com.ingenio.backend.agent.dto.RequirementIntent;
+import com.ingenio.backend.e2e.BaseE2ETest;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
+import org.junit.jupiter.api.MethodOrderer;
+import org.junit.jupiter.api.Order;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * P3 Pipeline 完整流程集成测试 - Phase 3.5.1
+ *
+ * <p>测试目标：</p>
+ * <ul>
+ *   <li>验证IntentClassifier → ComplexityEvaluator → RequirementRefiner完整流程</li>
+ *   <li>验证ComplexityScore在各组件间的正确传递</li>
+ *   <li>验证不同复杂度和意图触发正确的改写策略</li>
+ *   <li>确保改写后需求质量符合预期</li>
+ * </ul>
+ *
+ * <p>测试策略：</p>
+ * <ul>
+ *   <li>继承BaseE2ETest使用真实PostgreSQL TestContainer</li>
+ *   <li>使用真实AI API调用（无Mock）</li>
+ *   <li>覆盖6个典型场景（简单/克隆/混合/复杂/模糊/数据流）</li>
+ *   <li>验证改写效果的4个关键指标</li>
+ * </ul>
+ *
+ * <p>零Mock策略：</p>
+ * <ul>
+ *   <li>数据库：使用TestContainers真实PostgreSQL 14</li>
+ *   <li>AI API：使用真实DashScope Qwen-Max API</li>
+ *   <li>Redis：使用TestContainers真实Redis 7（如需）</li>
+ * </ul>
+ *
+ * @author Ingenio Team
+ * @version 1.0.0
+ * @since 2025-11-20 P3 Phase 3.5.1
+ */
+@TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@DisplayName("P3 Pipeline 集成测试套件")
+class P3PipelineIntegrationTest extends BaseE2ETest {
+    
+    private static final Logger log = LoggerFactory.getLogger(P3PipelineIntegrationTest.class);
+    
+    @Autowired
+    private IntentClassifier intentClassifier;
+    
+    @Autowired
+    private RequirementRefiner requirementRefiner;
+    
+    /**
+     * 场景1: 简单需求 - 待办事项app
+     *
+     * <p>期望流程：</p>
+     * <ol>
+     *   <li>意图识别：DESIGN_FROM_SCRATCH（从零设计）</li>
+     *   <li>复杂度评估：SIMPLE（功能单一，实体少）</li>
+     *   <li>改写策略：DETAIL_ENHANCEMENT（细节增强）</li>
+     *   <li>改写效果：补充核心实体和MVP功能</li>
+     * </ol>
+     */
+    @Test
+    @Order(1)
+    @DisplayName("场景1: 简单需求 - 待办事项app（SIMPLE → DETAIL_ENHANCEMENT）")
+    void testSimpleRequirement_TodoApp() {
+        // Given: 简单的待办事项app需求
+        String userInput = "做一个待办事项app";
+        
+        // When: 执行意图分类
+        log.info("=== 场景1开始：简单需求 - 待办事项app ===");
+        IntentClassificationResult classifyResult = intentClassifier.classifyIntent(userInput);
+        
+        // Then: 验证意图识别结果
+        log.info("意图识别结果: intent={}, level={}", 
+            classifyResult.getIntent(), 
+            classifyResult.getComplexityScore().getLevel());
+        
+        assertThat(classifyResult.getIntent())
+            .as("简单需求应识别为从零设计意图")
+            .isEqualTo(RequirementIntent.DESIGN_FROM_SCRATCH);
+            
+        assertThat(classifyResult.getComplexityScore().getLevel())
+            .as("待办事项app应评估为简单级别")
+            .isEqualTo(ComplexityLevel.SIMPLE);
+        
+        // When: 执行需求改写
+        RefinedRequirement refined = requirementRefiner.refine(
+            userInput,
+            classifyResult.getIntent(),
+            classifyResult.getComplexityScore()
+        );
+        
+        // Then: 验证改写策略和效果
+        log.info("改写结果: type={}, entities={}, features={}", 
+            refined.getRefineType(),
+            refined.getCoreEntities().size(),
+            refined.getMvpFeatures().size());
+        
+        assertThat(refined.getRefineType())
+            .as("简单需求应触发细节增强策略")
+            .isEqualTo(RefinedRequirement.RefineType.DETAIL_ENHANCEMENT);
+            
+        assertThat(refined.getCoreEntities())
+            .as("应补充核心实体（至少包含Todo实体）")
+            .isNotEmpty()
+            .hasSizeGreaterThanOrEqualTo(1);
+            
+        assertThat(refined.getMvpFeatures())
+            .as("应补充MVP功能（至少包含CRUD功能）")
+            .isNotEmpty()
+            .hasSizeGreaterThanOrEqualTo(2);
+    }
+    
+    /**
+     * 场景2: 克隆需求 - 仿小红书
+     *
+     * <p>期望流程：</p>
+     * <ol>
+     *   <li>意图识别：CLONE_EXISTING_WEBSITE（克隆现有网站）</li>
+     *   <li>复杂度评估：MEDIUM（社交+内容平台，中等复杂度）</li>
+     *   <li>改写策略：PRIORITY_SPLIT（优先级拆分）</li>
+     *   <li>改写效果：拆分P0/P1/P2功能，明确核心MVP</li>
+     * </ol>
+     */
+    @Test
+    @Order(2)
+    @DisplayName("场景2: 克隆需求 - 仿小红书（CLONE → PRIORITY_SPLIT）")
+    void testCloneRequirement_Xiaohongshu() {
+        // Given: 克隆小红书的需求
+        String userInput = "做一个像小红书一样的app";
+        
+        // When: 执行意图分类
+        log.info("=== 场景2开始：克隆需求 - 仿小红书 ===");
+        IntentClassificationResult classifyResult = intentClassifier.classifyIntent(userInput);
+        
+        // Then: 验证意图识别
+        log.info("意图识别结果: intent={}, level={}", 
+            classifyResult.getIntent(),
+            classifyResult.getComplexityScore().getLevel());
+            
+        assertThat(classifyResult.getIntent())
+            .as("明确提到'像小红书一样'应识别为克隆意图")
+            .isEqualTo(RequirementIntent.CLONE_EXISTING_WEBSITE);
+        
+        // When: 执行需求改写
+        RefinedRequirement refined = requirementRefiner.refine(
+            userInput,
+            classifyResult.getIntent(),
+            classifyResult.getComplexityScore()
+        );
+        
+        // Then: 验证改写策略
+        log.info("改写结果: type={}, priorities={}", 
+            refined.getRefineType(),
+            refined.getPrioritizedFeatures() != null ? 
+                refined.getPrioritizedFeatures().keySet() : "null");
+        
+        assertThat(refined.getRefineType())
+            .as("克隆需求应触发优先级拆分策略")
+            .isEqualTo(RefinedRequirement.RefineType.PRIORITY_SPLIT);
+            
+        assertThat(refined.getPrioritizedFeatures())
+            .as("应包含P0/P1/P2优先级分类")
+            .isNotNull()
+            .containsKeys("P0", "P1");
+    }
+    
+    /**
+     * 场景3: 混合意图 - 美团+AI推荐
+     *
+     * <p>期望流程：</p>
+     * <ol>
+     *   <li>意图识别：HYBRID_CLONE_AND_CUSTOMIZE（既克隆又定制）</li>
+     *   <li>复杂度评估：COMPLEX（多业务模块+AI能力）</li>
+     *   <li>改写策略：BOUNDARY_CLARIFICATION（边界澄清）</li>
+     *   <li>改写效果：明确克隆范围和定制范围</li>
+     * </ol>
+     */
+    @Test
+    @Order(3)
+    @DisplayName("场景3: 混合意图 - 美团+AI推荐（HYBRID → BOUNDARY_CLARIFICATION）")
+    void testHybridRequirement_MeituanWithAI() {
+        // Given: 混合了克隆和定制的需求
+        String userInput = "做一个像美团一样的外卖平台，但要加入AI智能推荐功能";
+        
+        // When: 执行意图分类
+        log.info("=== 场景3开始：混合意图 - 美团+AI推荐 ===");
+        IntentClassificationResult classifyResult = intentClassifier.classifyIntent(userInput);
+        
+        // Then: 验证混合意图识别
+        log.info("意图识别结果: intent={}, level={}", 
+            classifyResult.getIntent(),
+            classifyResult.getComplexityScore().getLevel());
+            
+        assertThat(classifyResult.getIntent())
+            .as("包含'像美团'和'加入AI'应识别为混合意图")
+            .isEqualTo(RequirementIntent.HYBRID_CLONE_AND_CUSTOMIZE);
+        
+        // When: 执行需求改写
+        RefinedRequirement refined = requirementRefiner.refine(
+            userInput,
+            classifyResult.getIntent(),
+            classifyResult.getComplexityScore()
+        );
+        
+        // Then: 验证边界澄清效果
+        log.info("改写结果: type={}, cloneScope={}, customScope={}", 
+            refined.getRefineType(),
+            refined.getCloneScope(),
+            refined.getCustomScope());
+        
+        assertThat(refined.getRefineType())
+            .as("混合意图应触发边界澄清策略")
+            .isEqualTo(RefinedRequirement.RefineType.BOUNDARY_CLARIFICATION);
+            
+        assertThat(refined.getCloneScope())
+            .as("应明确克隆范围（美团外卖核心功能）")
+            .isNotEmpty();
+            
+        assertThat(refined.getCustomScope())
+            .as("应明确定制范围（AI推荐功能）")
+            .isNotEmpty();
+    }
+    
+    /**
+     * 场景4: 复杂需求 - 企业ERP系统
+     *
+     * <p>期望流程：</p>
+     * <ol>
+     *   <li>意图识别：DESIGN_FROM_SCRATCH</li>
+     *   <li>复杂度评估：COMPLEX（多模块、多角色、复杂业务）</li>
+     *   <li>改写策略：PHASED_DEVELOPMENT（分阶段开发）</li>
+     *   <li>改写效果：拆分Phase 1/2/3，明确依赖关系</li>
+     * </ol>
+     */
+    @Test
+    @Order(4)
+    @DisplayName("场景4: 复杂需求 - 企业ERP（COMPLEX → PHASED_DEVELOPMENT）")
+    void testComplexRequirement_EnterpriseERP() {
+        // Given: 复杂的企业ERP系统需求
+        String userInput = "做一个企业ERP系统，包括采购管理、库存管理、财务管理、人力资源管理";
+        
+        // When: 执行意图分类
+        log.info("=== 场景4开始：复杂需求 - 企业ERP ===");
+        IntentClassificationResult classifyResult = intentClassifier.classifyIntent(userInput);
+        
+        // Then: 验证复杂度识别
+        log.info("意图识别结果: intent={}, level={}", 
+            classifyResult.getIntent(),
+            classifyResult.getComplexityScore().getLevel());
+            
+        assertThat(classifyResult.getComplexityScore().getLevel())
+            .as("包含多个业务模块应评估为复杂级别")
+            .isEqualTo(ComplexityLevel.COMPLEX);
+        
+        // When: 执行需求改写
+        RefinedRequirement refined = requirementRefiner.refine(
+            userInput,
+            classifyResult.getIntent(),
+            classifyResult.getComplexityScore()
+        );
+        
+        // Then: 验证分阶段拆分效果
+        log.info("改写结果: type={}, phases={}", 
+            refined.getRefineType(),
+            refined.getDevelopmentPhases() != null ? 
+                refined.getDevelopmentPhases().size() : 0);
+        
+        assertThat(refined.getRefineType())
+            .as("复杂需求应触发分阶段开发策略")
+            .isEqualTo(RefinedRequirement.RefineType.PHASED_DEVELOPMENT);
+            
+        assertThat(refined.getDevelopmentPhases())
+            .as("应拆分为多个开发阶段（至少2个）")
+            .isNotNull()
+            .hasSizeGreaterThanOrEqualTo(2);
+    }
+    
+    /**
+     * 场景5: 模糊需求 - 社交app
+     *
+     * <p>期望流程：</p>
+     * <ol>
+     *   <li>意图识别：DESIGN_FROM_SCRATCH</li>
+     *   <li>复杂度评估：MEDIUM（需求模糊，需要澄清）</li>
+     *   <li>改写策略：DETAIL_ENHANCEMENT</li>
+     *   <li>改写效果：信息增益≥200%（从3字到至少300字）</li>
+     * </ol>
+     */
+    @Test
+    @Order(5)
+    @DisplayName("场景5: 模糊需求 - 社交app（信息增益≥200%）")
+    void testVagueRequirement_SocialApp() {
+        // Given: 非常模糊的需求
+        String userInput = "做一个社交app";
+        int originalLength = userInput.length();
+        
+        // When: 执行完整流程
+        log.info("=== 场景5开始：模糊需求 - 社交app ===");
+        log.info("原始需求长度: {} 字", originalLength);
+        
+        IntentClassificationResult classifyResult = intentClassifier.classifyIntent(userInput);
+        RefinedRequirement refined = requirementRefiner.refine(
+            userInput,
+            classifyResult.getIntent(),
+            classifyResult.getComplexityScore()
+        );
+        
+        // Then: 验证信息增益
+        int refinedLength = refined.getRefinedText().length();
+        double informationGain = (double) refinedLength / originalLength;
+        
+        log.info("改写后长度: {} 字", refinedLength);
+        log.info("信息增益率: {:.1f}%", informationGain * 100);
+        
+        assertThat(refinedLength)
+            .as("改写后需求应显著增加信息量")
+            .isGreaterThan(originalLength * 3); // 至少3倍信息增益
+            
+        assertThat(informationGain)
+            .as("信息增益率应≥200%（至少3倍）")
+            .isGreaterThanOrEqualTo(3.0);
+            
+        assertThat(refined.getRefinedText())
+            .as("改写后应包含明确的功能描述")
+            .contains("用户", "功能")
+            .hasSizeGreaterThan(100);
+    }
+    
+    /**
+     * 场景6: ComplexityScore完整性验证
+     *
+     * <p>验证ComplexityScore在完整流程中的数据传递：</p>
+     * <ol>
+     *   <li>IntentClassifier生成ComplexityScore</li>
+     *   <li>ComplexityScore传递给RequirementRefiner</li>
+     *   <li>所有维度分数均在有效范围内（0-100）</li>
+     *   <li>最终分数与复杂度等级一致</li>
+     * </ol>
+     */
+    @Test
+    @Order(6)
+    @DisplayName("场景6: ComplexityScore数据流验证")
+    void testComplexityScoreDataFlow() {
+        // Given: 中等复杂度的需求
+        String userInput = "做一个在线商城，支持商品展示、购物车、订单管理、支付功能";
+        
+        // When: 执行意图分类
+        log.info("=== 场景6开始：ComplexityScore数据流验证 ===");
+        IntentClassificationResult classifyResult = intentClassifier.classifyIntent(userInput);
+        ComplexityScore complexityScore = classifyResult.getComplexityScore();
+        
+        // Then: 验证ComplexityScore完整性
+        log.info("ComplexityScore详情: final={}, entity={}, feature={}, business={}, technical={}",
+            complexityScore.getFinalScore(),
+            complexityScore.getEntityScore(),
+            complexityScore.getFeatureScore(),
+            complexityScore.getBusinessScore(),
+            complexityScore.getTechnicalScore());
+        
+        // 验证所有分数字段非空
+        assertThat(complexityScore.getFinalScore())
+            .as("最终分数不应为空")
+            .isNotNull();
+            
+        assertThat(complexityScore.getEntityScore())
+            .as("实体复杂度分数不应为空")
+            .isNotNull();
+            
+        assertThat(complexityScore.getFeatureScore())
+            .as("功能复杂度分数不应为空")
+            .isNotNull();
+            
+        assertThat(complexityScore.getBusinessScore())
+            .as("业务复杂度分数不应为空")
+            .isNotNull();
+            
+        assertThat(complexityScore.getTechnicalScore())
+            .as("技术复杂度分数不应为空")
+            .isNotNull();
+        
+        // 验证分数范围（0-100）
+        assertThat(complexityScore.getFinalScore())
+            .as("最终分数应在0-100之间")
+            .isBetween(0, 100);
+            
+        assertThat(complexityScore.getEntityScore())
+            .as("实体复杂度分数应在0-100之间")
+            .isBetween(0, 100);
+            
+        assertThat(complexityScore.getFeatureScore())
+            .as("功能复杂度分数应在0-100之间")
+            .isBetween(0, 100);
+            
+        assertThat(complexityScore.getBusinessScore())
+            .as("业务复杂度分数应在0-100之间")
+            .isBetween(0, 100);
+            
+        assertThat(complexityScore.getTechnicalScore())
+            .as("技术复杂度分数应在0-100之间")
+            .isBetween(0, 100);
+        
+        // 验证复杂度等级与分数一致性
+        ComplexityLevel level = complexityScore.getLevel();
+        int finalScore = complexityScore.getFinalScore();
+        
+        if (level == ComplexityLevel.SIMPLE) {
+            assertThat(finalScore)
+                .as("SIMPLE级别最终分数应<40")
+                .isLessThan(40);
+        } else if (level == ComplexityLevel.MEDIUM) {
+            assertThat(finalScore)
+                .as("MEDIUM级别最终分数应在40-70之间")
+                .isBetween(40, 70);
+        } else if (level == ComplexityLevel.COMPLEX) {
+            assertThat(finalScore)
+                .as("COMPLEX级别最终分数应>70")
+                .isGreaterThan(70);
+        }
+        
+        // When: 执行需求改写，验证ComplexityScore正确传递
+        RefinedRequirement refined = requirementRefiner.refine(
+            userInput,
+            classifyResult.getIntent(),
+            complexityScore
+        );
+        
+        // Then: 验证改写策略与复杂度匹配
+        log.info("改写策略: {}, 基于复杂度等级: {}", 
+            refined.getRefineType(), level);
+        
+        assertThat(refined.getRefinedText())
+            .as("改写后需求应基于ComplexityScore进行合理改写")
+            .isNotEmpty()
+            .hasSizeGreaterThan(userInput.length());
+    }
+}

@@ -1,0 +1,90 @@
+{
+  "id": "campus-marketplace",
+  "name": "校园二手交易平台",
+  "description": "专为校园设计的二手物品交易平台，支持学生认证、商品发布、私信沟通和线下交易。",
+  "category": "电商",
+  "subcategory": "二手交易",
+  "keywords": ["二手", "闲鱼", "校园", "交易", "跳蚤市场", "旧书"],
+  "complexity": "MEDIUM",
+  "referenceUrl": "https://www.xianyu.com",
+  "constraints": {
+    "techStack": "SpringBoot 3.x + MyBatisPlus",
+    "database": "PostgreSQL",
+    "auth": "JWT + Interceptor",
+    "apiStyle": "RESTful"
+  },
+  "schema": [
+    {
+      "tableName": "users",
+      "comment": "用户表（学生）",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "username", "type": "VARCHAR(50)", "constraints": "NOT NULL UNIQUE", "comment": "用户名"},
+        {"name": "password", "type": "VARCHAR(100)", "constraints": "NOT NULL", "comment": "加密密码"},
+        {"name": "student_id", "type": "VARCHAR(20)", "constraints": "NOT NULL UNIQUE", "comment": "学号"},
+        {"name": "nickname", "type": "VARCHAR(50)", "comment": "昵称"},
+        {"name": "avatar", "type": "VARCHAR(255)", "comment": "头像URL"},
+        {"name": "created_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"}
+      ]
+    },
+    {
+      "tableName": "products",
+      "comment": "商品表",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "seller_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "卖家ID (FK -> users.id)"},
+        {"name": "title", "type": "VARCHAR(100)", "constraints": "NOT NULL", "comment": "商品标题"},
+        {"name": "description", "type": "TEXT", "comment": "商品详情描述"},
+        {"name": "price", "type": "DECIMAL(10,2)", "constraints": "NOT NULL", "comment": "价格"},
+        {"name": "images", "type": "TEXT", "comment": "图片URL列表(JSON数组)"},
+        {"name": "status", "type": "VARCHAR(20)", "constraints": "DEFAULT 'ON_SALE'", "comment": "状态: ON_SALE, SOLD, LOCKED"},
+        {"name": "view_count", "type": "INT", "constraints": "DEFAULT 0", "comment": "浏览量"},
+        {"name": "created_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"}
+      ]
+    },
+    {
+      "tableName": "categories",
+      "comment": "商品分类表",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "name", "type": "VARCHAR(50)", "constraints": "NOT NULL", "comment": "分类名称"},
+        {"name": "icon", "type": "VARCHAR(255)", "comment": "分类图标"}
+      ]
+    },
+    {
+      "tableName": "messages",
+      "comment": "私信消息表",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "sender_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "发送者ID"},
+        {"name": "receiver_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "接收者ID"},
+        {"name": "product_id", "type": "BIGINT", "comment": "关联商品ID (可选)"},
+        {"name": "content", "type": "TEXT", "constraints": "NOT NULL", "comment": "消息内容"},
+        {"name": "is_read", "type": "BOOLEAN", "constraints": "DEFAULT FALSE", "comment": "是否已读"},
+        {"name": "created_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"}
+      ]
+    },
+    {
+      "tableName": "orders",
+      "comment": "交易订单表",
+      "columns": [
+        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "order_no", "type": "VARCHAR(32)", "constraints": "NOT NULL UNIQUE", "comment": "订单号"},
+        {"name": "buyer_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "买家ID"},
+        {"name": "seller_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "卖家ID"},
+        {"name": "product_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "商品ID"},
+        {"name": "amount", "type": "DECIMAL(10,2)", "constraints": "NOT NULL", "comment": "交易金额"},
+        {"name": "status", "type": "VARCHAR(20)", "constraints": "DEFAULT 'PENDING'", "comment": "状态: PENDING, PAID, COMPLETED, CANCELLED"},
+        {"name": "created_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"}
+      ]
+    }
+  ],
+  "features": [
+    "用户注册与登录（含学号校验）",
+    "商品发布、编辑与下架",
+    "商品列表浏览与搜索（支持分类筛选）",
+    "商品详情展示（含多图轮播）",
+    "买卖双方私信沟通",
+    "订单创建与状态管理"
+  ]
+}

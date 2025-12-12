@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>SSE文���解析测试 (http://)</title>
+  <style>
+    body { font-family: monospace; padding: 20px; }
+    .log { margin: 10px 0; padding: 5px; background: #f0f0f0; }
+    .success { color: green; }
+    .error { color: red; }
+    .file { border: 1px solid #ccc; margin: 10px 0; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h1>SSE文件解析测试 (来自 http://localhost:3000)</h1>
+  <button onclick="startTest()">开始测试</button>
+  <div id="logs"></div>
+  <div id="files"></div>
+
+  <script>
+    const API_BASE_URL = 'http://localhost:8080/api';
+    const logs = document.getElementById('logs');
+    const filesDiv = document.getElementById('files');
+    const parsedFiles = [];
+
+    function log(message, isError = false) {
+      const div = document.createElement('div');
+      div.className = `log ${isError ? 'error' : 'success'}`;
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logs.appendChild(div);
+      console.log(message);
+    }
+
+    function parseFilesFromText(text) {
+      const files = [];
+      const fileRegex = /<file\s+path="([^"]+)"[^>]*>([\s\S]*?)<\/file>/g;
+      let match;
+
+      while ((match = fileRegex.exec(text)) !== null) {
+        const [, path, content] = match;
+        if (path && content) {
+          files.push({ path, content: content.trim() });
+        }
+      }
+      return files;
+    }
+
+    function displayFile(file) {
+      const fileDiv = document.createElement('div');
+      fileDiv.className = 'file';
+      fileDiv.innerHTML = `
+        <h3>${file.path}</h3>
+        <pre>${file.content.substring(0, 200)}${file.content.length > 200 ? '...' : ''}</pre>
+      `;
+      filesDiv.appendChild(fileDiv);
+    }
+
+    async function startTest() {
+      logs.innerHTML = '';
+      filesDiv.innerHTML = '';
+      parsedFiles.length = 0;
+
+      log('开始SSE连接...');
+
+      const url = `${API_BASE_URL}/v1/prototype/generate/stream`;
+      const payload = {
+        userRequirement: '做一个简单的登录页面',
+        designStyle: 'MODERN_MINIMALIST',
+        intentType: 'design'
+      };
+
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'text/event-stream',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        log('✅ SSE连接建立成功');
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let currentData = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split(/\r\n|\r|\n/);
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith(':')) continue;
+
+            if (line.trim() === '') {
+              if (currentData) {
+                try {
+                  const event = JSON.parse(currentData);
+                  log(`收到事件: ${event.type}`);
+
+                  if (event.type === 'conversation' && event.text) {
+                    log(`🔍 收到conversation事件，长度: ${event.text.length}`);
+                    const newFiles = parseFilesFromText(event.text);
+                    if (newFiles.length > 0) {
+                      log(`✅ 解析到 ${newFiles.length} 个文件: ${newFiles.map(f => f.path).join(', ')}`);
+                      newFiles.forEach(file => {
+                        if (!parsedFiles.find(f => f.path === file.path)) {
+                          parsedFiles.push(file);
+                          displayFile(file);
+                        }
+                      });
+                    }
+                  }
+
+                  if (event.type === 'sandbox' && event.sandboxUrl) {
+                    log(`✅ 沙箱URL: ${event.sandboxUrl}`);
+                  }
+                } catch (e) {
+                  log(`解析失败: ${e.message}`, true);
+                }
+                currentData = '';
+              }
+              continue;
+            }
+
+            if (line.startsWith('data:')) {
+              if (currentData) {
+                currentData += '\n';
+              }
+              currentData += line.replace(/^data:\s?/, '');
+            }
+          }
+        }
+
+        log(`✅ SSE流结束，共解析 ${parsedFiles.length} 个文件`);
+
+      } catch (error) {
+        log(`❌ 错误: ${error.message}`, true);
+        console.error('详细错误:', error);
+      }
+    }
+  </script>
+</body>
+</html>

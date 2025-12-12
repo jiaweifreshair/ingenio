@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ingenio.backend.mapper.RepairRecordMapper">
+
+    <!-- 查询指定AppSpec的所有修复记录 -->
+    <select id="selectByAppSpecId" resultType="com.ingenio.backend.entity.RepairRecordEntity">
+        SELECT * FROM repair_records
+        WHERE app_spec_id = #{appSpecId}
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- 查询指定AppSpec的最新修复记录 -->
+    <select id="selectLatestByAppSpecId" resultType="com.ingenio.backend.entity.RepairRecordEntity">
+        SELECT * FROM repair_records
+        WHERE app_spec_id = #{appSpecId}
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
+
+    <!-- 查询正在进行的修复记录 -->
+    <select id="selectActiveRepair" resultType="com.ingenio.backend.entity.RepairRecordEntity">
+        SELECT * FROM repair_records
+        WHERE app_spec_id = #{appSpecId}
+          AND status IN ('pending', 'analyzing', 'repairing', 'validating')
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
+
+    <!-- 统计指定AppSpec的修复成功率 -->
+    <select id="calculateSuccessRate" resultType="java.lang.Double">
+        SELECT ROUND(
+            CAST(SUM(CASE WHEN is_success THEN 1 ELSE 0 END) AS DECIMAL) /
+            NULLIF(COUNT(*), 0),
+            2
+        ) AS success_rate
+        FROM repair_records
+        WHERE app_spec_id = #{appSpecId}
+    </select>
+
+</mapper>

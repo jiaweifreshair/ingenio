@@ -1,0 +1,135 @@
+# 本地开发环境配置
+# 用于前后端联调
+spring:
+  # 数据源配置（连接本地PostgreSQL）
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ingenio_dev?stringtype=unspecified
+    username: postgresql
+    password: ingenio_20251122
+    driver-class-name: org.postgresql.Driver
+
+  # Redis配置（连接Docker中的Redis - 无密码）
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      database: 0
+
+  # Spring AI OpenAI配置（七牛云AI服务 - OpenAI兼容接口）
+  # 注意：base-url不要包含/v1，Spring AI会自动追加/v1/chat/completions
+  ai:
+    openai:
+      api-key: sk-3560551a75aab3d48fd7ac41115a1336b44b0c100ccbbc3df1f5dd765098b118
+      base-url: https://api.qnaigc.com
+      chat:
+        enabled: true
+        options:
+          # 使用通义千问3-235B模型（七牛云可用）
+          model: qwen3-235b-a22b-instruct-2507
+          temperature: 0.3
+          max-tokens: 4096
+      embedding:
+        enabled: false
+
+# MinIO配置（连接Docker中的MinIO）
+minio:
+  endpoint: http://127.0.0.1:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket-name: ingenio
+  auto-create-bucket: true
+
+# Redisson配置（无密码）
+redisson:
+  address: redis://localhost:6379
+  # 不设置password字段，避免Redis认证错误
+  database: 0
+  connection-pool-size: 64
+  connection-minimum-idle-size: 10
+  idle-connection-timeout: 10000
+  timeout: 3000
+
+# SaToken JWT配置
+sa-token:
+  token-name: Authorization
+  timeout: 604800                # Token总有效期：7天（秒）
+  activity-timeout: 86400        # 活动超时：1天（秒）- 用户活跃时自动续期
+  is-concurrent: true            # 允许同一账号并发登录
+  is-share: false                # 不共享Token（每次登录生成新Token）
+  token-style: jwt               # 使用JWT风格Token
+  is-log: true                   # 开启日志输出
+  jwt-secret-key: ingenio-local-dev-jwt-secret-key-min-32-characters
+
+# 服务器配置
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+  compression:
+    enabled: true
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.ingenio.backend: DEBUG
+    com.baomidou.mybatisplus: DEBUG
+    org.springframework.ai: DEBUG
+    com.alibaba.cloud.ai: DEBUG
+    org.redisson: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Ingenio配置
+ingenio:
+  codegen:
+    preview-base-url: http://localhost:3000
+
+  # 租户配置
+  tenant:
+    default-tenant-id: 00000000-0000-0000-0000-000000000001
+
+  # Open-Lovable集成配置
+  openlovable:
+    base-url: http://localhost:3001
+
+  # 跨域配置（允许前端localhost:3000访问）
+  cors:
+    allowed-origins:
+      - http://localhost:3000
+      - http://127.0.0.1:3000
+    allowed-methods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      - PATCH
+    allowed-headers:
+      - "*"
+    allow-credentials: true
+    max-age: 3600
+
+# SpringDoc配置（Swagger UI）
+springdoc:
+  api-docs:
+    enabled: true
+    path: /api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    operations-sorter: method
+
+# Actuator监控配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+  # 关闭邮件健康检查避免本地无SMTP凭证导致健康探测失败
+  health:
+    mail:
+      enabled: false

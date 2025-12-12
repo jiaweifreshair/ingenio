@@ -1,0 +1,518 @@
+package com.ingenio.backend.service.impl;
+
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.ingenio.backend.common.exception.BusinessException;
+import com.ingenio.backend.common.exception.ErrorCode;
+import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.mapper.AppSpecMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.time.LocalDateTime;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+/**
+ * AppSpecServiceImpl单元测试
+ * 测试AppSpec创建、版本管理、租户隔离等核心业务逻辑
+ */
+@ExtendWith(MockitoExtension.class)
+@DisplayName("AppSpecServiceImpl单元测试")
+class AppSpecServiceImplTest {
+
+    @Mock
+    private AppSpecMapper appSpecMapper;
+
+    @InjectMocks
+    private AppSpecServiceImpl appSpecService;
+
+    private UUID testTenantId;
+    private UUID testUserId;
+    private Map<String, Object> testSpecContent;
+    private AppSpecEntity testAppSpec;
+
+    /**
+     * 初始化测试数据
+     */
+    @BeforeEach
+    void setUp() {
+        testTenantId = UUID.randomUUID();
+        testUserId = UUID.randomUUID();
+
+        // 构建测试用的AppSpec内容
+        testSpecContent = new HashMap<>();
+        testSpecContent.put("appName", "TestApp");
+        testSpecContent.put("version", "1.0.0");
+        List<Map<String, Object>> pages = new ArrayList<>();
+        Map<String, Object> homePage = new HashMap<>();
+        homePage.put("id", "home");
+        homePage.put("name", "首页");
+        pages.add(homePage);
+        testSpecContent.put("pages", pages);
+
+        // 构建测试用的AppSpec实体
+        testAppSpec = AppSpecEntity.builder()
+                .id(UUID.randomUUID())
+                .tenantId(testTenantId)
+                .createdByUserId(testUserId)
+                .specContent(testSpecContent)
+                .version(1)
+                .parentVersionId(null)
+                .status(AppSpecEntity.Status.DRAFT.getValue())
+                .qualityScore(0)
+                .metadata(new HashMap<>())
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+    }
+
+    /**
+     * 测试创建AppSpec成功
+     * 验证点：
+     * 1. 初始状态为draft
+     * 2. 初始版本为1
+     * 3. 初始质量评分为0
+     * 4. parentVersionId为null（根版本）
+     */
+    @Test
+    @DisplayName("测试创建AppSpec成功")
+    void testCreateAppSpecSuccess() {
+        // Arrange
+        AppSpecServiceImpl spyService = spy(appSpecService);
+        doReturn(true).when(spyService).save(any(AppSpecEntity.class));
+
+        // Act
+        AppSpecEntity result = spyService.createAppSpec(testTenantId, testUserId, testSpecContent);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(testTenantId, result.getTenantId());
+        assertEquals(testUserId, result.getCreatedByUserId());
+        assertEquals(testSpecContent, result.getSpecContent());
+        assertEquals(1, result.getVersion());
+        assertNull(result.getParentVersionId());
+        assertEquals(AppSpecEntity.Status.DRAFT.getValue(), result.getStatus());
+        assertEquals(0, result.getQualityScore());
+        assertNotNull(result.getMetadata());
+
+        // 验证save方法被调用
+        verify(spyService, times(1)).save(any(AppSpecEntity.class));
+    }
+
+    /**
+     * 测试创建AppSpec失败 - 参数为空
+     */
+    @Test
+    @DisplayName("测试创建AppSpec失败 - tenantId为空")
+    void testCreateAppSpecTenantIdNull() {
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            appSpecService.createAppSpec(null, testUserId, testSpecContent);
+        });
+
+        assertEquals(ErrorCode.PARAM_ERROR.getCode(), exception.getCode());
+    }
+
+    /**
+     * 测试创建AppSpec失败 - userId为空
+     */
+    @Test
+    @DisplayName("测试创建AppSpec失败 - userId为空")
+    void testCreateAppSpecUserIdNull() {
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            appSpecService.createAppSpec(testTenantId, null, testSpecContent);
+        });
+
+        assertEquals(ErrorCode.PARAM_ERROR.getCode(), exception.getCode());
+    }
+
+    /**
+     * 测试创建AppSpec失败 - specContent为空
+     */
+    @Test
+    @DisplayName("测试创建AppSpec失败 - specContent为空")
+    void testCreateAppSpecContentNull() {
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            appSpecService.createAppSpec(testTenantId, testUserId, null);
+        });
+
+        assertEquals(ErrorCode.PARAM_ERROR.getCode(), exception.getCode());
+    }
+
+    /**
+     * 测试创建AppSpec失败 - specContent为空Map
+     */
+    @Test
+    @DisplayName("测试创建AppSpec失败 - specContent为空Map")
+    void testCreateAppSpecContentEmpty() {
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            appSpecService.createAppSpec(testTenantId, testUserId, new HashMap<>());
+        });
+
+        assertEquals(ErrorCode.PARAM_ERROR.getCode(), exception.getCode());
+    }
+
+    /**
+     * 测试根据ID和租户ID查询AppSpec（租户隔离）
+     * 验证点：
+     * 1. 只返回指定租户的数据
+     * 2. 租户隔离机制正常工作
+     */
+    @Test
+    @DisplayName("测试根据ID和租户ID查询AppSpec成功")
+    void testGetByIdAndTenantIdSuccess() {
+        // Arrange
+        UUID appSpecId = testAppSpec.getId();
+        when(appSpecMapper.findByIdAndTenantId(appSpecId, testTenantId)).thenReturn(testAppSpec);
+
+        // Act
+        AppSpecEntity result = appSpecService.getByIdAndTenantId(appSpecId, testTenantId);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(appSpecId, result.getId());
+        assertEquals(testTenantId, result.getTenantId());
+        verify(appSpecMapper, times(1)).findByIdAndTenantId(appSpecId, testTenantId);
+    }
+
+    /**
+     * 测试查询AppSpec失败 - AppSpec不存在
+     */
+    @Test
+    @DisplayName("测试查询AppSpec失败 - AppSpec不存在")
+    void testGetByIdAndTenantIdNotFound() {
+        // Arrange
+        UUID appSpecId = UUID.randomUUID();
+        when(appSpecMapper.findByIdAndTenantId(appSpecId, testTenantId)).thenReturn(null);
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            appSpecService.getByIdAndTenantId(appSpecId, testTenantId);
+        });
+
+        assertEquals(ErrorCode.APPSPEC_NOT_FOUND.getCode(), exception.getCode());
+        verify(appSpecMapper, times(1)).findByIdAndTenantId(appSpecId, testTenantId);
+    }
+
+    /**
+     * 测试更新AppSpec质量评分
+     * 验证点：
+     * 1. 质量评分在0-100范围内
+     * 2. 评分≥80时自动更新状态为validated
+     */
+    @Test
+    @DisplayName("测试更新质量评分成功 - 评分达标自动提升状态")
+    void testUpdateQualityScoreAutoPromote() {
+        // Arrange
+        UUID appSpecId = testAppSpec.getId();
+        Integer qualityScore = 85; // 达标评分
+
+        AppSpecServiceImpl spyService = spy(appSpecService);
+        doReturn(testAppSpec).when(spyService).getById(appSpecId);
+        doReturn(true).when(spyService).updateById(any(AppSpecEntity.class));
+
+        // Act
+        spyService.updateQualityScore(appSpecId, qualityScore);
+
+        // Assert
+        ArgumentCaptor<AppSpecEntity> captor = ArgumentCaptor.forClass(AppSpecEntity.class);
+        verify(spyService, times(1)).updateById(captor.capture());
+
+        AppSpecEntity updatedAppSpec = captor.getValue();
+        assertEquals(qualityScore, updatedAppSpec.getQualityScore());
+        assertEquals(AppSpecEntity.Status.VALIDATED.getValue(), updatedAppSpec.getStatus());
+    }
+
+    /**
+     * 测试更新质量评分 - 评分未达标保持draft状态
+     */
+    @Test
+    @DisplayName("测试更新质量评分 - 评分未达标保持draft状态")
+    void testUpdateQualityScoreBelowThreshold() {
+        // Arrange
+        UUID appSpecId = testAppSpec.getId();
+        Integer qualityScore = 75; // 未达标评分
+
+        AppSpecServiceImpl spyService = spy(appSpecService);
+        doReturn(testAppSpec).when(spyService).getById(appSpecId);
+        doReturn(true).when(spyService).updateById(any(AppSpecEntity.class));
+
+        // Act
+        spyService.updateQualityScore(appSpecId, qualityScore);
+
+        // Assert
+        ArgumentCaptor<AppSpecEntity> captor = ArgumentCaptor.forClass(AppSpecEntity.class);
+        verify(spyService, times(1)).updateById(captor.capture());
+
+        AppSpecEntity updatedAppSpec = captor.getValue();
+        assertEquals(qualityScore, updatedAppSpec.getQualityScore());
+        assertEquals(AppSpecEntity.Status.DRAFT.getValue(), updatedAppSpec.getStatus());
+    }
+
+    /**
+     * 测试更新质量评分失败 - 评分超出范围（负数）
+     */
+    @Test
+    @DisplayName("测试更新质量评分失败 - 评分为负数")
+    void testUpdateQualityScoreNegative() {
+        // Arrange
+        UUID appSpecId = testAppSpec.getId();
+        Integer invalidScore = -10;
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            appSpecService.updateQualityScore(appSpecId, invalidScore);
+        });
+
+        assertEquals(ErrorCode.PARAM_ERROR.getCode(), exception.getCode());
+        assertTrue(exception.getMessage().contains("0-100"));
+    }
+
+    /**
+     * 测试更新质量评分失败 - 评分超出范围（超过100）
+     */
+    @Test
+    @DisplayName("测试更新质量评分失败 - 评分超过100")
+    void testUpdateQualityScoreExceedMax() {
+        // Arrange
+        UUID appSpecId = testAppSpec.getId();
+        Integer invalidScore = 150;
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            appSpecService.updateQualityScore(appSpecId, invalidScore);
+        });
+
+        assertEquals(ErrorCode.PARAM_ERROR.getCode(), exception.getCode());
+        assertTrue(exception.getMessage().contains("0-100"));
+    }
+
+    /**
+     * 测试创建AppSpec新版本
+     * 验证点：
+     * 1. 版本号递增
+     * 2. parentVersionId正确设置
+     * 3. 新版本状态为draft
+     * 4. 质量评分重置为0
+     */
+    @Test
+    @DisplayName("测试创建AppSpec新版本成功")
+    void testCreateVersionSuccess() {
+        // Arrange
+        UUID parentId = testAppSpec.getId();
+        Map<String, Object> newSpecContent = new HashMap<>(testSpecContent);
+        newSpecContent.put("appName", "TestApp V2");
+
+        AppSpecServiceImpl spyService = spy(appSpecService);
+        doReturn(testAppSpec).when(spyService).getById(parentId);
+        doReturn(true).when(spyService).save(any(AppSpecEntity.class));
+
+        // Act
+        AppSpecEntity newVersion = spyService.createVersion(parentId, newSpecContent);
+
+        // Assert
+        assertNotNull(newVersion);
+        assertEquals(testAppSpec.getVersion() + 1, newVersion.getVersion()); // 版本号递增
+        assertEquals(parentId, newVersion.getParentVersionId()); // 父版本ID正确
+        assertEquals(AppSpecEntity.Status.DRAFT.getValue(), newVersion.getStatus()); // 新版本为draft
+        assertEquals(0, newVersion.getQualityScore()); // 质量评分重置
+        assertEquals(testTenantId, newVersion.getTenantId()); // 继承租户ID
+        assertEquals(testUserId, newVersion.getCreatedByUserId()); // 继承创建者ID
+
+        verify(spyService, times(1)).getById(parentId);
+        verify(spyService, times(1)).save(any(AppSpecEntity.class));
+    }
+
+    /**
+     * 测试创建版本失败 - 父版本不存在
+     */
+    @Test
+    @DisplayName("测试创建版本失败 - 父版本不存在")
+    void testCreateVersionParentNotFound() {
+        // Arrange
+        UUID parentId = UUID.randomUUID();
+        Map<String, Object> newSpecContent = new HashMap<>(testSpecContent);
+
+        AppSpecServiceImpl spyService = spy(appSpecService);
+        doReturn(null).when(spyService).getById(parentId);
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            spyService.createVersion(parentId, newSpecContent);
+        });
+
+        assertEquals(ErrorCode.APPSPEC_VERSION_NOT_FOUND.getCode(), exception.getCode());
+        verify(spyService, times(1)).getById(parentId);
+        verify(spyService, never()).save(any(AppSpecEntity.class));
+    }
+
+    /**
+     * 测试更新AppSpec状态
+     */
+    @Test
+    @DisplayName("测试更新AppSpec状态成功")
+    void testUpdateStatusSuccess() {
+        // Arrange
+        UUID appSpecId = testAppSpec.getId();
+        String newStatus = AppSpecEntity.Status.VALIDATED.getValue();
+
+        AppSpecServiceImpl spyService = spy(appSpecService);
+        doReturn(testAppSpec).when(spyService).getById(appSpecId);
+        doReturn(true).when(spyService).updateById(any(AppSpecEntity.class));
+
+        // Act
+        spyService.updateStatus(appSpecId, newStatus);
+
+        // Assert
+        ArgumentCaptor<AppSpecEntity> captor = ArgumentCaptor.forClass(AppSpecEntity.class);
+        verify(spyService, times(1)).updateById(captor.capture());
+
+        AppSpecEntity updatedAppSpec = captor.getValue();
+        assertEquals(newStatus, updatedAppSpec.getStatus());
+    }
+
+    /**
+     * 测试根据状态查询AppSpec列表
+     */
+    @Test
+    @DisplayName("测试根据状态查询AppSpec列表")
+    void testListByStatus() {
+        // Arrange
+        String status = AppSpecEntity.Status.VALIDATED.getValue();
+        List<AppSpecEntity> expectedList = Arrays.asList(testAppSpec);
+
+        when(appSpecMapper.findByTenantIdAndStatus(testTenantId, status)).thenReturn(expectedList);
+
+        // Act
+        List<AppSpecEntity> result = appSpecService.listByStatus(testTenantId, status);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1, result.size());
+        assertEquals(testAppSpec.getId(), result.get(0).getId());
+        verify(appSpecMapper, times(1)).findByTenantIdAndStatus(testTenantId, status);
+    }
+
+    /**
+     * 测试分页查询用户的AppSpec列表
+     */
+    @Test
+    @DisplayName("测试分页查询用户的AppSpec列表")
+    void testPageByUser() {
+        // Arrange
+        Long current = 1L;
+        Long size = 10L;
+        Page<AppSpecEntity> expectedPage = new Page<>(current, size);
+        expectedPage.setRecords(Arrays.asList(testAppSpec));
+        expectedPage.setTotal(1L);
+
+        when(appSpecMapper.selectPageByTenantIdAndUserId(any(Page.class), eq(testTenantId), eq(testUserId)))
+                .thenReturn(expectedPage);
+
+        // Act
+        Page<AppSpecEntity> result = appSpecService.pageByUser(testTenantId, testUserId, current, size);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1L, result.getTotal());
+        assertEquals(1, result.getRecords().size());
+        verify(appSpecMapper, times(1)).selectPageByTenantIdAndUserId(any(Page.class), eq(testTenantId), eq(testUserId));
+    }
+
+    /**
+     * 测试软删除AppSpec（租户隔离）
+     */
+    @Test
+    @DisplayName("测试软删除AppSpec成功")
+    void testSoftDeleteSuccess() {
+        // Arrange
+        UUID appSpecId = testAppSpec.getId();
+        when(appSpecMapper.findByIdAndTenantId(appSpecId, testTenantId)).thenReturn(testAppSpec);
+
+        AppSpecServiceImpl spyService = spy(appSpecService);
+        when(appSpecMapper.findByIdAndTenantId(appSpecId, testTenantId)).thenReturn(testAppSpec);
+        doReturn(true).when(spyService).removeById(appSpecId);
+
+        // Act
+        spyService.softDelete(appSpecId, testTenantId);
+
+        // Assert
+        verify(appSpecMapper, times(1)).findByIdAndTenantId(appSpecId, testTenantId);
+        verify(spyService, times(1)).removeById(appSpecId);
+    }
+
+    /**
+     * 测试软删除AppSpec失败 - 租户隔离验证
+     */
+    @Test
+    @DisplayName("测试软删除AppSpec失败 - 租户隔离")
+    void testSoftDeleteTenantIsolation() {
+        // Arrange
+        UUID appSpecId = testAppSpec.getId();
+        UUID wrongTenantId = UUID.randomUUID(); // 错误的租户ID
+
+        when(appSpecMapper.findByIdAndTenantId(appSpecId, wrongTenantId)).thenReturn(null);
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            appSpecService.softDelete(appSpecId, wrongTenantId);
+        });
+
+        assertEquals(ErrorCode.APPSPEC_NOT_FOUND.getCode(), exception.getCode());
+        verify(appSpecMapper, times(1)).findByIdAndTenantId(appSpecId, wrongTenantId);
+    }
+
+    /**
+     * 测试版本链：创建多个版本
+     */
+    @Test
+    @DisplayName("测试版本链 - 创建多个版本")
+    void testVersionChain() {
+        // Arrange
+        UUID rootId = testAppSpec.getId();
+        Map<String, Object> v2Content = new HashMap<>(testSpecContent);
+        v2Content.put("version", "2.0.0");
+
+        AppSpecServiceImpl spyService = spy(appSpecService);
+
+        // 模拟第一次创建版本
+        doReturn(testAppSpec).when(spyService).getById(rootId);
+        doReturn(true).when(spyService).save(any(AppSpecEntity.class));
+
+        // Act - 创建第二个版本
+        AppSpecEntity v2 = spyService.createVersion(rootId, v2Content);
+
+        // Assert
+        assertNotNull(v2);
+        assertEquals(2, v2.getVersion());
+        assertEquals(rootId, v2.getParentVersionId());
+
+        // 模拟第二次创建版本
+        UUID v2Id = UUID.randomUUID();
+        v2.setId(v2Id);
+        Map<String, Object> v3Content = new HashMap<>(testSpecContent);
+        v3Content.put("version", "3.0.0");
+
+        doReturn(v2).when(spyService).getById(v2Id);
+
+        // Act - 创建第三个版本
+        AppSpecEntity v3 = spyService.createVersion(v2Id, v3Content);
+
+        // Assert
+        assertNotNull(v3);
+        assertEquals(3, v3.getVersion());
+        assertEquals(v2Id, v3.getParentVersionId());
+    }
+}

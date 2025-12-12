@@ -1,0 +1,92 @@
+/**
+ * Sandbox心跳API端点
+ *
+ * 功能：
+ * - 保持E2B Sandbox活跃状态
+ * - 防止Sandbox因超时被提前终止
+ * - 代理前端请求到后端OpenLovable服务
+ *
+ * @route POST /api/v1/openlovable/heartbeat
+ * @author Ingenio Team
+ * @version 2.0.0
+ * @since 2025-12-10
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { getApiBaseUrl } from '@/lib/api/base-url';
+
+/**
+ * 心跳请求体
+ */
+interface HeartbeatRequest {
+  sandboxId: string;
+}
+
+/**
+ * POST /api/v1/openlovable/heartbeat
+ *
+ * 发送Sandbox心跳请求
+ */
+export async function POST(request: NextRequest) {
+  try {
+    const body: HeartbeatRequest = await request.json();
+    const { sandboxId } = body;
+
+    // 验证参数
+    if (!sandboxId || typeof sandboxId !== 'string') {
+      return NextResponse.json(
+        {
+          success: false,
+          error: '缺少必需参数: sandboxId',
+        },
+        { status: 400 }
+      );
+    }
+
+    // 调用后端OpenLovable服务
+    const apiBaseUrl = getApiBaseUrl();
+    const backendUrl = `${apiBaseUrl}/v1/openlovable/heartbeat`;
+
+    console.log(`[心跳API] 转发心跳请求到后端: ${sandboxId}`);
+
+    const backendResponse = await fetch(backendUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ sandboxId }),
+    });
+
+    if (!backendResponse.ok) {
+      const errorText = await backendResponse.text();
+      console.error(`[心跳API] 后端请求失败: ${backendResponse.status} - ${errorText}`);
+
+      return NextResponse.json(
+        {
+          success: false,
+          error: `后端心跳请求失败: HTTP ${backendResponse.status}`,
+        },
+        { status: backendResponse.status }
+      );
+    }
+
+    const data = await backendResponse.json();
+
+    console.log(`[心跳API] 心跳成功: ${sandboxId}`);
+
+    return NextResponse.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error('[心跳API] 请求处理失败:', error);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : '心跳请求失败',
+      },
+      { status: 500 }
+    );
+  }
+}

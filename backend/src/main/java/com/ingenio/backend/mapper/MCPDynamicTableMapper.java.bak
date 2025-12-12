@@ -1,0 +1,15 @@
+package com.ingenio.backend.mapper;
+
+import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.ingenio.backend.entity.MCPDynamicTableEntity;
+import org.apache.ibatis.annotations.Mapper;
+
+/**
+ * MCP动态表Mapper接口
+ * 支持多数据源动态表创建的数据访问
+ */
+@Mapper
+public interface MCPDynamicTableMapper extends BaseMapper<MCPDynamicTableEntity> {
+    // 基础CRUD操作由BaseMapper提供
+    // 复杂查询在Service层使用QueryWrapper实现
+}

@@ -1,0 +1,212 @@
+# Ingenio Backend - Spring Boot配置
+spring:
+  application:
+    name: ingenio-backend
+
+  # 数据源配置（PostgreSQL）
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ingenio_dev}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+    # HikariCP连接池配置
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      pool-name: IngenioHikariCP
+
+  # Spring AI OpenAI配置（兼容DeepSeek API）
+  ai:
+    openai:
+      api-key: ${DEEPSEEK_API_KEY}
+      base-url: https://api.deepseek.com
+      chat:
+        enabled: true
+        options:
+          model: deepseek-chat
+          temperature: 0.7
+          max-tokens: 4000
+          top-p: 0.95
+      embedding:
+        enabled: false
+
+  # Redis配置
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+    password: ${REDIS_PASSWORD:}
+    database: 0
+    timeout: 5000ms
+    lettuce:
+      pool:
+        max-active: 20
+        max-idle: 10
+        min-idle: 5
+        max-wait: 3000ms
+
+  # Jackson配置
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+    serialization:
+      write-dates-as-timestamps: false
+
+  # 文件上传配置
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 100MB
+      max-request-size: 100MB
+
+# MyBatis-Plus配置
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.ingenio.backend.entity
+
+# SaToken配置（JWT认证）
+sa-token:
+  # Token名称（同时也是cookie名称）
+  token-name: Authorization
+  # Token有效期（单位：秒），默认7天
+  timeout: 604800
+  # Token临时有效期（指定时间内无操作就视为token过期），默认-1（不启用）
+  activity-timeout: -1
+  # 是否允许同一账号并发登录
+  is-concurrent: true
+  # 在多人登录同一账号时，是否共用一个token
+  is-share: false
+  # Token风格（默认可取值：uuid、simple-uuid、random-32、random-64、random-128、tik）
+  token-style: jwt
+  # 是否输出操作日志
+  is-log: false
+  # JWT秘钥
+  jwt-secret-key: ${JWT_SECRET:ingenio-jwt-secret-key-change-in-production}
+
+# MinIO配置（对象存储）
+minio:
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  bucket-name: ${MINIO_BUCKET:ingenio}
+  # 自动创建bucket
+  auto-create-bucket: true
+
+# Redisson配置
+redisson:
+  address: redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}
+  password: ${REDIS_PASSWORD:}
+  database: 0
+  connection-pool-size: 64
+  connection-minimum-idle-size: 10
+  idle-connection-timeout: 10000
+  timeout: 3000
+
+# SpringDoc配置（OpenAPI文档）
+springdoc:
+  api-docs:
+    enabled: true
+    path: /api-docs
+  swagger-ui:
+    enabled: true
+    path: /swagger-ui.html
+    operations-sorter: method
+  packages-to-scan: com.ingenio.backend.controller
+
+# Actuator监控配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when-authorized
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# 服务器配置
+server:
+  port: ${PORT:8080}
+  servlet:
+    context-path: /api
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+  http2:
+    enabled: true
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.ingenio.backend: DEBUG
+    com.baomidou.mybatisplus: DEBUG
+    org.springframework.ai: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/ingenio-backend.log
+    max-size: 100MB
+    max-history: 30
+
+# 应用自定义配置
+ingenio:
+  # Agent配置
+  agent:
+    plan:
+      model: deepseek-chat
+      temperature: 0.7
+      max-tokens: 4000
+    execute:
+      model: deepseek-coder
+      temperature: 0.3
+      max-tokens: 8000
+    validate:
+      model: deepseek-chat
+      temperature: 0.5
+      max-tokens: 2000
+
+  # 代码生成配置
+  codegen:
+    default-renderer: kuikly-ui
+    default-framework: taro
+    preview-base-url: ${PREVIEW_BASE_URL:http://localhost:3000}
+
+  # 租户配置
+  tenant:
+    enabled: true
+    default-tenant-id: default
+
+  # 限流配置
+  rate-limit:
+    enabled: true
+    # 每分钟最大请求数
+    requests-per-minute: 60
+    # AI调用每小时最大次数
+    ai-calls-per-hour: 100
+
+  # 多端发布配置
+  publish:
+    # 构建状态管理
+    build-status:
+      # Redis TTL（天）- 与MinIO生命周期一致
+      ttl-days: 30
+      # Redis Key前缀 (使用引号包裹包含冒号的值)
+      key-prefix: "ingenio:publish:build:"
+      # 是否启用Redis持久化
+      redis-enabled: true

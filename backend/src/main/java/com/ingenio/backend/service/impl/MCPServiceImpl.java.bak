@@ -1,0 +1,131 @@
+package com.ingenio.backend.service.impl;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ingenio.backend.service.MCPService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.stereotype.Service;
+
+import java.util.HashMap;
+import java.util.Map;
+
+/**
+ * MCP 服务实现类
+ * 通过大模型调用 MCP 服务，支持 SuperDesign 和 AipexBase 等功能
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class MCPServiceImpl implements MCPService {
+
+    private final ChatModel chatModel;
+    private final ObjectMapper objectMapper;
+
+    /**
+     * MCP 系统提示词
+     */
+    private static final String SYSTEM_PROMPT = """
+        你是一个 MCP (Model Context Protocol) 服务调用助手。
+        你的任务是理解用户的需求，并通过调用相应的 MCP 工具来完成任务。
+
+        可用的 MCP 服务器：
+        1. superdesign-server: 提供 UI 设计方案生成服务
+           - generate-design: 生成 UI 设计方案
+           - apply-design: 应用设计方案
+           
+        2. aipexbase-server: 提供后端资源确定服务
+           - generate-config: 生成后端配置
+           - determine-resources: 确定后端资源需求
+           - generate-api-code: 生成 API 调用代码
+
+        调用格式：
+        {
+          "server": "服务器名称",
+          "tool": "工具名称",
+          "params": {
+            "参数名": "参数值"
+          }
+        }
+
+        请根据用户需求，生成正确的 MCP 调用指令，并返回 JSON 格式的响应。
+        """;
+
+    @Override
+    public MCPResponse call(String server, String tool, Map<String, Object> params) {
+        log.info("调用 MCP 服务: server={}, tool={}, params={}", server, tool, params);
+
+        try {
+            // 构建 ChatClient
+            ChatClient chatClient = ChatClient.builder(chatModel).build();
+
+            // 构建用户提示词
+            String userPrompt = String.format("""
+                请调用 MCP 服务完成以下任务：
+                
+                服务器: %s
+                工具: %s
+                参数: %s
+                
+                请返回 JSON 格式的响应，包含：
+                - success: 是否成功
+                - data: 返回数据
+                - error: 错误信息（如果有）
+                - metadata: 元数据
+                """, server, tool, objectMapper.writeValueAsString(params));
+
+            // 调用 AI 模型
+            String response = chatClient.prompt()
+                    .system(SYSTEM_PROMPT)
+                    .user(userPrompt)
+                    .call()
+                    .content();
+
+            log.debug("MCP 服务响应: {}", response);
+
+            // 解析响应
+            return parseResponse(response);
+
+        } catch (Exception e) {
+            log.error("MCP 服务调用失败: server={}, tool={}, error={}", server, tool, e.getMessage(), e);
+            
+            MCPResponse mcpResponse = new MCPResponse();
+            mcpResponse.setSuccess(false);
+            mcpResponse.setError("MCP 服务调用失败: " + e.getMessage());
+            mcpResponse.setMetadata(new HashMap<>());
+            return mcpResponse;
+        }
+    }
+
+    /**
+     * 解析 AI 响应为 MCPResponse
+     */
+    private MCPResponse parseResponse(String response) {
+        try {
+            // 尝试解析 JSON
+            Map<String, Object> responseMap = objectMapper.readValue(response, Map.class);
+            
+            MCPResponse mcpResponse = new MCPResponse();
+            mcpResponse.setSuccess(Boolean.TRUE.equals(responseMap.get("success")));
+            mcpResponse.setData(responseMap.get("data"));
+            mcpResponse.setError((String) responseMap.get("error"));
+            mcpResponse.setMetadata((Map<String, Object>) responseMap.getOrDefault("metadata", new HashMap<>()));
+            
+            return mcpResponse;
+        } catch (Exception e) {
+            log.warn("解析 MCP 响应失败，使用默认响应: error={}", e.getMessage());
+            
+            // 如果解析失败，将整个响应作为 data
+            MCPResponse mcpResponse = new MCPResponse();
+            mcpResponse.setSuccess(true);
+            mcpResponse.setData(response);
+            mcpResponse.setMetadata(new HashMap<>());
+            return mcpResponse;
+        }
+    }
+}
+

@@ -1,0 +1,136 @@
+package com.ingenio.backend.service.impl;
+
+import cn.hutool.crypto.digest.BCrypt;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.ingenio.backend.common.exception.BusinessException;
+import com.ingenio.backend.common.exception.ErrorCode;
+import com.ingenio.backend.entity.UserEntity;
+import com.ingenio.backend.mapper.UserMapper;
+import com.ingenio.backend.service.UserService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
+
+/**
+ * 用户Service实现类
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class UserServiceImpl extends ServiceImpl<UserMapper, UserEntity> implements UserService {
+
+    private final UserMapper userMapper;
+
+    @Override
+    public Optional<UserEntity> findByUsername(String username) {
+        return userMapper.findByUsername(username);
+    }
+
+    @Override
+    public Optional<UserEntity> findByEmail(String email) {
+        return userMapper.findByEmail(email);
+    }
+
+    @Override
+    public Optional<UserEntity> findByTenantIdAndUsername(String tenantId, String username) {
+        return userMapper.findByTenantIdAndUsername(tenantId, username);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public UserEntity register(String username, String email, String password, String tenantId) {
+        // 检查用户名是否已存在
+        if (findByUsername(username).isPresent()) {
+            throw new BusinessException(ErrorCode.USER_ALREADY_EXISTS);
+        }
+
+        // 检查邮箱是否已存在
+        if (findByEmail(email).isPresent()) {
+            throw new BusinessException(ErrorCode.USER_ALREADY_EXISTS);
+        }
+
+        // 创建用户实体
+        UserEntity user = UserEntity.builder()
+            .tenantId(tenantId)
+            .username(username)
+            .email(email)
+            .passwordHash(BCrypt.hashpw(password))
+            .role(UserEntity.Role.USER.getValue())
+            .status(UserEntity.Status.ACTIVE.getValue())
+            .displayName(username)
+            .metadata(new HashMap<>())
+            .build();
+
+        // 保存用户
+        if (!save(user)) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        log.info("用户注册成功: username={}, email={}", username, email);
+        return user;
+    }
+
+    @Override
+    public UserEntity login(String username, String password) {
+        // 查找用户
+        UserEntity user = findByUsername(username)
+            .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+
+        // 检查用户状态
+        if (UserEntity.Status.INACTIVE.getValue().equals(user.getStatus())
+            || UserEntity.Status.SUSPENDED.getValue().equals(user.getStatus())) {
+            throw new BusinessException(ErrorCode.USER_DISABLED);
+        }
+
+        // 验证密码
+        if (!BCrypt.checkpw(password, user.getPasswordHash())) {
+            throw new BusinessException(ErrorCode.USER_PASSWORD_ERROR);
+        }
+
+        // 更新最后登录时间
+        updateLastLoginTime(user.getId());
+
+        log.info("用户登录成功: username={}", username);
+        return user;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateLastLoginTime(UUID userId) {
+        UserEntity user = getById(userId);
+        if (user != null) {
+            user.setLastLoginAt(LocalDateTime.now());
+            updateById(user);
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void changePassword(UUID userId, String oldPassword, String newPassword) {
+        // 查找用户
+        UserEntity user = getById(userId);
+        if (user == null) {
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
+
+        // 验证旧密码
+        if (!BCrypt.checkpw(oldPassword, user.getPasswordHash())) {
+            throw new BusinessException(ErrorCode.USER_PASSWORD_ERROR);
+        }
+
+        // 更新密码
+        user.setPasswordHash(BCrypt.hashpw(newPassword));
+        if (!updateById(user)) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        log.info("用户修改密码成功: userId={}", userId);
+    }
+}

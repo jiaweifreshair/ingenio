@@ -1,0 +1,621 @@
+package com.ingenio.backend.service.impl;
+
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.ingenio.backend.common.exception.BusinessException;
+import com.ingenio.backend.common.exception.ErrorCode;
+import com.ingenio.backend.entity.ForkEntity;
+import com.ingenio.backend.entity.ProjectEntity;
+import com.ingenio.backend.entity.SocialInteractionEntity;
+import com.ingenio.backend.mapper.ForkMapper;
+import com.ingenio.backend.mapper.ProjectMapper;
+import com.ingenio.backend.mapper.SocialInteractionMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.time.LocalDateTime;
+import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.*;
+
+/**
+ * ProjectServiceImpl单元测试
+ * 测试项目管理、社交互动、派生等核心业务逻辑
+ */
+@ExtendWith(MockitoExtension.class)
+@DisplayName("ProjectServiceImpl单元测试")
+class ProjectServiceImplTest {
+
+    @Mock
+    private ProjectMapper projectMapper;
+
+    @Mock
+    private SocialInteractionMapper socialInteractionMapper;
+
+    @Mock
+    private ForkMapper forkMapper;
+
+    @InjectMocks
+    private ProjectServiceImpl projectService;
+
+    private UUID testTenantId;
+    private UUID testUserId;
+    private ProjectEntity testProject;
+
+    /**
+     * 初始化测试数据
+     */
+    @BeforeEach
+    void setUp() {
+        testTenantId = UUID.randomUUID();
+        testUserId = UUID.randomUUID();
+
+        testProject = ProjectEntity.builder()
+                .id(UUID.randomUUID())
+                .tenantId(testTenantId)
+                .userId(testUserId)
+                .name("测试项目")
+                .description("这是一个测试项目")
+                .coverImageUrl("https://example.com/cover.jpg")
+                .appSpecId(UUID.randomUUID())
+                .status(ProjectEntity.Status.DRAFT.getValue())
+                .visibility(ProjectEntity.Visibility.PRIVATE.getValue())
+                .viewCount(0)
+                .likeCount(0)
+                .forkCount(0)
+                .commentCount(0)
+                .tags(Arrays.asList("测试", "demo"))
+                .ageGroup("6-12")
+                .metadata(new HashMap<>())
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .build();
+    }
+
+    /**
+     * 测试创建项目成功
+     * 验证点：
+     * 1. 默认值设置正确
+     * 2. 必填字段验证
+     */
+    @Test
+    @DisplayName("测试创建项目成功")
+    void testCreateProjectSuccess() {
+        // Arrange
+        ProjectEntity newProject = ProjectEntity.builder()
+                .tenantId(testTenantId)
+                .userId(testUserId)
+                .name("新项目")
+                .description("项目描述")
+                .build();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        doReturn(true).when(spyService).save(any(ProjectEntity.class));
+
+        // Act
+        ProjectEntity result = spyService.createProject(newProject);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(ProjectEntity.Status.DRAFT.getValue(), result.getStatus());
+        assertEquals(ProjectEntity.Visibility.PRIVATE.getValue(), result.getVisibility());
+        assertEquals(0, result.getViewCount());
+        assertEquals(0, result.getLikeCount());
+        assertEquals(0, result.getForkCount());
+        assertEquals(0, result.getCommentCount());
+        assertNotNull(result.getMetadata());
+
+        verify(spyService, times(1)).save(any(ProjectEntity.class));
+    }
+
+    /**
+     * 测试创建项目失败 - 参数为空
+     */
+    @Test
+    @DisplayName("测试创建项目失败 - tenantId为空")
+    void testCreateProjectTenantIdNull() {
+        // Arrange
+        ProjectEntity invalidProject = ProjectEntity.builder()
+                .userId(testUserId)
+                .name("项目")
+                .build();
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            projectService.createProject(invalidProject);
+        });
+
+        assertEquals(ErrorCode.PARAM_ERROR.getCode(), exception.getCode());
+    }
+
+    /**
+     * 测试点赞项目成功
+     * 验证点：
+     * 1. 创建点赞记录
+     * 2. 增加项目点赞数
+     */
+    @Test
+    @DisplayName("测试点赞项目成功")
+    void testLikeProjectSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        UUID userId = UUID.randomUUID();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        when(socialInteractionMapper.findByUserIdAndProjectIdAndType(
+                userId, projectId, SocialInteractionEntity.InteractionType.LIKE.getValue()))
+                .thenReturn(Optional.empty());
+        doReturn(testProject).when(spyService).getById(projectId);
+        when(socialInteractionMapper.insert(any(SocialInteractionEntity.class))).thenReturn(1);
+        when(projectMapper.incrementLikeCount(projectId)).thenReturn(1);
+
+        // Act
+        spyService.likeProject(projectId, userId);
+
+        // Assert
+        verify(socialInteractionMapper, times(1))
+                .findByUserIdAndProjectIdAndType(userId, projectId,
+                        SocialInteractionEntity.InteractionType.LIKE.getValue());
+        verify(socialInteractionMapper, times(1)).insert(any(SocialInteractionEntity.class));
+        verify(projectMapper, times(1)).incrementLikeCount(projectId);
+    }
+
+    /**
+     * 测试点赞项目 - 幂等性（已点赞）
+     * 验证点：
+     * 1. 已点赞时直接返回，不报错
+     * 2. 不重复创建点赞记录
+     */
+    @Test
+    @DisplayName("测试点赞项目 - 幂等性处理")
+    void testLikeProjectIdempotent() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        UUID userId = UUID.randomUUID();
+
+        SocialInteractionEntity existingLike = SocialInteractionEntity.builder()
+                .id(UUID.randomUUID())
+                .tenantId(testTenantId)
+                .userId(userId)
+                .projectId(projectId)
+                .interactionType(SocialInteractionEntity.InteractionType.LIKE.getValue())
+                .build();
+
+        when(socialInteractionMapper.findByUserIdAndProjectIdAndType(
+                userId, projectId, SocialInteractionEntity.InteractionType.LIKE.getValue()))
+                .thenReturn(Optional.of(existingLike));
+
+        // Act - 应该不抛出异常
+        assertDoesNotThrow(() -> {
+            projectService.likeProject(projectId, userId);
+        });
+
+        // Assert - 验证没有创建新的点赞记录
+        verify(socialInteractionMapper, times(1))
+                .findByUserIdAndProjectIdAndType(userId, projectId,
+                        SocialInteractionEntity.InteractionType.LIKE.getValue());
+        verify(socialInteractionMapper, never()).insert(any(SocialInteractionEntity.class));
+        verify(projectMapper, never()).incrementLikeCount(projectId);
+    }
+
+    /**
+     * 测试点赞项目失败 - 项目不存在
+     */
+    @Test
+    @DisplayName("测试点赞项目失败 - 项目不存在")
+    void testLikeProjectNotFound() {
+        // Arrange
+        UUID projectId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        when(socialInteractionMapper.findByUserIdAndProjectIdAndType(
+                userId, projectId, SocialInteractionEntity.InteractionType.LIKE.getValue()))
+                .thenReturn(Optional.empty());
+        doReturn(null).when(spyService).getById(projectId);
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            spyService.likeProject(projectId, userId);
+        });
+
+        assertEquals(ErrorCode.PROJECT_NOT_FOUND.getCode(), exception.getCode());
+    }
+
+    /**
+     * 测试取消点赞项目成功
+     * 验证点：
+     * 1. 删除点赞记录
+     * 2. 减少项目点赞数
+     */
+    @Test
+    @DisplayName("测试取消点赞项目成功")
+    void testUnlikeProjectSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        UUID userId = UUID.randomUUID();
+
+        when(socialInteractionMapper.deleteByUserIdAndProjectIdAndType(
+                userId, projectId, SocialInteractionEntity.InteractionType.LIKE.getValue()))
+                .thenReturn(1); // 删除成功
+        when(projectMapper.decrementLikeCount(projectId)).thenReturn(1);
+
+        // Act
+        projectService.unlikeProject(projectId, userId);
+
+        // Assert
+        verify(socialInteractionMapper, times(1))
+                .deleteByUserIdAndProjectIdAndType(userId, projectId,
+                        SocialInteractionEntity.InteractionType.LIKE.getValue());
+        verify(projectMapper, times(1)).decrementLikeCount(projectId);
+    }
+
+    /**
+     * 测试取消点赞 - 未找到点赞记录
+     */
+    @Test
+    @DisplayName("测试取消点赞 - 未找到点赞记录")
+    void testUnlikeProjectNotLiked() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        UUID userId = UUID.randomUUID();
+
+        when(socialInteractionMapper.deleteByUserIdAndProjectIdAndType(
+                userId, projectId, SocialInteractionEntity.InteractionType.LIKE.getValue()))
+                .thenReturn(0); // 未找到记录
+
+        // Act - 应该不抛出异常
+        assertDoesNotThrow(() -> {
+            projectService.unlikeProject(projectId, userId);
+        });
+
+        // Assert - 验证没有减少点赞数
+        verify(projectMapper, never()).decrementLikeCount(projectId);
+    }
+
+    /**
+     * 测试派生项目成功
+     * 验证点：
+     * 1. 创建新项目
+     * 2. 记录派生关系
+     * 3. 增加源项目的派生数
+     */
+    @Test
+    @DisplayName("测试派生项目成功")
+    void testForkProjectSuccess() {
+        // Arrange
+        UUID sourceProjectId = testProject.getId();
+        UUID userId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        doReturn(testProject).when(spyService).getById(sourceProjectId);
+        doReturn(true).when(spyService).save(any(ProjectEntity.class));
+        when(forkMapper.insert(any(ForkEntity.class))).thenReturn(1);
+        when(projectMapper.incrementForkCount(sourceProjectId)).thenReturn(1);
+
+        // Act
+        ProjectEntity forkedProject = spyService.forkProject(sourceProjectId, userId, tenantId);
+
+        // Assert
+        assertNotNull(forkedProject);
+        assertEquals(tenantId, forkedProject.getTenantId());
+        assertEquals(userId, forkedProject.getUserId());
+        assertTrue(forkedProject.getName().contains("Fork"), "派生项目名称应该包含Fork");
+        assertEquals(testProject.getAppSpecId(), forkedProject.getAppSpecId(),
+                "应该复用相同的AppSpecId");
+        assertEquals(ProjectEntity.Status.DRAFT.getValue(), forkedProject.getStatus());
+        assertEquals(ProjectEntity.Visibility.PRIVATE.getValue(), forkedProject.getVisibility());
+        assertEquals(0, forkedProject.getLikeCount(), "派生项目点赞数应该为0");
+        assertEquals(0, forkedProject.getForkCount(), "派生项目派生数应该为0");
+
+        // 验证方法调用
+        verify(spyService, times(1)).getById(sourceProjectId);
+        verify(spyService, times(1)).save(any(ProjectEntity.class));
+        verify(forkMapper, times(1)).insert(any(ForkEntity.class));
+        verify(projectMapper, times(1)).incrementForkCount(sourceProjectId);
+    }
+
+    /**
+     * 测试派生项目失败 - 源项目不存在
+     */
+    @Test
+    @DisplayName("测试派生项目失败 - 源项目不存在")
+    void testForkProjectSourceNotFound() {
+        // Arrange
+        UUID sourceProjectId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID tenantId = UUID.randomUUID();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        doReturn(null).when(spyService).getById(sourceProjectId);
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            spyService.forkProject(sourceProjectId, userId, tenantId);
+        });
+
+        assertEquals(ErrorCode.PROJECT_NOT_FOUND.getCode(), exception.getCode());
+        verify(spyService, times(1)).getById(sourceProjectId);
+        verify(spyService, never()).save(any(ProjectEntity.class));
+    }
+
+    /**
+     * 测试收藏项目成功
+     */
+    @Test
+    @DisplayName("测试收藏项目成功")
+    void testFavoriteProjectSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        UUID userId = UUID.randomUUID();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        when(socialInteractionMapper.findByUserIdAndProjectIdAndType(
+                userId, projectId, SocialInteractionEntity.InteractionType.FAVORITE.getValue()))
+                .thenReturn(Optional.empty());
+        doReturn(testProject).when(spyService).getById(projectId);
+        when(socialInteractionMapper.insert(any(SocialInteractionEntity.class))).thenReturn(1);
+
+        // Act
+        spyService.favoriteProject(projectId, userId);
+
+        // Assert
+        verify(socialInteractionMapper, times(1))
+                .findByUserIdAndProjectIdAndType(userId, projectId,
+                        SocialInteractionEntity.InteractionType.FAVORITE.getValue());
+        verify(socialInteractionMapper, times(1)).insert(any(SocialInteractionEntity.class));
+    }
+
+    /**
+     * 测试收藏项目 - 幂等性
+     */
+    @Test
+    @DisplayName("测试收藏项目 - 幂等性处理")
+    void testFavoriteProjectIdempotent() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        UUID userId = UUID.randomUUID();
+
+        SocialInteractionEntity existingFavorite = SocialInteractionEntity.builder()
+                .id(UUID.randomUUID())
+                .tenantId(testTenantId)
+                .userId(userId)
+                .projectId(projectId)
+                .interactionType(SocialInteractionEntity.InteractionType.FAVORITE.getValue())
+                .build();
+
+        when(socialInteractionMapper.findByUserIdAndProjectIdAndType(
+                userId, projectId, SocialInteractionEntity.InteractionType.FAVORITE.getValue()))
+                .thenReturn(Optional.of(existingFavorite));
+
+        // Act - 应该不抛出异常
+        assertDoesNotThrow(() -> {
+            projectService.favoriteProject(projectId, userId);
+        });
+
+        // Assert - 验证没有创建新的收藏记录
+        verify(socialInteractionMapper, never()).insert(any(SocialInteractionEntity.class));
+    }
+
+    /**
+     * 测试取消收藏项目成功
+     */
+    @Test
+    @DisplayName("测试取消收藏项目成功")
+    void testUnfavoriteProjectSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        UUID userId = UUID.randomUUID();
+
+        when(socialInteractionMapper.deleteByUserIdAndProjectIdAndType(
+                userId, projectId, SocialInteractionEntity.InteractionType.FAVORITE.getValue()))
+                .thenReturn(1);
+
+        // Act
+        projectService.unfavoriteProject(projectId, userId);
+
+        // Assert
+        verify(socialInteractionMapper, times(1))
+                .deleteByUserIdAndProjectIdAndType(userId, projectId,
+                        SocialInteractionEntity.InteractionType.FAVORITE.getValue());
+    }
+
+    /**
+     * 测试查询公开项目
+     * 验证点：
+     * 1. 只返回published状态的项目
+     * 2. 只返回public可见性的项目
+     */
+    @Test
+    @DisplayName("测试查询公开项目")
+    void testPagePublicProjects() {
+        // Arrange
+        Long current = 1L;
+        Long size = 10L;
+        Page<ProjectEntity> expectedPage = new Page<>(current, size);
+
+        ProjectEntity publicProject = ProjectEntity.builder()
+                .id(UUID.randomUUID())
+                .name("公开项目")
+                .status(ProjectEntity.Status.PUBLISHED.getValue())
+                .visibility(ProjectEntity.Visibility.PUBLIC.getValue())
+                .build();
+
+        expectedPage.setRecords(Arrays.asList(publicProject));
+        expectedPage.setTotal(1L);
+
+        when(projectMapper.selectPageByVisibilityAndStatus(
+                any(Page.class),
+                eq(ProjectEntity.Visibility.PUBLIC.getValue()),
+                eq(ProjectEntity.Status.PUBLISHED.getValue())))
+                .thenReturn(expectedPage);
+
+        // Act
+        Page<ProjectEntity> result = projectService.pagePublicProjects(current, size);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(1L, result.getTotal());
+        assertEquals(1, result.getRecords().size());
+
+        ProjectEntity project = result.getRecords().get(0);
+        assertEquals(ProjectEntity.Status.PUBLISHED.getValue(), project.getStatus());
+        assertEquals(ProjectEntity.Visibility.PUBLIC.getValue(), project.getVisibility());
+
+        verify(projectMapper, times(1)).selectPageByVisibilityAndStatus(
+                any(Page.class),
+                eq(ProjectEntity.Visibility.PUBLIC.getValue()),
+                eq(ProjectEntity.Status.PUBLISHED.getValue()));
+    }
+
+    /**
+     * 测试发布项目
+     */
+    @Test
+    @DisplayName("测试发布项目成功")
+    void testPublishProjectSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        when(projectMapper.selectById(projectId)).thenReturn(testProject);
+
+        // Mock getByIdAndTenantId 方法（这是 Service 层的方法）
+        ProjectServiceImpl spyService = spy(projectService);
+        doReturn(testProject).when(spyService).getByIdAndTenantId(projectId, testTenantId);
+        doReturn(true).when(spyService).updateById(any(ProjectEntity.class));
+
+        // Act
+        spyService.publishProject(projectId, testTenantId);
+
+        // Assert
+        ArgumentCaptor<ProjectEntity> captor = ArgumentCaptor.forClass(ProjectEntity.class);
+        verify(spyService, times(1)).updateById(captor.capture());
+
+        ProjectEntity updatedProject = captor.getValue();
+        assertEquals(ProjectEntity.Status.PUBLISHED.getValue(), updatedProject.getStatus());
+        assertNotNull(updatedProject.getPublishedAt());
+    }
+
+    /**
+     * 测试归档项目
+     */
+    @Test
+    @DisplayName("测试归档项目成功")
+    void testArchiveProjectSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        when(projectMapper.selectById(projectId)).thenReturn(testProject);
+
+        // Mock getByIdAndTenantId 方法（这是 Service 层的方法）
+        ProjectServiceImpl spyService = spy(projectService);
+        doReturn(testProject).when(spyService).getByIdAndTenantId(projectId, testTenantId);
+        doReturn(true).when(spyService).updateById(any(ProjectEntity.class));
+
+        // Act
+        spyService.archiveProject(projectId, testTenantId);
+
+        // Assert
+        ArgumentCaptor<ProjectEntity> captor = ArgumentCaptor.forClass(ProjectEntity.class);
+        verify(spyService, times(1)).updateById(captor.capture());
+
+        ProjectEntity updatedProject = captor.getValue();
+        assertEquals(ProjectEntity.Status.ARCHIVED.getValue(), updatedProject.getStatus());
+    }
+
+    /**
+     * 测试增加浏览次数
+     */
+    @Test
+    @DisplayName("测试增加浏览次数成功")
+    void testIncrementViewCountSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        when(projectMapper.incrementViewCount(projectId)).thenReturn(1);
+
+        // Act
+        projectService.incrementViewCount(projectId);
+
+        // Assert
+        verify(projectMapper, times(1)).incrementViewCount(projectId);
+    }
+
+    /**
+     * 测试租户隔离查询
+     */
+    @Test
+    @DisplayName("测试租户隔离查询成功")
+    void testGetByIdAndTenantIdSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        doReturn(testProject).when(spyService).getById(projectId);
+
+        // Act
+        ProjectEntity result = spyService.getByIdAndTenantId(projectId, testTenantId);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals(projectId, result.getId());
+        assertEquals(testTenantId, result.getTenantId());
+    }
+
+    /**
+     * 测试租户隔离查询失败 - 租户ID不匹配
+     */
+    @Test
+    @DisplayName("测试租户隔离查询失败 - 租户ID不匹配")
+    void testGetByIdAndTenantIdAccessDenied() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        UUID wrongTenantId = UUID.randomUUID();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        doReturn(testProject).when(spyService).getById(projectId);
+
+        // Act & Assert
+        BusinessException exception = assertThrows(BusinessException.class, () -> {
+            spyService.getByIdAndTenantId(projectId, wrongTenantId);
+        });
+
+        assertEquals(ErrorCode.PROJECT_ACCESS_DENIED.getCode(), exception.getCode());
+    }
+
+    /**
+     * 测试更新项目
+     */
+    @Test
+    @DisplayName("测试更新项目成功")
+    void testUpdateProjectSuccess() {
+        // Arrange
+        UUID projectId = testProject.getId();
+        ProjectEntity updateProject = ProjectEntity.builder()
+                .name("更新后的项目名")
+                .description("更新后的描述")
+                .visibility(ProjectEntity.Visibility.PUBLIC.getValue())
+                .build();
+
+        ProjectServiceImpl spyService = spy(projectService);
+        doReturn(testProject).when(spyService).getById(projectId);
+        doReturn(true).when(spyService).updateById(any(ProjectEntity.class));
+
+        // Act
+        ProjectEntity result = spyService.updateProject(projectId, updateProject);
+
+        // Assert
+        assertNotNull(result);
+        assertEquals("更新后的项目名", result.getName());
+        assertEquals("更新后的描述", result.getDescription());
+        assertEquals(ProjectEntity.Visibility.PUBLIC.getValue(), result.getVisibility());
+
+        verify(spyService, times(1)).getById(projectId);
+        verify(spyService, times(1)).updateById(any(ProjectEntity.class));
+    }
+}

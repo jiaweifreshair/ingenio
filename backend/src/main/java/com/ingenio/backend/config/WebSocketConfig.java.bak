@@ -1,0 +1,43 @@
+package com.ingenio.backend.config;
+
+import com.ingenio.backend.websocket.GenerationWebSocketHandler;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.web.socket.config.annotation.EnableWebSocket;
+import org.springframework.web.socket.config.annotation.WebSocketConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry;
+
+/**
+ * WebSocket配置类
+ * 配置生成任务的WebSocket端点
+ * 使用@Lazy注解打破与AgentStatusService的循环依赖
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+@Slf4j
+@Configuration
+@EnableWebSocket
+public class WebSocketConfig implements WebSocketConfigurer {
+
+    private final GenerationWebSocketHandler generationWebSocketHandler;
+
+    /**
+     * 构造函数注入，使用@Lazy打破循环依赖
+     * 循环链：WebSocketConfig → GenerationWebSocketHandler → AgentStatusServiceImpl → GenerationWebSocketHandler
+     */
+    public WebSocketConfig(@Lazy GenerationWebSocketHandler generationWebSocketHandler) {
+        this.generationWebSocketHandler = generationWebSocketHandler;
+    }
+
+    @Override
+    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
+        // 注册生成任务WebSocket端点
+        registry.addHandler(generationWebSocketHandler, "/ws/generation/{taskId}")
+                .setAllowedOrigins("*") // 开发环境允许所有来源，生产环境需要配置具体域名
+                .withSockJS(); // 启用SockJS支持，用于不支持WebSocket的浏览器
+
+        log.info("WebSocket端点注册成功: /ws/generation/{taskId}");
+    }
+}

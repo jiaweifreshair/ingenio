@@ -1,0 +1,196 @@
+package com.ingenio.backend.controller;
+
+import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.stp.StpUtil;
+import com.ingenio.backend.common.exception.BusinessException;
+import com.ingenio.backend.common.exception.ErrorCode;
+import com.ingenio.backend.common.response.Result;
+import com.ingenio.backend.dto.request.ChangePasswordRequest;
+import com.ingenio.backend.dto.request.UserLoginRequest;
+import com.ingenio.backend.dto.request.UserRegisterRequest;
+import com.ingenio.backend.dto.response.LoginResponse;
+import com.ingenio.backend.dto.response.UserResponse;
+import com.ingenio.backend.entity.UserEntity;
+import com.ingenio.backend.service.UserService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.UUID;
+
+/**
+ * 用户管理Controller
+ * 提供用户注册、登录、信息查询和密码管理等功能
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/v1/users")
+@RequiredArgsConstructor
+public class UserController {
+
+    private final UserService userService;
+
+    /**
+     * 用户注册
+     * 公开接口，不需要登录
+     *
+     * @param request 注册请求参数
+     * @return 注册成功的用户信息
+     */
+    @PostMapping("/register")
+    public Result<UserResponse> register(@Valid @RequestBody UserRegisterRequest request) {
+        log.info("用户注册: username={}, email={}", request.getUsername(), request.getEmail());
+
+        // 调用Service层进行注册
+        UserEntity user = userService.register(
+            request.getUsername(),
+            request.getEmail(),
+            request.getPassword(),
+            request.getTenantId()
+        );
+
+        // 转换为UserResponse
+        UserResponse userResponse = convertToUserResponse(user);
+
+        log.info("用户注册成功: userId={}", user.getId());
+        return Result.success(userResponse);
+    }
+
+    /**
+     * 用户登录
+     * 公开接口，不需要登录
+     *
+     * @param request 登录请求参数
+     * @return 登录Token和用户信息
+     */
+    @PostMapping("/login")
+    public Result<LoginResponse> login(@Valid @RequestBody UserLoginRequest request) {
+        log.info("用户登录: username={}", request.getUsername());
+
+        // 调用Service层进行登录验证
+        UserEntity user = userService.login(request.getUsername(), request.getPassword());
+
+        // 使用SaToken生成Token
+        StpUtil.login(user.getId().toString());
+
+        // 更新最后登录时间
+        userService.updateLastLoginTime(user.getId());
+
+        // 获取Token信息
+        String token = StpUtil.getTokenValue();
+        long timeout = StpUtil.getTokenTimeout();
+
+        // 构造响应
+        LoginResponse loginResponse = LoginResponse.builder()
+            .accessToken(token)
+            .tokenType("Bearer")
+            .expiresIn(timeout)
+            .user(convertToUserResponse(user))
+            .build();
+
+        log.info("用户登录成功: userId={}, token={}", user.getId(), token);
+        return Result.success(loginResponse);
+    }
+
+    /**
+     * 获取当前登录用户信息
+     * 需要登录
+     *
+     * @return 当前用户信息
+     */
+    @SaCheckLogin
+    @GetMapping("/me")
+    public Result<UserResponse> getCurrentUser() {
+        // 获取当前登录用户ID
+        String userIdStr = StpUtil.getLoginIdAsString();
+        UUID userId = UUID.fromString(userIdStr);
+
+        log.info("获取当前用户信息: userId={}", userId);
+
+        // 查询用户信息
+        UserEntity user = userService.getById(userId);
+        if (user == null) {
+            log.warn("用户不存在: userId={}", userId);
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+        }
+
+        UserResponse userResponse = convertToUserResponse(user);
+        return Result.success(userResponse);
+    }
+
+    /**
+     * 修改密码
+     * 需要登录
+     *
+     * @param request 修改密码请求参数
+     * @return 操作结果
+     */
+    @SaCheckLogin
+    @PutMapping("/password")
+    public Result<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+        // 获取当前登录用户ID
+        String userIdStr = StpUtil.getLoginIdAsString();
+        UUID userId = UUID.fromString(userIdStr);
+
+        log.info("修改密码: userId={}", userId);
+
+        // 验证新密码和确认密码是否一致
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "新密码和确认密码不一致");
+        }
+
+        // 调用Service层修改密码
+        userService.changePassword(userId, request.getOldPassword(), request.getNewPassword());
+
+        log.info("修改密码成功: userId={}", userId);
+        return Result.success();
+    }
+
+    /**
+     * 退出登录
+     * 需要登录
+     *
+     * @return 操作结果
+     */
+    @SaCheckLogin
+    @PostMapping("/logout")
+    public Result<Void> logout() {
+        // 获取当前登录用户ID
+        String userIdStr = StpUtil.getLoginIdAsString();
+        log.info("用户退出登录: userId={}", userIdStr);
+
+        // 注销当前Token
+        StpUtil.logout();
+
+        log.info("用户退出登录成功: userId={}", userIdStr);
+        return Result.success("退出登录成功", null);
+    }
+
+    /**
+     * 将UserEntity转换为UserResponse
+     * 过滤敏感信息（如密码）
+     *
+     * @param user 用户实体
+     * @return 用户响应DTO
+     */
+    private UserResponse convertToUserResponse(UserEntity user) {
+        return UserResponse.builder()
+            .id(user.getId())
+            .tenantId(user.getTenantId() != null ? UUID.fromString(user.getTenantId()) : null)
+            .username(user.getUsername())
+            .email(user.getEmail())
+            .displayName(user.getDisplayName())
+            .role(user.getRole())
+            .status(user.getStatus())
+            .avatarUrl(user.getAvatarUrl())
+            .lastLoginAt(user.getLastLoginAt())
+            .createdAt(user.getCreatedAt())
+            .updatedAt(user.getUpdatedAt())
+            .metadata(user.getMetadata())
+            .build();
+    }
+}

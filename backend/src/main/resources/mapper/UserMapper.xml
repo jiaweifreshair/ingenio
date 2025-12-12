@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ingenio.backend.mapper.UserMapper">
+
+    <!-- updateByIdWithCast: UUID类型安全更新 -->
+    <update id="updateByIdWithCast">
+        UPDATE users
+        <set>
+            <if test="user.tenantId != null">tenant_id = #{user.tenantId},</if>
+            <if test="user.username != null">username = #{user.username},</if>
+            <if test="user.email != null">email = #{user.email},</if>
+            <if test="user.passwordHash != null">password_hash = #{user.passwordHash},</if>
+            <if test="user.displayName != null">display_name = #{user.displayName},</if>
+            <if test="user.avatarUrl != null">avatar_url = #{user.avatarUrl},</if>
+            <if test="user.bio != null">bio = #{user.bio},</if>
+            <if test="user.phone != null">phone = #{user.phone},</if>
+            <if test="user.role != null">role = #{user.role},</if>
+            <if test="user.status != null">status = #{user.status},</if>
+            <if test="user.emailVerified != null">email_verified = #{user.emailVerified},</if>
+            <if test="user.phoneVerified != null">phone_verified = #{user.phoneVerified},</if>
+            <if test="user.lastLoginAt != null">last_login_at = #{user.lastLoginAt},</if>
+            <if test="user.updatedAt != null">updated_at = #{user.updatedAt},</if>
+        </set>
+        WHERE id = CAST(#{user.id} AS UUID)
+    </update>
+
+</mapper>

@@ -1,0 +1,38 @@
+# 开发环境配置
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ingenio_dev
+    username: postgres
+    password: postgres
+
+  redis:
+    host: localhost
+    port: 6379
+    password:
+
+  ai:
+    alibaba:
+      api-key: ${DEEPSEEK_API_KEY:sk-your-deepseek-api-key}
+
+# MinIO配置
+minio:
+  endpoint: http://localhost:9000
+  access-key: minioadmin
+  secret-key: minioadmin
+  bucket-name: ingenio-dev
+
+# SaToken配置
+sa-token:
+  jwt-secret-key: ingenio-jwt-dev-secret-key
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.ingenio.backend: DEBUG
+    com.baomidou.mybatisplus: DEBUG
+
+# Ingenio配置
+ingenio:
+  codegen:
+    preview-base-url: http://localhost:3000

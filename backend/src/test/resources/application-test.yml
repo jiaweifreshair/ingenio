@@ -1,0 +1,107 @@
+# Ingenio Backend - E2E测试配置
+spring:
+  application:
+    name: ingenio-backend-test
+
+  # 数据源配置（由TestContainers动态提供）
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+
+  # Redis配置（由TestContainers动态提供）
+  redis:
+    timeout: 3000ms
+
+  # Jackson配置
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: Asia/Shanghai
+    date-format: yyyy-MM-dd HH:mm:ss
+
+  # Spring AI 阿里云DashScope配置（测试环境）
+  ai:
+    dashscope:
+      api-key: sk-20bc5252fe0f4aa4a437db35d913ac4e
+      base-url: https://dashscope.aliyuncs.com
+      chat:
+        enabled: true
+        options:
+          model: qwen-max
+          temperature: 0.3
+          max-tokens: 4096
+          timeout: 90s
+          max-retries: 2
+
+  # 禁用FreeMarker自动配置（测试环境不需要视图模板）
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.freemarker.FreeMarkerAutoConfiguration
+
+# MyBatis-Plus配置
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+  global-config:
+    db-config:
+      id-type: auto
+
+# SaToken配置（测试环境简化配置）
+sa-token:
+  token-name: Authorization
+  timeout: 3600
+  is-concurrent: true
+  is-share: false
+  token-style: jwt
+  is-log: false
+  jwt-secret-key: test-jwt-secret-key
+
+# 服务器配置
+server:
+  port: 0  # 随机端口
+  servlet:
+    context-path: /api
+
+# 日志配置（测试环境减少日志输出）
+logging:
+  level:
+    root: WARN
+    com.ingenio.backend: INFO
+    com.baomidou.mybatisplus: WARN
+    org.springframework.ai: WARN
+
+# 应用自定义配置
+ingenio:
+  # 租户配置
+  tenant:
+    enabled: true
+    default-tenant-id: 00000000-0000-0000-0000-000000000002
+
+# 微信配置（测试环境使用占位符）
+wechat:
+  appid: test-appid
+  secret: test-secret
+  redirect-uri: http://localhost:3000/auth/callback
+
+# 邮件配置（测试环境Mock）
+spring.mail:
+  host: localhost
+  port: 25
+  username: test@ingenio.local
+  password: test-password
+  properties:
+    mail.smtp.auth: false
+    mail.smtp.starttls.enable: false
+
+# OAuth配置（测试环境使用占位符）
+oauth:
+  google:
+    client-id: test-google-client-id
+    client-secret: test-google-client-secret
+    redirect-uri: http://localhost:3000/auth/google/callback
+  github:
+    client-id: test-github-client-id
+    client-secret: test-github-client-secret
+    redirect-uri: http://localhost:3000/auth/github/callback

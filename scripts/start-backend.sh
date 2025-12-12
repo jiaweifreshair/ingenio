@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# 启动后端服务脚本
+
+cd "$(dirname "$0")/../backend"
+
+echo "🚀 启动秒构AI后端服务..."
+
+# 检查 Java 版本
+if ! command -v java &> /dev/null; then
+    echo "❌ 错误: 未找到 Java，请先安装 Java 17+"
+    exit 1
+fi
+
+JAVA_VERSION=$(java -version 2>&1 | head -n 1 | cut -d'"' -f2 | sed '/^1\./s///' | cut -d'.' -f1)
+if [ "$JAVA_VERSION" -lt 17 ]; then
+    echo "❌ 错误: Java 版本过低，需要 Java 17+，当前版本: $JAVA_VERSION"
+    exit 1
+fi
+
+# 检查 Maven
+if ! command -v mvn &> /dev/null; then
+    echo "❌ 错误: 未找到 Maven，请先安装 Maven"
+    exit 1
+fi
+
+# 检查数据库连接
+echo "📊 检查数据库连接..."
+if ! docker ps | grep -q ingenio-postgres; then
+    echo "⚠️  警告: PostgreSQL 容器未运行，请先启动: docker-compose up -d postgres"
+fi
+
+# 设置环境变量
+export SPRING_PROFILES_ACTIVE=dev
+export DB_HOST=localhost
+export DB_PORT=5432
+export DB_NAME=ingenio_dev
+export DB_USER=ingenio_user
+export DB_PASSWORD=ingenio_password
+export REDIS_HOST=localhost
+export REDIS_PORT=6379
+export MINIO_ENDPOINT=http://localhost:9000
+export MINIO_ACCESS_KEY=minioadmin
+export MINIO_SECRET_KEY=minioadmin
+export MINIO_BUCKET_NAME=ingenio-code
+
+# 如果没有设置 API Key，使用占位符
+if [ -z "$DASHSCOPE_API_KEY" ]; then
+    echo "⚠️  警告: DASHSCOPE_API_KEY 未设置，使用占位符"
+    export DASHSCOPE_API_KEY=sk-placeholder
+fi
+
+# 启动服务
+echo "🔨 编译并启动后端服务..."
+mvn spring-boot:run -Dspring-boot.run.profiles=dev
+

@@ -1,0 +1,66 @@
+package com.ingenio.backend.service;
+
+import java.util.Map;
+
+/**
+ * MCP (Model Context Protocol) 服务接口
+ * 用于调用外部 MCP 服务，支持 SuperDesign 和 AipexBase 等功能
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+public interface MCPService {
+
+    /**
+     * 调用 MCP 服务
+     *
+     * @param server MCP 服务器名称
+     * @param tool 工具名称
+     * @param params 参数
+     * @return MCP 响应
+     */
+    MCPResponse call(String server, String tool, Map<String, Object> params);
+
+    /**
+     * MCP 响应
+     */
+    class MCPResponse {
+        private boolean success;
+        private Object data;
+        private String error;
+        private Map<String, Object> metadata;
+
+        public boolean isSuccess() {
+            return success;
+        }
+
+        public void setSuccess(boolean success) {
+            this.success = success;
+        }
+
+        public Object getData() {
+            return data;
+        }
+
+        public void setData(Object data) {
+            this.data = data;
+        }
+
+        public String getError() {
+            return error;
+        }
+
+        public void setError(String error) {
+            this.error = error;
+        }
+
+        public Map<String, Object> getMetadata() {
+            return metadata;
+        }
+
+        public void setMetadata(Map<String, Object> metadata) {
+            this.metadata = metadata;
+        }
+    }
+}
+

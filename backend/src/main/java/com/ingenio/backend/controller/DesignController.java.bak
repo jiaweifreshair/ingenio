@@ -1,0 +1,99 @@
+package com.ingenio.backend.controller;
+
+import com.ingenio.backend.common.exception.ErrorCode;
+import com.ingenio.backend.common.response.Result;
+import com.ingenio.backend.service.SuperDesignService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * SuperDesign AI设计Controller
+ * 提供页面 No-code 生成优化功能
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/v1/design")
+@RequiredArgsConstructor
+public class DesignController {
+
+    private final SuperDesignService superDesignService;
+
+    /**
+     * 生成设计方案
+     * 根据 AppSpec 生成多个设计方案供选择
+     *
+     * @param request 包含 appSpec 和 count 的请求
+     * @return 设计方案列表
+     */
+    @PostMapping("/generate")
+    public Result<List<SuperDesignService.DesignCandidate>> generateDesigns(
+            @Valid @RequestBody Map<String, Object> request) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> appSpec = (Map<String, Object>) request.get("appSpec");
+        Integer count = (Integer) request.getOrDefault("n", 3);
+
+        if (appSpec == null || appSpec.isEmpty()) {
+            return Result.error(ErrorCode.PARAM_ERROR);
+        }
+
+        log.info("生成设计方案: count={}", count);
+
+        try {
+            List<SuperDesignService.DesignCandidate> candidates = 
+                superDesignService.generateDesigns(appSpec, count);
+            return Result.success(candidates);
+        } catch (Exception e) {
+            log.error("生成设计方案失败", e);
+            return Result.error(ErrorCode.SYSTEM_ERROR.getCode(), "生成设计方案失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 应用设计方案
+     * 将选定的设计方案应用到 AppSpec
+     *
+     * @param request 包含 appSpecId 和 designCandidate 的请求
+     * @return 更新后的 AppSpec
+     */
+    @PostMapping("/apply")
+    public Result<Map<String, Object>> applyDesign(@Valid @RequestBody Map<String, Object> request) {
+        String appSpecId = (String) request.get("appSpecId");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> designData = (Map<String, Object>) request.get("choice");
+
+        if (appSpecId == null || appSpecId.isBlank()) {
+            return Result.error(ErrorCode.PARAM_ERROR);
+        }
+
+        log.info("应用设计方案: appSpecId={}", appSpecId);
+
+        try {
+            // 将 Map 转换为 DesignCandidate
+            SuperDesignService.DesignCandidate candidate = new SuperDesignService.DesignCandidate();
+            candidate.setId((String) designData.get("id"));
+            candidate.setPreviewUrl((String) designData.get("previewUrl"));
+            @SuppressWarnings("unchecked")
+            Map<String, String> components = (Map<String, String>) designData.get("components");
+            candidate.setComponents(components);
+            @SuppressWarnings("unchecked")
+            Map<String, String> themeVars = (Map<String, String>) designData.get("themeVars");
+            candidate.setThemeVars(themeVars);
+            candidate.setLicense((String) designData.get("license"));
+
+            Map<String, Object> updatedAppSpec = superDesignService.applyDesign(appSpecId, candidate);
+            return Result.success(updatedAppSpec);
+        } catch (Exception e) {
+            log.error("应用设计方案失败", e);
+            return Result.error(ErrorCode.SYSTEM_ERROR.getCode(), "应用设计方案失败: " + e.getMessage());
+        }
+    }
+}
+

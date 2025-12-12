@@ -1,0 +1,856 @@
+package com.ingenio.backend.controller;
+
+import cn.dev33.satoken.annotation.SaCheckLogin;
+import cn.dev33.satoken.stp.StpUtil;
+import com.ingenio.backend.agent.ExecuteAgent;
+import com.ingenio.backend.agent.PlanAgent;
+import com.ingenio.backend.agent.ValidateAgent;
+import com.ingenio.backend.agent.dto.PlanResult;
+import com.ingenio.backend.agent.dto.ValidateResult;
+import com.ingenio.backend.common.exception.BusinessException;
+import com.ingenio.backend.common.exception.ErrorCode;
+import com.ingenio.backend.common.response.Result;
+import com.ingenio.backend.dto.request.GenerateFullRequest;
+import com.ingenio.backend.dto.response.GenerateFullResponse;
+import com.ingenio.backend.dto.response.TaskStatusResponse;
+import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.entity.GenerationTaskEntity;
+import com.ingenio.backend.common.util.ZipUtil;
+import com.ingenio.backend.renderer.KuiklyUIRenderer;
+import com.ingenio.backend.service.AgentStatusService;
+import com.ingenio.backend.service.AppSpecService;
+import com.ingenio.backend.service.MinioService;
+import com.ingenio.backend.service.SuperDesignService;
+import com.ingenio.backend.service.AipexBaseService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.bind.annotation.*;
+
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+
+/**
+ * AI生成Controller
+ * 提供从自然语言需求生成AppSpec和代码的完整流程
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+@Slf4j
+@RestController
+@RequestMapping("/api/v1/generate")
+@RequiredArgsConstructor
+public class GenerateController {
+
+    private final PlanAgent planAgent;
+    private final ExecuteAgent executeAgent;
+    private final ValidateAgent validateAgent;
+    private final AppSpecService appSpecService;
+    private final MinioService minioService;
+    private final AgentStatusService agentStatusService;
+    private final KuiklyUIRenderer kuiklyUIRenderer;
+    private final SuperDesignService superDesignService;
+    private final AipexBaseService aipexBaseService;
+
+    /**
+     * 需求规划（PlanAgent）
+     * 将自然语言需求转化为结构化的功能模块列表
+     *
+     * @param request 包含用户需求的请求
+     * @return 规划结果
+     */
+    @SaCheckLogin
+    @PostMapping("/plan")
+    public Result<PlanResult> plan(@Valid @RequestBody Map<String, String> request) {
+        String userRequirement = request.get("userRequirement");
+        if (userRequirement == null || userRequirement.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "用户需求不能为空");
+        }
+
+        log.info("执行需求规划: userRequirement={}", userRequirement.substring(0, Math.min(100, userRequirement.length())));
+
+        try {
+            // 调用PlanAgent进行需求规划
+            PlanResult planResult = planAgent.plan(userRequirement);
+
+            log.info("需求规划成功: modules={}, complexityScore={}",
+                planResult.getModules().size(), planResult.getComplexityScore());
+
+            return Result.success(planResult);
+        } catch (Exception e) {
+            log.error("需求规划失败", e);
+            throw new BusinessException(ErrorCode.AGENT_PLAN_FAILED.getCode(), "需求规划失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 生成AppSpec（ExecuteAgent）
+     * 基于规划结果生成完整的AppSpec JSON
+     *
+     * @param planResult 规划结果
+     * @return AppSpec JSON
+     */
+    // TODO: 开发阶段暂时关闭认证，生产环境需要启用
+    // @SaCheckLogin
+    @PostMapping("/appspec")
+    public Result<Map<String, Object>> generateAppSpec(@Valid @RequestBody PlanResult planResult) {
+        log.info("执行AppSpec生成: modules={}", planResult.getModules().size());
+
+        try {
+            // 调用ExecuteAgent生成AppSpec
+            Map<String, Object> appSpec = executeAgent.execute(planResult);
+
+            log.info("AppSpec生成成功: pages={}, dataModels={}",
+                appSpec.containsKey("pages") ? ((Map<?, ?>) appSpec.get("pages")).size() : 0,
+                appSpec.containsKey("dataModels") ? ((Map<?, ?>) appSpec.get("dataModels")).size() : 0);
+
+            return Result.success(appSpec);
+        } catch (Exception e) {
+            log.error("AppSpec生成失败", e);
+            throw new BusinessException(ErrorCode.AGENT_EXECUTE_FAILED.getCode(), "AppSpec生成失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 验证AppSpec（ValidateAgent）
+     * 验证AppSpec的正确性和质量评分
+     *
+     * @param appSpec AppSpec JSON
+     * @return 验证结果
+     */
+    @SaCheckLogin
+    @PostMapping("/validate")
+    public Result<ValidateResult> validateAppSpec(@Valid @RequestBody Map<String, Object> appSpec) {
+        log.info("执行AppSpec验证");
+
+        try {
+            // 调用ValidateAgent进行验证
+            ValidateResult validateResult = validateAgent.validate(appSpec);
+
+            log.info("AppSpec验证完成: isValid={}, qualityScore={}",
+                validateResult.getIsValid(), validateResult.getQualityScore());
+
+            return Result.success(validateResult);
+        } catch (Exception e) {
+            log.error("AppSpec验证失败", e);
+            throw new BusinessException(ErrorCode.AGENT_VALIDATE_FAILED.getCode(), "AppSpec验证失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 生成代码（KuiklyUIRenderer）
+     * 基于AppSpec生成完整的代码并上传到MinIO
+     *
+     * @param request 包含appSpecId的请求
+     * @return 代码下载URL
+     */
+    @SaCheckLogin
+    @PostMapping("/code")
+    public Result<Map<String, String>> generateCode(@Valid @RequestBody Map<String, String> request) {
+        String appSpecId = request.get("appSpecId");
+        if (appSpecId == null || appSpecId.isBlank()) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR.getCode(), "AppSpec ID不能为空");
+        }
+
+        log.info("执行代码生成: appSpecId={}", appSpecId);
+
+        try {
+            // 获取租户ID
+            String userIdStr = StpUtil.getLoginIdAsString();
+            String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
+            UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : UUID.fromString(userIdStr);
+
+            // 查询AppSpec
+            AppSpecEntity appSpec = appSpecService.getByIdAndTenantId(UUID.fromString(appSpecId), tenantId);
+            if (appSpec == null) {
+                throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
+            }
+
+            // 调用KuiklyUIRenderer生成代码
+            log.info("开始生成代码: appSpecId={}", appSpecId);
+            Map<String, String> generatedFiles = kuiklyUIRenderer.render(appSpec.getSpecContent());
+            log.info("代码生成完成: 文件数={}", generatedFiles.size());
+
+            // 打包成ZIP文件
+            byte[] zipBytes = ZipUtil.createZipBytes(generatedFiles);
+            InputStream zipInputStream = new java.io.ByteArrayInputStream(zipBytes);
+            long zipSize = zipBytes.length;
+
+            // 上传到MinIO
+            String objectName = "generated-code/" + appSpecId + ".zip";
+            Map<String, String> metadata = new HashMap<>();
+            metadata.put("appSpecId", appSpecId);
+            metadata.put("renderer", kuiklyUIRenderer.getRendererName());
+            metadata.put("framework", kuiklyUIRenderer.getSupportedFramework());
+            metadata.put("fileCount", String.valueOf(generatedFiles.size()));
+
+            String downloadUrl = minioService.uploadFile(
+                objectName,
+                zipInputStream,
+                "application/zip",
+                zipSize,
+                metadata
+            );
+
+            log.info("代码生成成功: downloadUrl={}, fileCount={}, zipSize={} bytes", downloadUrl, generatedFiles.size(), zipSize);
+
+            return Result.success(Map.of(
+                "downloadUrl", downloadUrl,
+                "appSpecId", appSpecId
+            ));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("代码生成失败", e);
+            throw new BusinessException(ErrorCode.CODEGEN_FAILED.getCode(), "代码生成失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 完整生成流程
+     * Plan → Execute → Validate → Code
+     * 一站式从自然语言需求生成完整的AppSpec和代码
+     *
+     * @param request 生成请求
+     * @return 完整的生成结果
+     */
+    // TODO: 开发阶段暂时关闭认证，生产环境需要启用
+    // @SaCheckLogin
+    @PostMapping("/full")
+    public Result<GenerateFullResponse> generateFull(@Valid @RequestBody GenerateFullRequest request) {
+        // TODO: 开发阶段使用默认用户ID和租户ID，生产环境从认证会话获取
+        // String userIdStr = StpUtil.getLoginIdAsString();
+        // UUID userId = UUID.fromString(userIdStr);
+        // String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
+        // UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : userId;
+        UUID userId = UUID.randomUUID();
+        UUID tenantId = userId;
+
+        log.info("执行完整生成流程: userId={}, tenantId={}, requirement={}",
+            userId, tenantId, request.getUserRequirement().substring(0, Math.min(100, request.getUserRequirement().length())));
+
+        long startTime = System.currentTimeMillis();
+        GenerateFullResponse.GenerateFullResponseBuilder responseBuilder = GenerateFullResponse.builder();
+
+        try {
+            // Step 1: 需求规划（PlanAgent）
+            log.info("[Step 1/4] 执行需求规划...");
+            responseBuilder.status("planning");
+            PlanResult planResult = planAgent.plan(request.getUserRequirement());
+            responseBuilder.planResult(planResult);
+            log.info("[Step 1/4] 需求规划完成: modules={}", planResult.getModules().size());
+
+            // Step 2: 生成AppSpec（ExecuteAgent）
+            log.info("[Step 2/4] 执行AppSpec生成...");
+            responseBuilder.status("executing");
+            Map<String, Object> appSpec = executeAgent.execute(planResult);
+            log.info("[Step 2/4] AppSpec生成完成");
+
+            // Step 2.1: 使用 SuperDesign 决定 UI 设计
+            log.info("[Step 2.1] 使用 SuperDesign 生成 UI 设计方案...");
+            try {
+                List<SuperDesignService.DesignCandidate> designCandidates = 
+                    superDesignService.generateDesigns(appSpec, 3);
+                if (!designCandidates.isEmpty()) {
+                    // 选择评分最高的设计方案
+                    SuperDesignService.DesignCandidate bestDesign = designCandidates.stream()
+                        .max(Comparator.comparing(SuperDesignService.DesignCandidate::getScore))
+                        .orElse(designCandidates.get(0));
+                    
+                    // 将设计方案应用到 AppSpec（直接更新 appSpec Map）
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> customComponents = (List<Map<String, Object>>) 
+                        appSpec.getOrDefault("customComponents", new ArrayList<>());
+                    
+                    // 将设计方案的组件添加到 customComponents
+                    for (Map.Entry<String, String> entry : bestDesign.getComponents().entrySet()) {
+                        Map<String, Object> component = new HashMap<>();
+                        component.put("id", entry.getKey());
+                        component.put("name", entry.getKey());
+                        component.put("code", entry.getValue());
+                        component.put("type", "custom");
+                        customComponents.add(component);
+                    }
+                    appSpec.put("customComponents", customComponents);
+                    
+                    // 更新 themeVars
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> themeVars = (Map<String, Object>) 
+                        appSpec.getOrDefault("themeVars", new HashMap<>());
+                    themeVars.putAll(bestDesign.getThemeVars());
+                    appSpec.put("themeVars", themeVars);
+                    log.info("[Step 2.1] SuperDesign UI 设计方案应用完成: designId={}, score={}", 
+                        bestDesign.getId(), bestDesign.getScore());
+                }
+            } catch (Exception e) {
+                log.warn("[Step 2.1] SuperDesign 生成失败，继续执行: error={}", e.getMessage());
+            }
+
+            // Step 2.2: 使用 AipexBase 确定后端代码资源和实现
+            log.info("[Step 2.2] 使用 AipexBase 确定后端资源...");
+            try {
+                AipexBaseService.AipexBaseConfig aipexBaseConfig = 
+                    aipexBaseService.generateConfig(appSpec);
+                
+                // 将 AipexBase 配置添加到 AppSpec
+                @SuppressWarnings("unchecked")
+                Map<String, Object> aipexBaseConfigMap = new HashMap<>();
+                aipexBaseConfigMap.put("projectId", aipexBaseConfig.getProjectId());
+                aipexBaseConfigMap.put("endpoint", aipexBaseConfig.getEndpoint());
+                aipexBaseConfigMap.put("apiKey", aipexBaseConfig.getApiKey());
+                
+                // 转换表配置
+                List<Map<String, Object>> tablesList = new ArrayList<>();
+                for (AipexBaseService.TableConfig table : aipexBaseConfig.getTables()) {
+                    Map<String, Object> tableMap = new HashMap<>();
+                    tableMap.put("tableName", table.getTableName());
+                    tableMap.put("dataModelId", table.getDataModelId());
+                    tableMap.put("autoSync", table.isAutoSync());
+                    Map<String, Object> permsMap = new HashMap<>();
+                    permsMap.put("read", table.getPermissions().getRead());
+                    permsMap.put("write", table.getPermissions().getWrite());
+                    permsMap.put("delete", table.getPermissions().getDelete());
+                    tableMap.put("permissions", permsMap);
+                    tablesList.add(tableMap);
+                }
+                aipexBaseConfigMap.put("tables", tablesList);
+                
+                // 转换认证配置
+                Map<String, Object> authMap = new HashMap<>();
+                authMap.put("providers", aipexBaseConfig.getAuth().getProviders());
+                authMap.put("sessionTimeout", aipexBaseConfig.getAuth().getSessionTimeout());
+                aipexBaseConfigMap.put("auth", authMap);
+                
+                // 转换存储配置
+                Map<String, Object> storageMap = new HashMap<>();
+                storageMap.put("bucket", aipexBaseConfig.getStorage().getBucket());
+                storageMap.put("maxFileSize", aipexBaseConfig.getStorage().getMaxFileSize());
+                storageMap.put("allowedTypes", aipexBaseConfig.getStorage().getAllowedTypes());
+                aipexBaseConfigMap.put("storage", storageMap);
+                
+                aipexBaseConfigMap.put("apiCode", aipexBaseConfig.getApiCode());
+                
+                appSpec.put("aipexBaseConfig", aipexBaseConfigMap);
+                log.info("[Step 2.2] AipexBase 后端资源配置完成: projectId={}, tables={}", 
+                    aipexBaseConfig.getProjectId(), aipexBaseConfig.getTables().size());
+            } catch (Exception e) {
+                log.warn("[Step 2.2] AipexBase 配置生成失败，继续执行: error={}", e.getMessage());
+            }
+
+            // Step 3: 验证AppSpec（ValidateAgent）
+            log.info("[Step 3/4] 执行AppSpec验证...");
+            responseBuilder.status("validating");
+            ValidateResult validateResult = validateAgent.validate(appSpec);
+            responseBuilder.validateResult(validateResult);
+            responseBuilder.isValid(validateResult.getIsValid());
+            responseBuilder.qualityScore(validateResult.getQualityScore());
+            log.info("[Step 3/4] AppSpec验证完成: isValid={}, qualityScore={}",
+                validateResult.getIsValid(), validateResult.getQualityScore());
+
+            // 检查质量评分
+            if (!request.getSkipValidation() &&
+                (!validateResult.getIsValid() || validateResult.getQualityScore() < request.getQualityThreshold())) {
+                String errorMsg = String.format("AppSpec质量评分过低: %d (阈值: %d)",
+                    validateResult.getQualityScore(), request.getQualityThreshold());
+                log.warn(errorMsg);
+                throw new BusinessException(ErrorCode.APPSPEC_QUALITY_TOO_LOW.getCode(), errorMsg);
+            }
+
+            // 保存AppSpec到数据库
+            AppSpecEntity savedAppSpec = appSpecService.createAppSpec(tenantId, userId, appSpec);
+            responseBuilder.appSpecId(savedAppSpec.getId());
+            log.info("AppSpec保存成功: appSpecId={}", savedAppSpec.getId());
+
+            // Step 4: 生成代码（如果需要）
+            if (request.getGeneratePreview()) {
+                log.info("[Step 4/4] 执行代码生成...");
+                responseBuilder.status("generating");
+
+                try {
+                    // 调用KuiklyUIRenderer生成代码
+                    Map<String, String> generatedFiles = kuiklyUIRenderer.render(appSpec);
+                    log.info("[Step 4/4] 代码生成完成: 文件数={}", generatedFiles.size());
+
+                    // 打包成ZIP文件
+                    byte[] zipBytes = ZipUtil.createZipBytes(generatedFiles);
+                    InputStream zipInputStream = new java.io.ByteArrayInputStream(zipBytes);
+                    long zipSize = zipBytes.length;
+
+                    // 上传到MinIO
+                    String objectName = "generated-code/" + savedAppSpec.getId() + ".zip";
+                    Map<String, String> metadata = new HashMap<>();
+                    metadata.put("appSpecId", savedAppSpec.getId().toString());
+                    metadata.put("renderer", kuiklyUIRenderer.getRendererName());
+                    metadata.put("framework", kuiklyUIRenderer.getSupportedFramework());
+                    metadata.put("fileCount", String.valueOf(generatedFiles.size()));
+
+                    String downloadUrl = minioService.uploadFile(
+                        objectName,
+                        zipInputStream,
+                        "application/zip",
+                        zipSize,
+                        metadata
+                    );
+
+                    String previewUrl = "https://preview.ingenio.com/" + savedAppSpec.getId();
+
+                    responseBuilder.codeDownloadUrl(downloadUrl);
+                    responseBuilder.previewUrl(previewUrl);
+                    log.info("[Step 4/4] 代码生成和上传完成: downloadUrl={}, zipSize={} bytes", downloadUrl, zipSize);
+                } catch (Exception e) {
+                    log.error("[Step 4/4] 代码生成失败", e);
+                    // 代码生成失败不影响整体流程，记录错误但继续
+                    responseBuilder.status("completed_with_warnings");
+                }
+            }
+
+            // 计算耗时
+            long durationMs = System.currentTimeMillis() - startTime;
+
+            // 构建响应
+            GenerateFullResponse response = responseBuilder
+                .status("completed")
+                .durationMs(durationMs)
+                .generatedAt(LocalDateTime.now())
+                .tokenUsage(GenerateFullResponse.TokenUsage.builder()
+                    .planTokens(1500)  // TODO: 从Agent获取实际Token使用量
+                    .executeTokens(3000)
+                    .validateTokens(1000)
+                    .totalTokens(5500)
+                    .estimatedCost(0.055)
+                    .build())
+                .build();
+
+            log.info("完整生成流程成功: appSpecId={}, durationMs={}", savedAppSpec.getId(), durationMs);
+            return Result.success(response);
+
+        } catch (BusinessException e) {
+            // 业务异常直接抛出
+            long durationMs = System.currentTimeMillis() - startTime;
+            responseBuilder.status("failed");
+            responseBuilder.errorMessage(e.getMessage());
+            responseBuilder.durationMs(durationMs);
+            log.error("完整生成流程失败: {}", e.getMessage());
+            throw e;
+        } catch (Exception e) {
+            // 其他异常封装为系统错误
+            long durationMs = System.currentTimeMillis() - startTime;
+            responseBuilder.status("failed");
+            responseBuilder.errorMessage(e.getMessage());
+            responseBuilder.durationMs(durationMs);
+            log.error("完整生成流程异常", e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "生成失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取任务状态
+     * 查询生成任务的详细状态和Agent执行进度
+     *
+     * @param taskId 任务ID
+     * @return 任务状态响应
+     */
+    @GetMapping("/status/{taskId}")
+    public Result<TaskStatusResponse> getTaskStatus(@PathVariable UUID taskId) {
+        // TODO: 开发阶段使用默认租户ID，生产环境从认证会话获取
+        // String userIdStr = StpUtil.getLoginIdAsString();
+        // UUID userId = UUID.fromString(userIdStr);
+        // String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
+        // UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : userId;
+        UUID tenantId = UUID.randomUUID();
+
+        log.info("查询任务状态: taskId={}", taskId);
+
+        try {
+            GenerationTaskEntity task = agentStatusService.getTaskDetail(tenantId, taskId);
+            if (task == null) {
+                throw new BusinessException(ErrorCode.NOT_FOUND.getCode(), "任务不存在");
+            }
+
+            TaskStatusResponse response = convertToTaskStatusResponse(task);
+            log.debug("任务状态查询成功: taskId={}, status={}", taskId, task.getStatus());
+            return Result.success(response);
+
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("查询任务状态失败: taskId={}", taskId, e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "查询任务状态失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 异步完整生成流程
+     * 创建任务并异步执行完整的生成流程，返回任务ID供状态查询
+     *
+     * @param request 生成请求
+     * @return 任务ID
+     */
+    @PostMapping("/async")
+    public Result<Map<String, UUID>> generateAsync(@Valid @RequestBody GenerateFullRequest request) {
+        // TODO: 开发阶段使用默认用户ID和租户ID，生产环境从认证会话获取
+        // String userIdStr = StpUtil.getLoginIdAsString();
+        // UUID userId = UUID.fromString(userIdStr);
+        // String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
+        // UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : userId;
+        UUID userId = UUID.randomUUID();
+        UUID tenantId = userId;
+
+        log.info("创建异步生成任务: userId={}, tenantId={}, requirement={}",
+            userId, tenantId, request.getUserRequirement().substring(0, Math.min(100, request.getUserRequirement().length())));
+
+        try {
+            // 检查并发任务限制
+            if (!agentStatusService.canCreateNewTask(tenantId, userId, 5)) {
+                throw new BusinessException(ErrorCode.TOO_MANY_REQUESTS.getCode(), "当前任务数过多，请稍后再试");
+            }
+
+            // 生成任务名称
+            String taskName = generateTaskName(request.getUserRequirement());
+
+            // 创建任务
+            GenerationTaskEntity task = agentStatusService.createTask(tenantId, userId, taskName, request.getUserRequirement());
+
+            // 异步执行生成流程
+            executeGenerationAsync(task.getId(), request);
+
+            log.info("异步生成任务创建成功: taskId={}", task.getId());
+            return Result.success(Map.of("taskId", task.getId()));
+
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("创建异步生成任务失败", e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "创建任务失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 取消任务
+     * 取消正在执行的生成任务
+     *
+     * @param taskId 任务ID
+     * @return 取消结果
+     */
+    @PostMapping("/cancel/{taskId}")
+    public Result<Boolean> cancelTask(@PathVariable UUID taskId) {
+        log.info("取消任务: taskId={}", taskId);
+
+        try {
+            boolean cancelled = agentStatusService.cancelTask(taskId);
+            if (cancelled) {
+                log.info("任务取消成功: taskId={}", taskId);
+                return Result.success(true);
+            } else {
+                log.warn("任务取消失败: taskId={}", taskId);
+                return Result.error("CANCEL_FAILED", "任务取消失败，可能任务已完成或不存在");
+            }
+
+        } catch (Exception e) {
+            log.error("取消任务失败: taskId={}", taskId, e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "取消任务失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取用户任务列表
+     *
+     * @param pageNum 页码，默认1
+     * @param pageSize 页大小，默认10
+     * @return 任务列表
+     */
+    @GetMapping("/tasks")
+    public Result<Map<String, Object>> getUserTasks(
+            @RequestParam(defaultValue = "1") int pageNum,
+            @RequestParam(defaultValue = "10") int pageSize) {
+
+        // TODO: 开发阶段使用默认租户ID，生产环境从认证会话获取
+        // String userIdStr = StpUtil.getLoginIdAsString();
+        // UUID userId = UUID.fromString(userIdStr);
+        // String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
+        // UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : userId;
+        UUID userId = UUID.randomUUID();
+        UUID tenantId = userId;
+
+        try {
+            var taskPage = agentStatusService.getUserTasks(tenantId, userId, pageNum, pageSize);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("tasks", taskPage.getRecords());
+            result.put("total", taskPage.getTotal());
+            result.put("pageNum", taskPage.getCurrent());
+            result.put("pageSize", taskPage.getSize());
+            result.put("pages", taskPage.getPages());
+
+            return Result.success(result);
+
+        } catch (Exception e) {
+            log.error("获取用户任务列表失败", e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR.getCode(), "获取任务列表失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 将GenerationTaskEntity转换为TaskStatusResponse
+     */
+    private TaskStatusResponse convertToTaskStatusResponse(GenerationTaskEntity task) {
+        return TaskStatusResponse.builder()
+                .taskId(task.getId())
+                .taskName(task.getTaskName())
+                .userRequirement(task.getUserRequirement())
+                .status(task.getStatus())
+                .statusDescription(GenerationTaskEntity.Status.fromValue(task.getStatus()).getDescription())
+                .currentAgent(task.getCurrentAgent())
+                .progress(task.getProgress())
+                .agents(convertAgentInfos(task.getAgentsInfo()))
+                .startedAt(task.getStartedAt())
+                .completedAt(task.getCompletedAt())
+                .estimatedRemainingSeconds(calculateRemainingTime(task))
+                .appSpecId(task.getAppSpecId())
+                .qualityScore(task.getQualityScore())
+                .downloadUrl(task.getDownloadUrl())
+                .previewUrl(task.getPreviewUrl())
+                .tokenUsage(convertTokenUsage(task.getTokenUsage()))
+                .errorMessage(task.getErrorMessage())
+                .createdAt(task.getCreatedAt())
+                .updatedAt(task.getUpdatedAt())
+                .build();
+    }
+
+    /**
+     * 转换Agent状态信息
+     */
+    private TaskStatusResponse.AgentStatusInfo convertAgentInfo(String agentType, Map<String, Object> agentData) {
+        if (agentData == null) {
+            return null;
+        }
+
+        return TaskStatusResponse.AgentStatusInfo.builder()
+                .agentType(agentType)
+                .agentName(getAgentDisplayName(agentType))
+                .status((String) agentData.get("status"))
+                .startedAt((LocalDateTime) agentData.get("startedAt"))
+                .completedAt((LocalDateTime) agentData.get("completedAt"))
+                .durationMs((Long) agentData.get("durationMs"))
+                .progress((Integer) agentData.get("progress"))
+                .resultSummary((String) agentData.get("resultSummary"))
+                .errorMessage((String) agentData.get("errorMessage"))
+                .metadata((Map<String, Object>) agentData.get("metadata"))
+                .build();
+    }
+
+    /**
+     * 转换Agent状态信息列表
+     */
+    private java.util.List<TaskStatusResponse.AgentStatusInfo> convertAgentInfos(Map<String, Object> agentsInfo) {
+        if (agentsInfo == null) {
+            return new java.util.ArrayList<>();
+        }
+
+        java.util.List<TaskStatusResponse.AgentStatusInfo> agents = new java.util.ArrayList<>();
+        for (String agentType : agentsInfo.keySet()) {
+            Object agentData = agentsInfo.get(agentType);
+            if (agentData instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> agentMap = (Map<String, Object>) agentData;
+                TaskStatusResponse.AgentStatusInfo agentInfo = convertAgentInfo(agentType, agentMap);
+                if (agentInfo != null) {
+                    agents.add(agentInfo);
+                }
+            }
+        }
+        return agents;
+    }
+
+    /**
+     * 转换Token使用信息
+     */
+    private TaskStatusResponse.TokenUsageInfo convertTokenUsage(Map<String, Object> tokenUsage) {
+        if (tokenUsage == null) {
+            return null;
+        }
+
+        return TaskStatusResponse.TokenUsageInfo.builder()
+                .planTokens(getLongValue(tokenUsage, "planTokens"))
+                .executeTokens(getLongValue(tokenUsage, "executeTokens"))
+                .validateTokens(getLongValue(tokenUsage, "validateTokens"))
+                .totalTokens(getLongValue(tokenUsage, "totalTokens"))
+                .estimatedCost(getDoubleValue(tokenUsage, "estimatedCost"))
+                .build();
+    }
+
+    /**
+     * 生成任务名称
+     */
+    private String generateTaskName(String userRequirement) {
+        String shortRequirement = userRequirement.length() > 20 ?
+            userRequirement.substring(0, 20) + "..." : userRequirement;
+        return String.format("AI生成任务 - %s", shortRequirement);
+    }
+
+    /**
+     * 异步执行生成流程
+     */
+    @SuppressWarnings("InfiniteLoopStatement")
+    private void executeGenerationAsync(UUID taskId, GenerateFullRequest request) {
+        // 在实际项目中应该使用消息队列或异步任务框架
+        // 这里简化处理，使用新线程执行
+        new Thread(() -> {
+            try {
+                // 开始执行任务
+                agentStatusService.startTask(taskId, GenerationTaskEntity.AgentType.PLAN);
+
+                // Step 1: 需求规划
+                updateAgentProgress(taskId, GenerationTaskEntity.AgentType.PLAN, 10, "开始需求规划...");
+                PlanResult planResult = planAgent.plan(request.getUserRequirement());
+
+                Map<String, Object> planResultMap = new HashMap<>();
+                planResultMap.put("modules", planResult.getModules());
+                planResultMap.put("complexityScore", planResult.getComplexityScore());
+                agentStatusService.recordAgentResult(taskId, GenerationTaskEntity.AgentType.PLAN, planResultMap);
+                updateAgentProgress(taskId, GenerationTaskEntity.AgentType.PLAN, 40, "需求规划完成");
+
+                // Step 2: 生成AppSpec
+                agentStatusService.updateTaskStatus(taskId, GenerationTaskEntity.Status.EXECUTING,
+                    GenerationTaskEntity.AgentType.EXECUTE, 50);
+                updateAgentProgress(taskId, GenerationTaskEntity.AgentType.EXECUTE, 50, "生成AppSpec...");
+                Map<String, Object> appSpec = executeAgent.execute(planResult);
+                agentStatusService.recordAgentResult(taskId, GenerationTaskEntity.AgentType.EXECUTE, appSpec);
+                updateAgentProgress(taskId, GenerationTaskEntity.AgentType.EXECUTE, 80, "AppSpec生成完成");
+
+                // Step 3: 验证AppSpec
+                agentStatusService.updateTaskStatus(taskId, GenerationTaskEntity.Status.VALIDATING,
+                    GenerationTaskEntity.AgentType.VALIDATE, 85);
+                updateAgentProgress(taskId, GenerationTaskEntity.AgentType.VALIDATE, 85, "验证AppSpec质量...");
+                ValidateResult validateResult = validateAgent.validate(appSpec);
+
+                Map<String, Object> validateResultMap = new HashMap<>();
+                validateResultMap.put("isValid", validateResult.getIsValid());
+                validateResultMap.put("qualityScore", validateResult.getQualityScore());
+                validateResultMap.put("errors", validateResult.getErrors());
+                agentStatusService.recordAgentResult(taskId, GenerationTaskEntity.AgentType.VALIDATE, validateResultMap);
+                updateAgentProgress(taskId, GenerationTaskEntity.AgentType.VALIDATE, 95, "AppSpec验证完成");
+
+                // 质量检查
+                if (!request.getSkipValidation() &&
+                    (!validateResult.getIsValid() || validateResult.getQualityScore() < request.getQualityThreshold())) {
+                    String errorMsg = String.format("AppSpec质量评分过低: %d (阈值: %d)",
+                        validateResult.getQualityScore(), request.getQualityThreshold());
+                    agentStatusService.failTask(taskId, errorMsg);
+                    return;
+                }
+
+                // 保存AppSpec
+                // TODO: 从认证上下文获取真实的租户和用户信息
+                UUID tenantId = UUID.randomUUID();
+                UUID userId = UUID.randomUUID();
+                AppSpecEntity savedAppSpec = appSpecService.createAppSpec(tenantId, userId, appSpec);
+
+                // Step 4: 生成代码（如果需要）
+                String downloadUrl = null;
+                String previewUrl = null;
+                if (request.getGeneratePreview()) {
+                    agentStatusService.updateTaskStatus(taskId, GenerationTaskEntity.Status.GENERATING,
+                        GenerationTaskEntity.AgentType.GENERATE, 98);
+                    // TODO: 实现代码生成逻辑
+                    downloadUrl = "https://minio.example.com/generated-code/" + savedAppSpec.getId() + ".zip";
+                    previewUrl = "https://preview.ingenio.com/" + savedAppSpec.getId();
+                }
+
+                // 构建Token使用统计
+                Map<String, Object> tokenUsage = new HashMap<>();
+                tokenUsage.put("planTokens", 1500L);
+                tokenUsage.put("executeTokens", 3000L);
+                tokenUsage.put("validateTokens", 1000L);
+                tokenUsage.put("totalTokens", 5500L);
+                tokenUsage.put("estimatedCost", 0.055);
+
+                // 完成任务
+                agentStatusService.completeTask(taskId, savedAppSpec.getId(), validateResult.getQualityScore(),
+                    downloadUrl, previewUrl, tokenUsage);
+
+            } catch (Exception e) {
+                log.error("异步生成任务执行失败: taskId={}", taskId, e);
+                agentStatusService.failTask(taskId, "任务执行失败: " + e.getMessage());
+            }
+        }).start();
+    }
+
+    /**
+     * 更新Agent进度
+     */
+    private void updateAgentProgress(UUID taskId, GenerationTaskEntity.AgentType agentType,
+                                    int progress, String message) {
+        Map<String, Object> agentInfo = new HashMap<>();
+        agentInfo.put("status", "running");
+        agentInfo.put("progress", progress);
+        agentInfo.put("message", message);
+        agentInfo.put("updatedAt", LocalDateTime.now());
+
+        agentStatusService.updateAgentInfo(taskId, agentType, agentInfo);
+        agentStatusService.updateTaskStatus(taskId, null, null, progress);
+
+        log.info("Agent进度更新: taskId={}, agentType={}, progress={}, message={}",
+                taskId, agentType.getValue(), progress, message);
+    }
+
+    /**
+     * 获取Agent显示名称
+     */
+    private String getAgentDisplayName(String agentType) {
+        switch (agentType) {
+            case "plan": return "需求规划Agent";
+            case "execute": return "AppSpec生成Agent";
+            case "validate": return "质量验证Agent";
+            case "generate": return "代码生成Agent";
+            default: return agentType + " Agent";
+        }
+    }
+
+    /**
+     * 计算预估剩余时间
+     */
+    private Long calculateRemainingTime(GenerationTaskEntity task) {
+        // 简单的时间估算逻辑，实际项目中可以根据历史数据进行更精确的估算
+        if (!task.isRunning() || task.getProgress() == null) {
+            return null;
+        }
+
+        if (task.getStartedAt() == null) {
+            return null;
+        }
+
+        long elapsedMs = java.time.Duration.between(task.getStartedAt(), LocalDateTime.now()).toMillis();
+        if (task.getProgress() > 0) {
+            long estimatedTotalMs = (elapsedMs * 100) / task.getProgress();
+            long remainingMs = estimatedTotalMs - elapsedMs;
+            return Math.max(0, remainingMs / 1000); // 转换为秒
+        }
+
+        return null;
+    }
+
+    private Long getLongValue(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        return null;
+    }
+
+    private Double getDoubleValue(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        if (value instanceof Number) {
+            return ((Number) value).doubleValue();
+        }
+        return null;
+    }
+}

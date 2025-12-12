@@ -1,0 +1,345 @@
+{
+  "psychologyPrinciples": [
+    {
+      "id": "principle_001",
+      "name": "埃里克森同一性对角色混乱理论",
+      "category": "SELF_COGNITION",
+      "definition": "埃里克森心理社会发展理论的第五阶段（12-18岁），青少年需要在自我同一性与角色混乱之间找到平衡。同一性是指个体对'我是谁'的稳定认知，包括价值观、信念、目标的整合。若未能建立同一性，会陷入角色混乱，表现为不知道自己是谁、对未来迷茫。",
+      "coreM mechanism": "青少年通过探索不同角色（学生、朋友、子女等）、尝试不同价值观、做出独立选择，逐步整合形成稳定的自我认同。成功建立同一性会获得'忠诚'美德，失败则产生角色混乱和自我怀疑。",
+      "applicableScenarios": [
+        "高中生面临文理分科、专业选择时的迷茫",
+        "青少年在家庭期望与个人兴趣间的冲突",
+        "社交媒体上'人设'与真实自我的割裂",
+        "青春期对外貌、性格、能力的过度质疑"
+      ],
+      "applicationDirections": [
+        "自我探索测评工具（多维度自我认知评估）",
+        "价值观澄清助手（帮助明确个人价值排序）",
+        "角色体验模拟器（虚拟尝试不同人生选择）",
+        "成长困惑疏导对话（AI引导自我反思）"
+      ],
+      "caseExample": "高二学生小李在选择文理科时非常焦虑，父母希望他学理科将来当医生，但他对历史和文学更感兴趣。通过'同一性探索'应用，他完成了职业兴趣测评、价值观排序练习，并与AI对话探讨'什么是真正的我'。最终他认识到，选择文科不是背叛父母期望，而是忠于自己的兴趣，建立了更稳定的自我认同。",
+      "references": [
+        "Erikson, E. H. (1968). Identity: Youth and Crisis. Norton.",
+        "Marcia, J. E. (1980). Identity in adolescence. Handbook of adolescent psychology, 9(11), 159-187."
+      ],
+      "keywords": ["自我认同", "角色混乱", "青少年发展", "同一性危机", "自我探索"],
+      "targetAge": "12-18岁",
+      "difficulty": "MEDIUM"
+    },
+    {
+      "id": "principle_002",
+      "name": "镜像自我效应",
+      "category": "SELF_COGNITION",
+      "definition": "由社会学家库利提出，指个体的自我概念是通过他人的评价和反馈形成的。就像照镜子一样，我们通过他人的眼光认识自己。镜像自我包括三个步骤：想象他人如何看待我们、想象他人如何评价我们、根据他人评价形成自我感受。",
+      "coreMechanism": "他人的评价→我们的想象→自我概念的形成。青少年尤其敏感于同伴评价，社交媒体上的点赞、评论会显著影响自我认知。积极评价增强自信，消极评价导致自我怀疑。",
+      "applicableScenarios": [
+        "社交媒体焦虑（过度关注点赞数、评论）",
+        "被同学嘲笑后的自我否定",
+        "老师/父母的负面评价导致的自卑",
+        "对他人看法的过度敏感和讨好型人格"
+      ],
+      "applicationDirections": [
+        "积极反馈记录本（收集他人的真实肯定）",
+        "评价理性分析工具（区分客观评价与主观臆测）",
+        "自我价值重建助手（不依赖他人评价建立自信）",
+        "社交媒体健康使用提醒（减少过度关注点赞）"
+      ],
+      "caseExample": "初中生小美在班级群里分享了一张自拍照，有同学评论'你好胖啊'。从此她开始过度节食，认为自己很丑。通过'镜像自我调节'应用，她学会区分'他人的一句玩笑'与'我的真实价值'，记录了朋友们对她善良、幽默的肯定，逐步重建了不依赖外貌评价的自我价值感。",
+      "references": [
+        "Cooley, C. H. (1902). Human nature and the social order. Scribner.",
+        "Vogel, E. A., et al. (2014). Social comparison, social media, and self-esteem. Psychology of Popular Media Culture, 3(4), 206."
+      ],
+      "keywords": ["自我概念", "他人评价", "社交媒体", "自我价值", "同伴影响"],
+      "targetAge": "10-18岁",
+      "difficulty": "EASY"
+    },
+    {
+      "id": "principle_003",
+      "name": "习得性无助理论",
+      "category": "SELF_COGNITION",
+      "definition": "由心理学家塞利格曼提出，指个体经历反复失败后，即使有机会改变现状，也会放弃努力，认为'我做什么都没用'。形成三个核心认知：永久性（会一直这样）、普遍性（所有事都会失败）、个人化（都是我的问题）。",
+      "coreMechanism": "反复失败经历→形成'努力无用'的信念→放弃尝试→陷入恶性循环。青少年常见于学习困难（'我就是学不会数学'）、人际关系（'没人会喜欢我'）。打破需要小成功体验+归因方式改变。",
+      "applicableScenarios": [
+        "学习困难学生的'破罐破摔'心态",
+        "多次被拒绝后的社交回避",
+        "考试焦虑导致的'考前放弃'",
+        "父母高压教育下的无力感"
+      ],
+      "applicationDirections": [
+        "小成功记录与庆祝系统（积累成就感）",
+        "归因方式训练工具（从'我不行'到'方法不对'）",
+        "渐进式挑战设计（从简单任务开始重建信心）",
+        "同伴成功故事分享（'别人也经历过失败'）"
+      ],
+      "caseExample": "高一学生小张数学成绩一直不好，经历多次补考失败后，他彻底放弃了，认为'我天生就学不会数学'。通过'习得性无助破解'应用，他每天记录一个数学小进步（哪怕只是做对一道题），AI帮他分析'不是你笨，是这个知识点的讲解方式不适合你'。3周后，他重新建立了学习信心，数学成绩开始提升。",
+      "references": [
+        "Seligman, M. E. P. (1972). Learned helplessness. Annual review of medicine, 23(1), 407-412.",
+        "Abramson, L. Y., Seligman, M. E., & Teasdale, J. D. (1978). Learned helplessness in humans. Journal of abnormal psychology, 87(1), 49."
+      ],
+      "keywords": ["习得性无助", "归因方式", "成就感", "自我效能", "学习困难"],
+      "targetAge": "10-18岁",
+      "difficulty": "MEDIUM"
+    },
+    {
+      "id": "principle_004",
+      "name": "ABC情绪理论",
+      "category": "EMOTION_REGULATION",
+      "definition": "由理性情绪疗法创始人艾利斯提出。A（Activating Event）是诱发事件，B（Belief）是个体对事件的信念和看法，C（Consequence）是情绪和行为结果。核心观点：**不是事件本身导致情绪，而是我们对事件的看法**。",
+      "coreMechanism": "A（事件）→ B（信念）→ C（情绪）。改变B（非理性信念），可以改变C（负面情绪）。青少年常见非理性信念包括：绝对化要求（'我必须考第一'）、过度概括化（'一次失败=永远失败'）、糟糕至极（'没考好=世界末日'）。",
+      "applicableScenarios": [
+        "考试焦虑（'考不好就完了'的想法）",
+        "社交恐惧（'别人一定觉得我很蠢'）",
+        "完美主义压力（'必须做到最好'）",
+        "人际冲突后的愤怒（'他故意针对我'）"
+      ],
+      "applicationDirections": [
+        "情绪触发事件记录工具（记录A）",
+        "非理性信念识别助手（挑战B）",
+        "理性信念替代建议（生成新的B）",
+        "情绪变化前后对比（验证效果）"
+      ],
+      "caseExample": "高三学生小王每次考试前都极度焦虑，失眠、心慌。通过'ABC情绪调节'应用，他识别出：A（明天要考试）→ B（'我必须考前三，否则就是废物'）→ C（焦虑、失眠）。AI引导他挑战B：'考前三是期望，不是必须；即使这次没考好，也不代表我是废物'。新信念让他的焦虑大幅缓解。",
+      "references": [
+        "Ellis, A. (1962). Reason and emotion in psychotherapy. Lyle Stuart.",
+        "David, D., et al. (2018). Rational emotive behavior therapy. The Oxford handbook of cognitive and behavioral therapies."
+      ],
+      "keywords": ["ABC理论", "非理性信念", "情绪调节", "认知重构", "考试焦虑"],
+      "targetAge": "12-18岁",
+      "difficulty": "MEDIUM"
+    },
+    {
+      "id": "principle_005",
+      "name": "情绪ABCDE模型",
+      "category": "EMOTION_REGULATION",
+      "definition": "在ABC理论基础上扩展，增加D（Disputing，驳斥）和E（Effect，效果）。D是主动挑战非理性信念的过程，E是新信念带来的积极情绪和行为。完整流程：A（事件）→ B（非理性信念）→ C（负面情绪）→ D（驳斥信念）→ E（积极情绪）。",
+      "coreMechanism": "通过苏格拉底式提问驳斥非理性信念：'有什么证据？''最坏会怎样？''有更理性的看法吗？'帮助个体从'灾难化思维'转向'理性评估'，从被动接受情绪转向主动调节。",
+      "applicableScenarios": [
+        "抑郁情绪（'我什么都做不好'）",
+        "社交拒绝后的自我否定（'没人喜欢我'）",
+        "学业挫折后的绝望（'我考不上大学了'）",
+        "人际冲突后的愤怒（'他就是故意的'）"
+      ],
+      "applicationDirections": [
+        "ABCDE结构化记录表（完整流程引导）",
+        "AI苏格拉底式提问（引导驳斥非理性信念）",
+        "情绪前后对比可视化（展示调节效果）",
+        "案例库学习（参考他人如何驳斥）"
+      ],
+      "caseExample": "初三学生小李被好朋友冷落后非常难过：A（朋友没叫我一起玩）→ B（'她一定讨厌我了'）→ C（难过、愤怒）。通过ABCDE应用，AI引导他驳斥：D（'有证据吗？她可能只是临时有事。即使她这次没叫我，也不代表讨厌我'）→ E（情绪缓和，主动找朋友沟通，发现确实是误会）。",
+      "references": [
+        "Ellis, A., & Dryden, W. (1997). The practice of rational emotive behavior therapy. Springer.",
+        "DiGiuseppe, R., et al. (2014). A practitioner's guide to rational emotive behavior therapy. Oxford University Press."
+      ],
+      "keywords": ["ABCDE模型", "认知重构", "驳斥非理性信念", "情绪管理", "苏格拉底提问"],
+      "targetAge": "12-18岁",
+      "difficulty": "HARD"
+    },
+    {
+      "id": "principle_006",
+      "name": "正念减压原理",
+      "category": "EMOTION_REGULATION",
+      "definition": "由卡巴金博士创立的MBSR（Mindfulness-Based Stress Reduction）核心理念：通过**专注当下、不评判地觉察**身体感受、情绪和想法，减少对过去的后悔和对未来的焦虑。正念不是消除情绪，而是与情绪和平共处。",
+      "coreMechanism": "注意力从'想太多'（过去、未来、评判）转向'当下体验'（呼吸、身体感觉）。通过反复练习，大脑前额叶皮层（理性脑）增强对杏仁核（情绪脑）的调节能力，降低应激反应。青少年可通过简短练习（3-5分钟）获得即时放松。",
+      "applicableScenarios": [
+        "考试前的焦虑（胡思乱想'如果考砸了怎么办'）",
+        "睡前失眠（脑子停不下来）",
+        "社交场合的紧张（过度关注别人的看法）",
+        "日常压力累积（学业、家庭、人际多重压力）"
+      ],
+      "applicationDirections": [
+        "正念呼吸引导（语音+动画可视化）",
+        "身体扫描放松练习（5-10分钟音频）",
+        "正念情绪觉察日记（'我注意到我现在感到...'）",
+        "紧急减压按钮（3分钟快速正念练习）"
+      ],
+      "caseExample": "高二学生小芳每晚失眠，脑子里反复想'明天的演讲会不会搞砸''同学会不会笑话我'。通过'正念减压'应用，她在睡前做5分钟呼吸练习：'吸气...注意气流进入鼻腔...呼气...注意身体的放松...'每当想法冒出来，她不评判，只是注意到'哦，想法又来了'，然后轻轻带回呼吸。一周后，她的睡眠质量明显改善。",
+      "references": [
+        "Kabat-Zinn, J. (1990). Full catastrophe living: Using the wisdom of your body and mind to face stress, pain, and illness. Delta.",
+        "Zenner, C., et al. (2014). Mindfulness-based interventions in schools—a systematic review and meta-analysis. Frontiers in psychology, 5, 603."
+      ],
+      "keywords": ["正念", "减压", "冥想", "呼吸练习", "当下觉察", "焦虑缓解"],
+      "targetAge": "10-18岁",
+      "difficulty": "EASY"
+    },
+    {
+      "id": "principle_007",
+      "name": "人际吸引的相似性原理",
+      "category": "INTERPERSONAL",
+      "definition": "社会心理学核心原理之一：人们倾向于喜欢与自己相似的人。相似性包括：态度相似（价值观、兴趣爱好）、背景相似（家庭、成长经历）、人格特质相似（内向/外向）。'物以类聚，人以群分'的心理学依据。",
+      "coreMechanism": "相似性增加人际吸引的三大原因：①认知一致性（相似他人验证了我的观点是正确的）②互动顺畅（相似的人沟通更轻松）③预期喜欢（假设相似的人会喜欢我）。青少年可通过发现共同点快速建立友谊。",
+      "applicableScenarios": [
+        "新环境交友困难（转学、升学后不知如何破冰）",
+        "社交圈拓展（想认识更多朋友）",
+        "提升人际吸引力（让别人更愿意接近我）",
+        "维护现有友谊（发现更多共同话题）"
+      ],
+      "applicationDirections": [
+        "兴趣匹配交友助手（基于共同爱好推荐朋友）",
+        "话题生成器（根据对方兴趣生成聊天话题）",
+        "共同点挖掘工具（帮助发现与他人的相似之处）",
+        "破冰话术库（'你也喜欢XX吗？我也是！'）"
+      ],
+      "caseExample": "高一新生小刘转学到新学校，不知道如何交朋友。通过'相似性交友'应用，他填写了自己的兴趣爱好（篮球、动漫、科幻小说），应用推荐了班上几个有相同兴趣的同学，并生成了破冰话题：'你看过《三体》吗？我最喜欢里面的...'。他主动找那几位同学聊天，很快建立了友谊。",
+      "references": [
+        "Byrne, D. (1971). The attraction paradigm. Academic Press.",
+        "Montoya, R. M., et al. (2008). Is actual similarity necessary for attraction? A meta-analysis of actual and perceived similarity. Journal of Social and Personal Relationships, 25(6), 889-922."
+      ],
+      "keywords": ["人际吸引", "相似性", "交友", "共同点", "社交破冰"],
+      "targetAge": "10-18岁",
+      "difficulty": "EASY"
+    },
+    {
+      "id": "principle_008",
+      "name": "同理心效应",
+      "category": "INTERPERSONAL",
+      "definition": "同理心（Empathy）是指理解和感受他人情绪的能力，包括两个层面：**情感同理心**（感受到他人的情绪）和**认知同理心**（理解他人的想法）。同理心是人际关系的润滑剂，能显著改善沟通质量、减少冲突。",
+      "coreMechanism": "通过'视角转换'（站在对方角度思考）和'情绪共鸣'（感受对方的感受），打破'自我中心'思维。青少年同理心发展的关键期，可通过训练提升：①积极倾听②想象对方处境③表达理解。同理心高的人人际关系更和谐。",
+      "applicableScenarios": [
+        "亲子冲突（'爸妈根本不理解我'）",
+        "同学矛盾（'他为什么这么过分'）",
+        "团队合作（小组作业中的摩擦）",
+        "恋爱关系（情侣间的误解）"
+      ],
+      "applicationDirections": [
+        "视角转换练习（'如果我是对方，我会怎么想'）",
+        "情绪识别训练（通过表情、语气判断对方感受）",
+        "同理心对话模拟（AI扮演对方，练习理解）",
+        "冲突调解助手（引导双方理解彼此）"
+      ],
+      "caseExample": "初二学生小陈和妈妈经常吵架，妈妈总是唠叨他学习。通过'同理心训练'应用，AI引导他思考：'妈妈为什么唠叨？她可能担心我的未来，压力也很大。'小陈尝试对妈妈说：'妈，我知道你是为我好，我会努力的。'妈妈听后很感动，母子关系明显改善。",
+      "references": [
+        "Davis, M. H. (1983). Measuring individual differences in empathy: Evidence for a multidimensional approach. Journal of personality and social psychology, 44(1), 113.",
+        "Decety, J., & Jackson, P. L. (2004). The functional architecture of human empathy. Behavioral and cognitive neuroscience reviews, 3(2), 71-100."
+      ],
+      "keywords": ["同理心", "视角转换", "情绪理解", "人际沟通", "冲突调解"],
+      "targetAge": "10-18岁",
+      "difficulty": "MEDIUM"
+    },
+    {
+      "id": "principle_009",
+      "name": "非暴力沟通原理",
+      "category": "INTERPERSONAL",
+      "definition": "由马歇尔·卢森堡博士创立的沟通模式，核心是**用慈悲心倾听和表达**。四要素：①观察（描述事实，不评判）②感受（表达情绪）③需要（说明背后需求）④请求（提出具体可行的请求）。避免指责、命令、比较、否定对方感受。",
+      "coreMechanism": "暴力沟通模式（'你总是...'）引发防御和对抗，非暴力沟通模式（'当你...时，我感到...因为我需要...你能...吗？'）促进理解和合作。青少年常见暴力沟通：指责父母、与同学互怼。学会非暴力沟通能显著改善关系。",
+      "applicableScenarios": [
+        "亲子沟通（向父母表达需求而不引发冲突）",
+        "同学冲突（解决矛盾而不伤害关系）",
+        "恋爱吵架（避免翻旧账、人身攻击）",
+        "老师反馈（接受批评时不对抗）"
+      ],
+      "applicationDirections": [
+        "非暴力沟通话术生成器（输入情境，生成沟通脚本）",
+        "暴力语言识别与转化（'你总是迟到'→'我需要准时，你能...'）",
+        "沟通模拟练习（AI扮演对方，练习表达）",
+        "冲突对话复盘（分析哪里用了暴力语言）"
+      ],
+      "caseExample": "高一学生小丽和父亲吵架，她说：'你根本不关心我！只知道让我学习！'（暴力沟通）。通过'非暴力沟通'应用，她学会重新表达：'爸，当你只问我成绩时（观察），我感到难过（感受），因为我需要你也关心我的情绪和兴趣（需要）。你能每周花半小时听我聊学校的事吗？（请求）'父亲听后理解了她的需求，关系大幅改善。",
+      "references": [
+        "Rosenberg, M. B. (2015). Nonviolent communication: A language of life. PuddleDancer Press.",
+        "Museux, A. C., et al. (2016). Nonviolent communication and workplace conflict resolution: An action research. Journal of Applied Communication Research, 44(2), 163-185."
+      ],
+      "keywords": ["非暴力沟通", "四要素", "亲子沟通", "冲突解决", "表达需求"],
+      "targetAge": "12-18岁",
+      "difficulty": "MEDIUM"
+    },
+    {
+      "id": "principle_010",
+      "name": "成长型思维理论",
+      "category": "LEARNING_GROWTH",
+      "definition": "由心理学家卡罗尔·德韦克提出，区分两种思维模式：**固定型思维**（认为能力天生，无法改变）vs **成长型思维**（认为能力可以通过努力提升）。成长型思维者把失败看作学习机会，而非证明自己'不行'的证据。",
+      "coreMechanism": "思维模式影响行为：①面对挑战→固定型逃避，成长型迎接②遇到挫折→固定型放弃，成长型坚持③看到他人成功→固定型嫉妒/威胁，成长型学习/激励。通过改变对'努力''失败''反馈'的看法，可培养成长型思维。",
+      "applicableScenarios": [
+        "学习困难（'我就是学不会'→'我还没学会'）",
+        "害怕挑战（'我做不到'→'我可以试试'）",
+        "完美主义（'必须一次成功'→'失败是学习过程'）",
+        "比较心态（'别人比我强'→'我能向他学习'）"
+      ],
+      "applicationDirections": [
+        "成长型思维语言转换（'不行'→'还不行'）",
+        "失败记录与反思日记（'这次失败教会了我...'）",
+        "进步庆祝系统（关注过程而非结果）",
+        "榜样故事库（名人也经历无数失败）"
+      ],
+      "caseExample": "初三学生小赵数学一直不好，他认为'我天生不是学数学的料'（固定型思维）。通过'成长型思维培养'应用，他学会说'我的数学现在还不好，但我可以通过练习提高'。每次做错题，不再沮丧，而是记录'这道题教会了我哪个知识点'。半学期后，他的数学从不及格提升到80分。",
+      "references": [
+        "Dweck, C. S. (2006). Mindset: The new psychology of success. Random House.",
+        "Yeager, D. S., & Dweck, C. S. (2012). Mindsets that promote resilience: When students believe that personal characteristics can be developed. Educational Psychologist, 47(4), 302-314."
+      ],
+      "keywords": ["成长型思维", "固定型思维", "学习动力", "抗挫折", "自我效能"],
+      "targetAge": "10-18岁",
+      "difficulty": "EASY"
+    },
+    {
+      "id": "principle_011",
+      "name": "蔡格尼克效应",
+      "category": "LEARNING_GROWTH",
+      "definition": "由心理学家蔡格尼克发现：人们对**未完成任务的记忆**比已完成任务更深刻。大脑会持续关注未完成事项，产生'心理张力'，直到任务完成才会释放。这也是为什么追剧总想'看下一集'、游戏总想'打完这一关'。",
+      "coreMechanism": "未完成任务→心理张力→持续关注→完成后释放。可利用此效应：①把大任务拆成小步骤，完成一步就获得成就感②故意'留一点没做完'维持动力③设置合理打断点，让大脑保持对任务的兴趣。对抗拖延症神器。",
+      "applicableScenarios": [
+        "拖延症（总是拖到最后才开始）",
+        "学习动力不足（提不起兴趣学习）",
+        "大项目畏难情绪（'任务太大，不知从何开始'）",
+        "学习计划难以坚持（三天打鱼两天晒网）"
+      ],
+      "applicationDirections": [
+        "任务拆解助手（把大任务分成10分钟小步骤）",
+        "进度可视化（显示'已完成5/10步'制造完成欲）",
+        "番茄钟+悬念设置（'再学5分钟就能看到结果'）",
+        "每日小目标打卡（'今天只需完成一小步'）"
+      ],
+      "caseExample": "高二学生小孙总是拖延背单词，一本词汇书1000个单词让他望而却步。通过'蔡格尼克效应'应用，任务被拆成：'每天只背10个单词，背完打勾'。当他背完5个单词时，应用显示'已完成50%，再5个就能解锁今日成就！'他的大脑产生'必须完成'的张力，很快背完剩下5个。3个月后，他轻松背完全书。",
+      "references": [
+        "Zeigarnik, B. (1927). Das Behalten erledigter und unerledigter Handlungen. Psychologische Forschung, 9, 1-85.",
+        "Savitsky, K., et al. (1997). The undoing effect: The impact of the completion principle on rumination and regret. Personality and Social Psychology Bulletin, 23(9), 951-957."
+      ],
+      "keywords": ["蔡格尼克效应", "未完成任务", "拖延症", "学习动力", "任务拆解"],
+      "targetAge": "12-18岁",
+      "difficulty": "MEDIUM"
+    },
+    {
+      "id": "principle_012",
+      "name": "耶克斯-多德森定律",
+      "category": "LEARNING_GROWTH",
+      "definition": "描述**压力/唤醒水平与表现之间的倒U型关系**：压力太小→动力不足，表现差；压力适中→最佳状态，表现最好；压力过大→焦虑过度，表现下降。不同任务有不同最佳压力点：简单任务需要高压力，复杂任务需要低压力。",
+      "coreMechanism": "适度压力激活交感神经系统，提升注意力、反应速度。过度压力导致杏仁核过度激活，前额叶功能下降，出现'思维僵化''大脑一片空白'。青少年可通过识别自己的最佳压力区间，调节学习和考试状态。",
+      "applicableScenarios": [
+        "考试焦虑（压力过大导致发挥失常）",
+        "学习拖延（压力太小没动力）",
+        "竞赛表现（如何在关键时刻保持最佳状态）",
+        "作业效率（如何找到最佳学习状态）"
+      ],
+      "applicationDirections": [
+        "压力水平自测工具（判断当前压力是过高/适中/过低）",
+        "压力调节建议生成（过高→放松技巧，过低→增加紧迫感）",
+        "最佳状态记录（记录'心流'时的压力水平）",
+        "考前压力管理（倒计时调整压力曲线）"
+      ],
+      "caseExample": "高三学生小周平时模拟考成绩很好，但一到正式考试就发挥失常。通过'压力管理'应用，他发现正式考试时压力值9/10（过高），而模拟考只有6/10（适中）。应用建议他考前做3分钟深呼吸、听舒缓音乐，把压力降到7/10。下次考试，他发挥正常，考出了理想成绩。",
+      "references": [
+        "Yerkes, R. M., & Dodson, J. D. (1908). The relation of strength of stimulus to rapidity of habit-formation. Journal of Comparative Neurology and Psychology, 18(5), 459-482.",
+        "Diamond, D. M., et al. (2007). The temporal dynamics model of emotional memory processing: A synthesis on the neurobiological basis of stress-induced amnesia, flashbulb and traumatic memories, and the Yerkes-Dodson law. Neural plasticity, 2007."
+      ],
+      "keywords": ["耶克斯-多德森定律", "压力管理", "最佳状态", "考试焦虑", "表现优化"],
+      "targetAge": "12-18岁",
+      "difficulty": "MEDIUM"
+    }
+  ],
+  "metadata": {
+    "version": "1.0",
+    "createdAt": "2025-11-13",
+    "totalPrinciples": 12,
+    "categories": {
+      "SELF_COGNITION": 3,
+      "EMOTION_REGULATION": 3,
+      "INTERPERSONAL": 3,
+      "LEARNING_GROWTH": 3
+    },
+    "targetCompetition": "五育并举心理学科学原理智能专项赛",
+    "difficultyLevels": {
+      "EASY": 4,
+      "MEDIUM": 7,
+      "HARD": 1
+    }
+  }
+}

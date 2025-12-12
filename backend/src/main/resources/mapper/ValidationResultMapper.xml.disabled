@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.ingenio.backend.mapper.ValidationResultMapper">
+
+    <!-- 查询指定AppSpec的所有验证结果 -->
+    <select id="selectByAppSpecId" resultType="com.ingenio.backend.entity.ValidationResultEntity">
+        SELECT * FROM validation_results
+        WHERE app_spec_id = #{appSpecId}
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- 查询指定AppSpec的最新验证结果 -->
+    <select id="selectLatestByAppSpecId" resultType="com.ingenio.backend.entity.ValidationResultEntity">
+        SELECT * FROM validation_results
+        WHERE app_spec_id = #{appSpecId}
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
+
+    <!-- 查询指定类型的验证结果 -->
+    <select id="selectByTypeAndAppSpecId" resultType="com.ingenio.backend.entity.ValidationResultEntity">
+        SELECT * FROM validation_results
+        WHERE app_spec_id = #{appSpecId}
+          AND validation_type = #{validationType}
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
+
+    <!-- 统计指定AppSpec的验证通过率 -->
+    <select id="calculatePassRate" resultType="java.lang.Double">
+        SELECT ROUND(
+            CAST(SUM(CASE WHEN is_passed THEN 1 ELSE 0 END) AS DECIMAL) /
+            NULLIF(COUNT(*), 0),
+            2
+        ) AS pass_rate
+        FROM validation_results
+        WHERE app_spec_id = #{appSpecId}
+    </select>
+
+</mapper>

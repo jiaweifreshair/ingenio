@@ -1,0 +1,424 @@
+package com.ingenio.backend.service.impl;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.ingenio.backend.entity.GenerationTaskEntity;
+import com.ingenio.backend.mapper.GenerationTaskMapper;
+import com.ingenio.backend.service.AgentStatusService;
+import com.ingenio.backend.websocket.GenerationWebSocketHandler;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.*;
+
+/**
+ * Agent状态管理服务实现类
+ * 负责管理AI生成任务的执行状态和Agent状态追踪
+ * 使用@Lazy注解打破与GenerationWebSocketHandler的循环依赖
+ */
+@Slf4j
+@Service
+public class AgentStatusServiceImpl extends ServiceImpl<GenerationTaskMapper, GenerationTaskEntity>
+        implements AgentStatusService {
+
+    private final GenerationTaskMapper generationTaskMapper;
+    private final GenerationWebSocketHandler webSocketHandler;
+
+    /**
+     * 构造函数注入，使用@Lazy打破循环依赖
+     * 循环链：AgentStatusServiceImpl → GenerationWebSocketHandler → AgentStatusService
+     */
+    public AgentStatusServiceImpl(GenerationTaskMapper generationTaskMapper,
+                                  @Lazy GenerationWebSocketHandler webSocketHandler) {
+        this.generationTaskMapper = generationTaskMapper;
+        this.webSocketHandler = webSocketHandler;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public GenerationTaskEntity createTask(UUID tenantId, UUID userId, String taskName, String userRequirement) {
+        log.info("创建生成任务: tenantId={}, userId={}, taskName={}", tenantId, userId, taskName);
+
+        GenerationTaskEntity task = GenerationTaskEntity.builder()
+                .id(UUID.randomUUID())
+                .tenantId(tenantId)
+                .userId(userId)
+                .taskName(taskName)
+                .userRequirement(userRequirement)
+                .status(GenerationTaskEntity.Status.PENDING.getValue())
+                .progress(0)
+                .createdAt(LocalDateTime.now())
+                .updatedAt(LocalDateTime.now())
+                .metadata(createInitialMetadata())
+                .build();
+
+        boolean saved = this.save(task);
+        if (saved) {
+            log.info("生成任务创建成功: taskId={}", task.getId());
+            return task;
+        } else {
+            log.error("生成任务创建失败");
+            throw new RuntimeException("创建生成任务失败");
+        }
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean startTask(UUID taskId, GenerationTaskEntity.AgentType agentType) {
+        log.info("开始执行任务: taskId={}, agentType={}", taskId, agentType.getValue());
+
+        GenerationTaskEntity task = this.getById(taskId);
+        if (task == null) {
+            log.error("任务不存在: taskId={}", taskId);
+            return false;
+        }
+
+        if (!GenerationTaskEntity.Status.PENDING.getValue().equals(task.getStatus())) {
+            log.warn("任务状态不正确，无法开始执行: taskId={}, currentStatus={}", taskId, task.getStatus());
+            return false;
+        }
+
+        GenerationTaskEntity.Status newStatus;
+        switch (agentType) {
+            case PLAN:
+                newStatus = GenerationTaskEntity.Status.PLANNING;
+                break;
+            case EXECUTE:
+                newStatus = GenerationTaskEntity.Status.EXECUTING;
+                break;
+            case VALIDATE:
+                newStatus = GenerationTaskEntity.Status.VALIDATING;
+                break;
+            case GENERATE:
+                newStatus = GenerationTaskEntity.Status.GENERATING;
+                break;
+            default:
+                log.error("未知的Agent类型: {}", agentType.getValue());
+                return false;
+        }
+
+        task.updateStatus(newStatus, agentType, 10);
+        boolean updated = this.updateById(task);
+
+        if (updated) {
+            log.info("任务开始执行成功: taskId={}, status={}", taskId, newStatus.getValue());
+        } else {
+            log.error("任务开始执行失败: taskId={}", taskId);
+        }
+
+        return updated;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateTaskStatus(UUID taskId, GenerationTaskEntity.Status status,
+                                  GenerationTaskEntity.AgentType currentAgent, Integer progress) {
+        log.debug("更新任务状态: taskId={}, status={}, currentAgent={}, progress={}",
+                taskId, status.getValue(), currentAgent != null ? currentAgent.getValue() : null, progress);
+
+        GenerationTaskEntity task = this.getById(taskId);
+        if (task == null) {
+            log.error("任务不存在: taskId={}", taskId);
+            return false;
+        }
+
+        task.updateStatus(status, currentAgent, progress);
+        boolean updated = this.updateById(task);
+
+        if (updated) {
+            log.debug("任务状态更新成功: taskId={}, newStatus={}", taskId, status.getValue());
+
+            // WebSocket推送任务状态更新
+            try {
+                webSocketHandler.broadcastTaskStatus(taskId, task);
+            } catch (Exception e) {
+                log.warn("WebSocket推送任务状态失败: taskId={}", taskId, e);
+            }
+        }
+
+        return updated;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean updateAgentInfo(UUID taskId, GenerationTaskEntity.AgentType agentType,
+                                  Map<String, Object> agentInfo) {
+        log.debug("更新Agent状态信息: taskId={}, agentType={}", taskId, agentType.getValue());
+
+        GenerationTaskEntity task = this.getById(taskId);
+        if (task == null) {
+            log.error("任务不存在: taskId={}", taskId);
+            return false;
+        }
+
+        Map<String, Object> agentsInfo = task.getAgentsInfo() != null ? task.getAgentsInfo() : new HashMap<>();
+        agentsInfo.put(agentType.getValue(), agentInfo);
+        task.setAgentsInfo(agentsInfo);
+        task.setUpdatedAt(LocalDateTime.now());
+
+        boolean updated = this.updateById(task);
+        if (updated) {
+            log.debug("Agent状态信息更新成功: taskId={}, agentType={}", taskId, agentType.getValue());
+
+            // WebSocket推送Agent状态更新
+            try {
+                String status = (String) agentInfo.get("status");
+                Integer progress = (Integer) agentInfo.get("progress");
+                String message = (String) agentInfo.get("message");
+
+                webSocketHandler.broadcastAgentStatus(
+                    taskId,
+                    agentType.getValue(),
+                    status != null ? status : "unknown",
+                    progress,
+                    message
+                );
+            } catch (Exception e) {
+                log.warn("WebSocket推送Agent状态失败: taskId={}, agentType={}", taskId, agentType.getValue(), e);
+            }
+        }
+
+        return updated;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean recordAgentResult(UUID taskId, GenerationTaskEntity.AgentType agentType,
+                                    Map<String, Object> result) {
+        log.debug("记录Agent执行结果: taskId={}, agentType={}", taskId, agentType.getValue());
+
+        GenerationTaskEntity task = this.getById(taskId);
+        if (task == null) {
+            log.error("任务不存在: taskId={}", taskId);
+            return false;
+        }
+
+        // 根据Agent类型存储到对应的字段
+        switch (agentType) {
+            case PLAN:
+                task.setPlanResult(result);
+                break;
+            case EXECUTE:
+                task.setAppSpecContent(result);
+                break;
+            case VALIDATE:
+                task.setValidateResult(result);
+                break;
+            default:
+                log.warn("未知的Agent类型，结果将存储到agentsInfo中: {}", agentType.getValue());
+                Map<String, Object> agentsInfo = task.getAgentsInfo() != null ? task.getAgentsInfo() : new HashMap<>();
+                agentsInfo.put(agentType.getValue() + "_result", result);
+                task.setAgentsInfo(agentsInfo);
+        }
+
+        task.setUpdatedAt(LocalDateTime.now());
+        boolean updated = this.updateById(task);
+
+        if (updated) {
+            log.debug("Agent执行结果记录成功: taskId={}, agentType={}", taskId, agentType.getValue());
+        }
+
+        return updated;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean completeTask(UUID taskId, UUID appSpecId, Integer qualityScore,
+                               String downloadUrl, String previewUrl, Map<String, Object> tokenUsage) {
+        log.info("完成任务: taskId={}, appSpecId={}, qualityScore={}", taskId, appSpecId, qualityScore);
+
+        GenerationTaskEntity task = this.getById(taskId);
+        if (task == null) {
+            log.error("任务不存在: taskId={}", taskId);
+            return false;
+        }
+
+        task.updateStatus(GenerationTaskEntity.Status.COMPLETED, null, 100);
+        task.setAppSpecId(appSpecId);
+        task.setQualityScore(qualityScore);
+        task.setDownloadUrl(downloadUrl);
+        task.setPreviewUrl(previewUrl);
+        task.setTokenUsage(tokenUsage);
+
+        boolean updated = this.updateById(task);
+        if (updated) {
+            log.info("任务完成成功: taskId={}", taskId);
+        } else {
+            log.error("任务完成失败: taskId={}", taskId);
+        }
+
+        return updated;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean failTask(UUID taskId, String errorMessage) {
+        log.warn("任务失败: taskId={}, errorMessage={}", taskId, errorMessage);
+
+        GenerationTaskEntity task = this.getById(taskId);
+        if (task == null) {
+            log.error("任务不存在: taskId={}", taskId);
+            return false;
+        }
+
+        task.updateStatus(GenerationTaskEntity.Status.FAILED, null, task.getProgress());
+        task.setErrorMessage(errorMessage);
+
+        boolean updated = this.updateById(task);
+        if (updated) {
+            log.warn("任务失败记录成功: taskId={}", taskId);
+        }
+
+        return updated;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public boolean cancelTask(UUID taskId) {
+        log.info("取消任务: taskId={}", taskId);
+
+        GenerationTaskEntity task = this.getById(taskId);
+        if (task == null) {
+            log.error("任务不存在: taskId={}", taskId);
+            return false;
+        }
+
+        if (task.isFinished()) {
+            log.warn("任务已结束，无法取消: taskId={}, status={}", taskId, task.getStatus());
+            return false;
+        }
+
+        task.updateStatus(GenerationTaskEntity.Status.CANCELLED, null, task.getProgress());
+        boolean updated = this.updateById(task);
+
+        if (updated) {
+            log.info("任务取消成功: taskId={}", taskId);
+        }
+
+        return updated;
+    }
+
+    @Override
+    public GenerationTaskEntity.Status getTaskStatus(UUID taskId) {
+        GenerationTaskEntity task = this.getById(taskId);
+        return task != null ? GenerationTaskEntity.Status.fromValue(task.getStatus()) : null;
+    }
+
+    @Override
+    public GenerationTaskEntity getTaskDetail(UUID tenantId, UUID taskId) {
+        return generationTaskMapper.selectByTenantIdAndTaskId(tenantId, taskId);
+    }
+
+    @Override
+    public IPage<GenerationTaskEntity> getUserTasks(UUID tenantId, UUID userId, int pageNum, int pageSize) {
+        Page<GenerationTaskEntity> page = new Page<>(pageNum, pageSize);
+        return generationTaskMapper.selectPageByUserId(page, userId);
+    }
+
+    @Override
+    public IPage<GenerationTaskEntity> getTenantTasks(UUID tenantId, int pageNum, int pageSize) {
+        Page<GenerationTaskEntity> page = new Page<>(pageNum, pageSize);
+        return generationTaskMapper.selectPageByTenantId(page, tenantId);
+    }
+
+    @Override
+    public List<GenerationTaskEntity> getTasksByStatus(UUID tenantId, GenerationTaskEntity.Status status) {
+        return generationTaskMapper.selectByStatus(tenantId, status.getValue());
+    }
+
+    @Override
+    public List<GenerationTaskEntity> getRunningTasks(UUID tenantId) {
+        List<GenerationTaskEntity> runningTasks = new ArrayList<>();
+
+        // 查询各运行状态的任务
+        for (String status : Arrays.asList("planning", "executing", "validating", "generating")) {
+            runningTasks.addAll(generationTaskMapper.selectByStatus(tenantId, status));
+        }
+
+        return runningTasks;
+    }
+
+    @Override
+    public Map<String, Object> getUserTaskStatistics(UUID tenantId, UUID userId) {
+        List<Map<String, Object>> statusCounts = generationTaskMapper.selectTaskStatusCount(tenantId, userId);
+
+        Map<String, Object> statistics = new HashMap<>();
+        int total = 0;
+
+        for (Map<String, Object> count : statusCounts) {
+            String status = (String) count.get("status");
+            Number countNum = (Number) count.get("count");
+            int statusCount = countNum != null ? countNum.intValue() : 0;
+
+            statistics.put(status + "Count", statusCount);
+            total += statusCount;
+        }
+
+        statistics.put("totalCount", total);
+
+        // 查询运行中的任务数量
+        Integer runningCount = generationTaskMapper.selectRunningTaskCount(tenantId);
+        statistics.put("runningCount", runningCount != null ? runningCount : 0);
+
+        return statistics;
+    }
+
+    @Override
+    public boolean canCreateNewTask(UUID tenantId, UUID userId, int maxConcurrentTasks) {
+        Integer runningCount = generationTaskMapper.selectRunningTaskCount(tenantId);
+        return runningCount == null || runningCount < maxConcurrentTasks;
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public int cleanupExpiredTasks(UUID tenantId, int beforeDays) {
+        LocalDateTime beforeTime = LocalDateTime.now().minusDays(beforeDays);
+        log.info("清理过期任务: tenantId={}, beforeTime={}", tenantId, beforeTime);
+
+        return generationTaskMapper.deleteExpiredTasks(tenantId, beforeTime);
+    }
+
+    @Override
+    public Map<String, Object> getTaskDurationStatistics(UUID tenantId, LocalDateTime startTime,
+                                                        LocalDateTime endTime) {
+        List<GenerationTaskEntity> tasks = generationTaskMapper.selectByTimeRange(tenantId, startTime, endTime);
+
+        Map<String, Object> statistics = new HashMap<>();
+        List<Long> durations = new ArrayList<>();
+
+        for (GenerationTaskEntity task : tasks) {
+            if (task.getStartedAt() != null && task.getCompletedAt() != null) {
+                long duration = java.time.Duration.between(task.getStartedAt(), task.getCompletedAt()).toMillis();
+                durations.add(duration);
+            }
+        }
+
+        if (!durations.isEmpty()) {
+            double avgDuration = durations.stream().mapToLong(Long::longValue).average().orElse(0);
+            long minDuration = durations.stream().mapToLong(Long::longValue).min().orElse(0);
+            long maxDuration = durations.stream().mapToLong(Long::longValue).max().orElse(0);
+
+            statistics.put("averageDuration", avgDuration);
+            statistics.put("minDuration", minDuration);
+            statistics.put("maxDuration", maxDuration);
+            statistics.put("totalTasks", tasks.size());
+        }
+
+        return statistics;
+    }
+
+    /**
+     * 创建初始元数据
+     */
+    private Map<String, Object> createInitialMetadata() {
+        Map<String, Object> metadata = new HashMap<>();
+        metadata.put("version", "1.0");
+        metadata.put("createdAt", LocalDateTime.now().toString());
+        return metadata;
+    }
+}

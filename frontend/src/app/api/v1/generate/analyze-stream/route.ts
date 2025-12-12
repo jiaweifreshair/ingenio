@@ -1,0 +1,137 @@
+import { NextRequest } from 'next/server';
+
+/**
+ * 后端API基础URL
+ */
+const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8080/api';
+
+/**
+ * SSE流式分析API路由
+ * POST /api/v1/generate/analyze-stream
+ *
+ * 代理请求到后端Java服务的SSE流式分析接口
+ * 使用Next.js流式响应转发SSE事件
+ */
+export async function POST(request: NextRequest) {
+  console.log('🌊 SSE Analyze API called - proxying to backend');
+
+  try {
+    const body = await request.json();
+    console.log('📝 SSE Request body:', JSON.stringify(body, null, 2));
+
+    // 验证必需参数
+    if (!body.requirement || body.requirement.trim().length < 10) {
+      return new Response('需求描述至少需要10个字符', { status: 400 });
+    }
+
+    // 后端API路径：/api/v1/generate/analyze-stream
+    const backendUrl = `${BACKEND_API_URL}/v1/generate/analyze-stream`;
+    console.log(`📞 Proxying SSE request to: ${backendUrl}`);
+
+    // 发送请求到后端
+    const backendResponse = await fetch(backendUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!backendResponse.ok) {
+      const errorText = await backendResponse.text();
+      console.error(`❌ Backend SSE API error: ${backendResponse.status} - ${errorText}`);
+      return new Response(`后端服务错误: ${errorText}`, { status: backendResponse.status });
+    }
+
+    if (!backendResponse.body) {
+      console.error('❌ Backend response body is null');
+      return new Response('后端响应体为空', { status: 500 });
+    }
+
+    console.log('✅ SSE stream established, forwarding to client...');
+
+    // 创建流式响应，转发SSE事件
+    const stream = new ReadableStream({
+      async start(controller) {
+        const reader = backendResponse.body!.getReader();
+        const decoder = new TextDecoder();
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+              console.log('✅ SSE stream completed');
+              controller.close();
+              break;
+            }
+
+            // 解码并转发数据
+            const chunk = decoder.decode(value, { stream: true });
+            console.log('📤 Forwarding SSE chunk:', chunk.substring(0, 100));
+            controller.enqueue(value);
+          }
+        } catch (error) {
+          // 优雅处理连接关闭错误
+          const errorMessage = error instanceof Error ? error.message : String(error);
+
+          // 如果是socket关闭或连接终止，这是正常的SSE完成情况
+          if (errorMessage.includes('terminated') ||
+              errorMessage.includes('closed') ||
+              errorMessage.includes('socket')) {
+            console.log('ℹ️ SSE connection closed by backend (normal completion)');
+            controller.close();
+          } else {
+            // 其他错误才是真正的异常
+            console.error('❌ SSE stream error:', error);
+
+            // 尝试发送错误事件给客户端
+            try {
+              const errorEvent = `event:error\ndata:{"error":"${errorMessage}"}\n\n`;
+              controller.enqueue(new TextEncoder().encode(errorEvent));
+            } catch (e) {
+              console.error('Failed to send error event:', e);
+            }
+
+            controller.close();
+          }
+        } finally {
+          // 确保reader被释放
+          try {
+            reader.releaseLock();
+          } catch {
+            // Ignore release errors
+          }
+        }
+      },
+    });
+
+    // 返回流式响应
+    return new Response(stream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
+
+  } catch (error) {
+    console.error('❌ SSE Analyze API error:', error);
+    return new Response(
+      error instanceof Error ? error.message : '分析失败',
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * GET /api/v1/generate/analyze-stream
+ * 获取API状态
+ */
+export async function GET() {
+  return Response.json({
+    status: 'SSE API endpoint ready',
+    backendUrl: BACKEND_API_URL
+  });
+}

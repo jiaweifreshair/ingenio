@@ -1,0 +1,169 @@
+package com.ingenio.backend.service;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * AI Native 产品支持服务接口
+ * 提供 Agent 组件/MCP 调用功能，支持 AI Native 产品快速生成
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+public interface AINativeService {
+
+    /**
+     * 生成 AI 功能代码
+     * 根据 AI 功能规范生成前端组件和后端 API 代码
+     *
+     * @param aiFeatures AI 功能列表
+     * @return 生成的代码（组件代码 + API 代码）
+     */
+    AICodeResult generateAICode(List<AIFeature> aiFeatures);
+
+    /**
+     * 调用 MCP 服务
+     * 通过 MCP 协议调用外部 AI 服务
+     *
+     * @param server MCP 服务器名称
+     * @param tool 工具名称
+     * @param params 参数
+     * @return MCP 响应
+     */
+    MCPResponse callMCP(String server, String tool, Map<String, Object> params);
+
+    /**
+     * AI 功能定义
+     */
+    class AIFeature {
+        private String id;
+        private String type; // conversation, image_generation, code_generation, etc.
+        private String name;
+        private String model;
+        private String prompt;
+        private List<ComponentConfig> components;
+        private MCPConfig mcp;
+        private APIConfig apiConfig;
+
+        // Getters and Setters
+        public String getId() { return id; }
+        public void setId(String id) { this.id = id; }
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public String getName() { return name; }
+        public void setName(String name) { this.name = name; }
+        public String getModel() { return model; }
+        public void setModel(String model) { this.model = model; }
+        public String getPrompt() { return prompt; }
+        public void setPrompt(String prompt) { this.prompt = prompt; }
+        public List<ComponentConfig> getComponents() { return components; }
+        public void setComponents(List<ComponentConfig> components) { this.components = components; }
+        public MCPConfig getMcp() { return mcp; }
+        public void setMcp(MCPConfig mcp) { this.mcp = mcp; }
+        public APIConfig getApiConfig() { return apiConfig; }
+        public void setApiConfig(APIConfig apiConfig) { this.apiConfig = apiConfig; }
+    }
+
+    /**
+     * 组件配置
+     */
+    class ComponentConfig {
+        private String type;
+        private Map<String, Object> props;
+        private Map<String, Object> style;
+
+        // Getters and Setters
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public Map<String, Object> getProps() { return props; }
+        public void setProps(Map<String, Object> props) { this.props = props; }
+        public Map<String, Object> getStyle() { return style; }
+        public void setStyle(Map<String, Object> style) { this.style = style; }
+    }
+
+    /**
+     * MCP 配置
+     */
+    class MCPConfig {
+        private String server;
+        private List<String> tools;
+        private Map<String, Object> params;
+
+        // Getters and Setters
+        public String getServer() { return server; }
+        public void setServer(String server) { this.server = server; }
+        public List<String> getTools() { return tools; }
+        public void setTools(List<String> tools) { this.tools = tools; }
+        public Map<String, Object> getParams() { return params; }
+        public void setParams(Map<String, Object> params) { this.params = params; }
+    }
+
+    /**
+     * API 配置
+     */
+    class APIConfig {
+        private String endpoint;
+        private String method;
+        private Map<String, String> headers;
+        private AuthConfig auth;
+
+        // Getters and Setters
+        public String getEndpoint() { return endpoint; }
+        public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
+        public String getMethod() { return method; }
+        public void setMethod(String method) { this.method = method; }
+        public Map<String, String> getHeaders() { return headers; }
+        public void setHeaders(Map<String, String> headers) { this.headers = headers; }
+        public AuthConfig getAuth() { return auth; }
+        public void setAuth(AuthConfig auth) { this.auth = auth; }
+    }
+
+    /**
+     * 认证配置
+     */
+    class AuthConfig {
+        private String type; // bearer, api_key, oauth
+        private String token;
+
+        // Getters and Setters
+        public String getType() { return type; }
+        public void setType(String type) { this.type = type; }
+        public String getToken() { return token; }
+        public void setToken(String token) { this.token = token; }
+    }
+
+    /**
+     * AI 代码生成结果
+     */
+    class AICodeResult {
+        private Map<String, String> frontendComponents; // 前端组件代码（组件名 -> 代码）
+        private Map<String, String> backendAPIs; // 后端 API 代码（API 名 -> 代码）
+        private Map<String, String> configFiles; // 配置文件
+
+        // Getters and Setters
+        public Map<String, String> getFrontendComponents() { return frontendComponents; }
+        public void setFrontendComponents(Map<String, String> frontendComponents) { this.frontendComponents = frontendComponents; }
+        public Map<String, String> getBackendAPIs() { return backendAPIs; }
+        public void setBackendAPIs(Map<String, String> backendAPIs) { this.backendAPIs = backendAPIs; }
+        public Map<String, String> getConfigFiles() { return configFiles; }
+        public void setConfigFiles(Map<String, String> configFiles) { this.configFiles = configFiles; }
+    }
+
+    /**
+     * MCP 响应
+     */
+    class MCPResponse {
+        private boolean success;
+        private Object data;
+        private String error;
+
+        // Getters and Setters
+        public boolean isSuccess() { return success; }
+        public void setSuccess(boolean success) { this.success = success; }
+        public Object getData() { return data; }
+        public void setData(Object data) { this.data = data; }
+        public String getError() { return error; }
+        public void setError(String error) { this.error = error; }
+    }
+}
+

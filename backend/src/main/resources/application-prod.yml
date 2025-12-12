@@ -1,0 +1,45 @@
+# 生产环境配置
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 50
+      minimum-idle: 10
+
+  redis:
+    host: ${REDIS_HOST}
+    port: ${REDIS_PORT}
+    password: ${REDIS_PASSWORD}
+
+  ai:
+    alibaba:
+      api-key: ${DEEPSEEK_API_KEY}
+
+# MinIO配置
+minio:
+  endpoint: ${MINIO_ENDPOINT}
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
+  bucket-name: ${MINIO_BUCKET:ingenio}
+
+# SaToken配置
+sa-token:
+  jwt-secret-key: ${JWT_SECRET}
+
+# 日志配置
+logging:
+  level:
+    root: WARN
+    com.ingenio.backend: INFO
+    com.baomidou.mybatisplus: WARN
+
+# Ingenio配置
+ingenio:
+  codegen:
+    preview-base-url: ${PREVIEW_BASE_URL}
+  rate-limit:
+    enabled: true
+    requests-per-minute: 30
+    ai-calls-per-hour: 50

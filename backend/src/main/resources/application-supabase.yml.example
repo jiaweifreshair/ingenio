@@ -1,0 +1,108 @@
+# Supabase配置示例
+# 复制此文件为 application-supabase.yml 并填入真实配置
+
+supabase:
+  # ================================
+  # 前期：Supabase商用版配置
+  # ================================
+  # 1. 注册Supabase账号：https://supabase.com
+  # 2. 创建新项目
+  # 3. 在项目设置中找到API配置
+
+  # Supabase项目URL
+  # 格式：https://xxxxx.supabase.co
+  url: https://your-project-ref.supabase.co
+
+  # Anon Key（公开密钥，用于客户端）
+  # 在 Project Settings > API > Project API keys > anon public
+  anon-key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+  # Service Role Key（私密密钥，用于服务端，拥有完全权限）
+  # 在 Project Settings > API > Project API keys > service_role
+  # ⚠️ 注意：此密钥拥有完全权限，切勿暴露给前端或提交到Git
+  service-role-key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+  # ================================
+  # 后期：自托管开源版配置
+  # ================================
+  # 当商业化后，可切换到自托管Supabase开源版
+  #
+  # 1. 使用Docker Compose部署开源版：
+  #    git clone https://github.com/supabase/supabase
+  #    cd supabase/docker
+  #    cp .env.example .env
+  #    docker-compose up -d
+  #
+  # 2. 修改配置为本地部署：
+  #    url: http://localhost:8000
+  #    anon-key: 从.env文件中获取ANON_KEY
+  #    service-role-key: 从.env文件中获取SERVICE_ROLE_KEY
+  #
+  # 优势：
+  # - 降低成本（无月费）
+  # - 数据完全自主控制
+  # - 可定制化开发
+  # - 无API调用限制
+
+# ================================
+# Supabase核心功能
+# ================================
+#
+# 1. Supabase Database（PostgreSQL + PostgREST）
+#    - 自动生成RESTful API（无需手写Controller）
+#    - 自动生成GraphQL API
+#    - 支持复杂查询（过滤、排序、分页、关联查询）
+#    - 行级安全策略（RLS）
+#
+# 2. Supabase Auth
+#    - 用户注册/登录（Email、Phone、OAuth）
+#    - JWT Token管理
+#    - 多因素认证（MFA）
+#    - 行级安全策略集成
+#
+# 3. Supabase Storage
+#    - 文件上传/下载
+#    - 图片转换（resize、crop）
+#    - CDN加速
+#    - 访问权限控制
+#
+# 4. Supabase Realtime
+#    - WebSocket实时订阅
+#    - 数据库变更监听
+#    - 实时消息推送
+#    - 在线状态追踪
+
+# ================================
+# API调用示例
+# ================================
+#
+# 1. PostgREST自动生成的API：
+#    GET    {url}/rest/v1/blogs                    # 查询所有博客
+#    GET    {url}/rest/v1/blogs?id=eq.1            # 查询ID=1的博客
+#    GET    {url}/rest/v1/blogs?select=*,author(*)  # 关联查询作者
+#    POST   {url}/rest/v1/blogs                    # 创建博客
+#    PATCH  {url}/rest/v1/blogs?id=eq.1            # 更新博客
+#    DELETE {url}/rest/v1/blogs?id=eq.1            # 删除博客
+#
+# 2. GraphQL API：
+#    POST {url}/graphql/v1
+#    Body: { query: "{ blogs { id title content } }" }
+#
+# 3. Auth API：
+#    POST {url}/auth/v1/signup                     # 注册
+#    POST {url}/auth/v1/token?grant_type=password  # 登录
+#    POST {url}/auth/v1/logout                     # 登出
+#
+# 4. Storage API：
+#    POST {url}/storage/v1/object/bucket/file.jpg  # 上传文件
+#    GET  {url}/storage/v1/object/public/bucket/file.jpg # 下载文件
+
+# ================================
+# 请求Header配置
+# ================================
+#
+# 所有API请求需要包含以下Header：
+# - apikey: {anon-key}              # 公开密钥
+# - Authorization: Bearer {token}   # 用户JWT Token（Auth API返回）
+# - Content-Type: application/json
+# - Prefer: return=representation   # 返回完整对象（可选）

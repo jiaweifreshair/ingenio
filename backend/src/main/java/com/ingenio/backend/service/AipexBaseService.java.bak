@@ -1,0 +1,150 @@
+package com.ingenio.backend.service;
+
+import java.util.List;
+import java.util.Map;
+
+/**
+ * AipexBase 服务端 No-code 生成服务接口
+ * 提供数据/鉴权/文件三链路托管功能
+ *
+ * @author Ingenio Team
+ * @since 1.0.0
+ */
+public interface AipexBaseService {
+
+    /**
+     * 生成 AipexBase 配置
+     * 根据 AppSpec 生成 AipexBase 的配置和代码
+     *
+     * @param appSpec AppSpec JSON
+     * @return AipexBase 配置
+     */
+    AipexBaseConfig generateConfig(Map<String, Object> appSpec);
+
+    /**
+     * 部署到 AipexBase
+     * 将配置部署到 AipexBase 平台
+     *
+     * @param config AipexBase 配置
+     * @return 部署结果
+     */
+    DeploymentResult deploy(AipexBaseConfig config);
+
+    /**
+     * AipexBase 配置
+     */
+    class AipexBaseConfig {
+        private String projectId;
+        private String apiKey;
+        private String endpoint;
+        private List<TableConfig> tables;
+        private AuthConfig auth;
+        private StorageConfig storage;
+        private String apiCode; // 生成的 API 调用代码
+
+        // Getters and Setters
+        public String getProjectId() { return projectId; }
+        public void setProjectId(String projectId) { this.projectId = projectId; }
+        public String getApiKey() { return apiKey; }
+        public void setApiKey(String apiKey) { this.apiKey = apiKey; }
+        public String getEndpoint() { return endpoint; }
+        public void setEndpoint(String endpoint) { this.endpoint = endpoint; }
+        public List<TableConfig> getTables() { return tables; }
+        public void setTables(List<TableConfig> tables) { this.tables = tables; }
+        public AuthConfig getAuth() { return auth; }
+        public void setAuth(AuthConfig auth) { this.auth = auth; }
+        public StorageConfig getStorage() { return storage; }
+        public void setStorage(StorageConfig storage) { this.storage = storage; }
+        public String getApiCode() { return apiCode; }
+        public void setApiCode(String apiCode) { this.apiCode = apiCode; }
+    }
+
+    /**
+     * 表配置
+     */
+    class TableConfig {
+        private String tableName;
+        private String dataModelId;
+        private boolean autoSync;
+        private Permissions permissions;
+
+        // Getters and Setters
+        public String getTableName() { return tableName; }
+        public void setTableName(String tableName) { this.tableName = tableName; }
+        public String getDataModelId() { return dataModelId; }
+        public void setDataModelId(String dataModelId) { this.dataModelId = dataModelId; }
+        public boolean isAutoSync() { return autoSync; }
+        public void setAutoSync(boolean autoSync) { this.autoSync = autoSync; }
+        public Permissions getPermissions() { return permissions; }
+        public void setPermissions(Permissions permissions) { this.permissions = permissions; }
+    }
+
+    /**
+     * 权限配置
+     */
+    class Permissions {
+        private List<String> read;
+        private List<String> write;
+        private List<String> delete;
+
+        // Getters and Setters
+        public List<String> getRead() { return read; }
+        public void setRead(List<String> read) { this.read = read; }
+        public List<String> getWrite() { return write; }
+        public void setWrite(List<String> write) { this.write = write; }
+        public List<String> getDelete() { return delete; }
+        public void setDelete(List<String> delete) { this.delete = delete; }
+    }
+
+    /**
+     * 认证配置
+     */
+    class AuthConfig {
+        private List<String> providers; // wechat, email, phone
+        private Integer sessionTimeout;
+
+        // Getters and Setters
+        public List<String> getProviders() { return providers; }
+        public void setProviders(List<String> providers) { this.providers = providers; }
+        public Integer getSessionTimeout() { return sessionTimeout; }
+        public void setSessionTimeout(Integer sessionTimeout) { this.sessionTimeout = sessionTimeout; }
+    }
+
+    /**
+     * 存储配置
+     */
+    class StorageConfig {
+        private String bucket;
+        private Long maxFileSize;
+        private List<String> allowedTypes;
+
+        // Getters and Setters
+        public String getBucket() { return bucket; }
+        public void setBucket(String bucket) { this.bucket = bucket; }
+        public Long getMaxFileSize() { return maxFileSize; }
+        public void setMaxFileSize(Long maxFileSize) { this.maxFileSize = maxFileSize; }
+        public List<String> getAllowedTypes() { return allowedTypes; }
+        public void setAllowedTypes(List<String> allowedTypes) { this.allowedTypes = allowedTypes; }
+    }
+
+    /**
+     * 部署结果
+     */
+    class DeploymentResult {
+        private boolean success;
+        private String deploymentId;
+        private String message;
+        private Map<String, String> endpoints; // API 端点映射
+
+        // Getters and Setters
+        public boolean isSuccess() { return success; }
+        public void setSuccess(boolean success) { this.success = success; }
+        public String getDeploymentId() { return deploymentId; }
+        public void setDeploymentId(String deploymentId) { this.deploymentId = deploymentId; }
+        public String getMessage() { return message; }
+        public void setMessage(String message) { this.message = message; }
+        public Map<String, String> getEndpoints() { return endpoints; }
+        public void setEndpoints(Map<String, String> endpoints) { this.endpoints = endpoints; }
+    }
+}
+

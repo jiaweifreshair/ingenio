@@ -1,0 +1,86 @@
+package com.ingenio.backend.common;
+
+import cn.dev33.satoken.exception.NotLoginException;
+import cn.dev33.satoken.exception.NotPermissionException;
+import cn.dev33.satoken.exception.NotRoleException;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.validation.BindException;
+import org.springframework.validation.FieldError;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+/**
+ * 全局异常处理器
+ */
+@Slf4j
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    /**
+     * 处理SaToken未登录异常
+     */
+    @ExceptionHandler(NotLoginException.class)
+    public Result<Void> handleNotLoginException(NotLoginException e) {
+        log.warn("未登录异常: {}", e.getMessage());
+        return Result.error(401, "请先登录");
+    }
+
+    /**
+     * 处理SaToken权限不足异常
+     */
+    @ExceptionHandler(NotPermissionException.class)
+    public Result<Void> handleNotPermissionException(NotPermissionException e) {
+        log.warn("权限不足异常: {}", e.getMessage());
+        return Result.error(403, "权限不足");
+    }
+
+    /**
+     * 处理SaToken角色不足异常
+     */
+    @ExceptionHandler(NotRoleException.class)
+    public Result<Void> handleNotRoleException(NotRoleException e) {
+        log.warn("角色不足异常: {}", e.getMessage());
+        return Result.error(403, "角色权限不足");
+    }
+
+    /**
+     * 处理参数校验异常
+     */
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public Result<Void> handleValidationException(MethodArgumentNotValidException e) {
+        FieldError fieldError = e.getBindingResult().getFieldError();
+        String errorMessage = fieldError != null ? fieldError.getDefaultMessage() : "参数校验失败";
+        log.warn("参数校验失败: {}", errorMessage);
+        return Result.error(400, errorMessage);
+    }
+
+    /**
+     * 处理绑定异常
+     */
+    @ExceptionHandler(BindException.class)
+    public Result<Void> handleBindException(BindException e) {
+        FieldError fieldError = e.getFieldError();
+        String errorMessage = fieldError != null ? fieldError.getDefaultMessage() : "参数绑定失败";
+        log.warn("参数绑定失败: {}", errorMessage);
+        return Result.error(400, errorMessage);
+    }
+
+    /**
+     * 处理运行时异常
+     */
+    @ExceptionHandler(RuntimeException.class)
+    public Result<Void> handleRuntimeException(RuntimeException e) {
+        log.error("运行时异常", e);
+        return Result.error(500, e.getMessage());
+    }
+
+    /**
+     * 处理其他异常
+     */
+    @ExceptionHandler(Exception.class)
+    public Result<Void> handleException(Exception e) {
+        log.error("系统异常", e);
+        return Result.error(500, "系统错误，请联系管理员");
+    }
+}
