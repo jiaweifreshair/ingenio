@@ -23,7 +23,7 @@ spring:
   # Spring AI OpenAI配置（UniAix，替代原DashScope）
   ai:
     openai:
-      api-key: sk-3560551a75aab3d48fd7ac41115a1336b44b0c100ccbbc3df1f5dd765098b118
+      api-key: ${QINIU_AI_API_KEY:your-api-key-here}
       base-url: https://api.qnaigc.com
       chat:
         enabled: true

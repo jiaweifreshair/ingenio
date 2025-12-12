@@ -4,8 +4,8 @@ spring:
   # 数据源配置（连接本地PostgreSQL）
   datasource:
     url: jdbc:postgresql://localhost:5432/ingenio_dev?stringtype=unspecified
-    username: postgresql
-    password: ingenio_20251122
+    username: ${DB_USER:postgresql}
+    password: ${DB_PASSWORD:your-password-here}
     driver-class-name: org.postgresql.Driver
 
   # Redis配置（连接Docker中的Redis - 无密码）
@@ -19,7 +19,7 @@ spring:
   # 注意：base-url不要包含/v1，Spring AI会自动追加/v1/chat/completions
   ai:
     openai:
-      api-key: sk-3560551a75aab3d48fd7ac41115a1336b44b0c100ccbbc3df1f5dd765098b118
+      api-key: ${QINIU_AI_API_KEY:your-api-key-here}
       base-url: https://api.qnaigc.com
       chat:
         enabled: true
@@ -34,8 +34,8 @@ spring:
 # MinIO配置（连接Docker中的MinIO）
 minio:
   endpoint: http://127.0.0.1:9000
-  access-key: minioadmin
-  secret-key: minioadmin
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket-name: ingenio
   auto-create-bucket: true
 
@@ -58,7 +58,7 @@ sa-token:
   is-share: false                # 不共享Token（每次登录生成新Token）
   token-style: jwt               # 使用JWT风格Token
   is-log: true                   # 开启日志输出
-  jwt-secret-key: ingenio-local-dev-jwt-secret-key-min-32-characters
+  jwt-secret-key: ${JWT_SECRET_KEY:please-change-this-secret-key-min-32-characters}
 
 # 服务器配置
 server:
