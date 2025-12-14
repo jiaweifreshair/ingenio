@@ -20,7 +20,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -34,23 +33,16 @@ import {
   RefreshCw,
   AlertCircle,
   Eye,
-  Sparkles,
   FileText,
-  Palette,
   Code,
   Send,
-  FileCode,
-  Check,
 } from 'lucide-react';
 
 import type { PlanRoutingResult } from '@/lib/api/plan-routing';
-import { ROUTING_BRANCH_DISPLAY } from '@/lib/api/plan-routing';
 import type { Template } from '@/types/template';
 import { getStyleDisplayInfo } from '@/types/design-style';
-import { useOpenLovablePreview, type GeneratedFile } from '@/hooks/use-openlovable-preview';
+import { useOpenLovablePreview } from '@/hooks/use-openlovable-preview';
 import { cn } from '@/lib/utils';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { PrototypePreview } from './prototype-preview';
 import { ConfirmationDialog } from './confirmation-dialog';
 
@@ -81,23 +73,6 @@ export interface PrototypeConfirmationProps {
  */
 type ViewMode = 'preview' | 'code' | 'log';
 
-/**
- * 获取语法高亮语言
- */
-function getSyntaxLanguage(type: string): string {
-  const langMap: Record<string, string> = {
-    'javascript': 'jsx',
-    'typescript': 'tsx',
-    'css': 'css',
-    'scss': 'scss',
-    'html': 'html',
-    'json': 'json',
-    'markdown': 'markdown',
-    'text': 'text',
-  };
-  return langMap[type] || 'jsx';
-}
-
 // ==================== 主组件 ====================
 
 /**
@@ -106,7 +81,7 @@ function getSyntaxLanguage(type: string): string {
 export function PrototypeConfirmation({
   routingResult,
   userRequirement = '',
-  selectedTemplate,
+  selectedTemplate: _selectedTemplate, // Mark as unused
   onConfirm,
   onBack,
   loading = false,
@@ -116,8 +91,7 @@ export function PrototypeConfirmation({
   const {
     stage,
     previewUrl,
-    generatedFiles,
-    currentFile,
+    streamedCode,
     generationLog,
     elapsedTime,
     totalTime,
@@ -131,7 +105,6 @@ export function PrototypeConfirmation({
   // 状态管理
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [iterationInput, setIterationInput] = useState('');
   const [iframeKey, setIframeKey] = useState(0);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
@@ -139,9 +112,6 @@ export function PrototypeConfirmation({
   // Refs
   const logContainerRef = useRef<HTMLDivElement>(null);
   const hasStartedRef = useRef(false);
-
-  // 获取路由分支显示信息
-  const branchInfo = ROUTING_BRANCH_DISPLAY[routingResult.branch];
 
   // 获取选中风格的显示信息
   const selectedStyleInfo = routingResult.selectedStyleId
@@ -169,7 +139,11 @@ export function PrototypeConfirmation({
     if (!hasStartedRef.current && !routingResult.prototypeUrl && userRequirement && stage === 'idle') {
       hasStartedRef.current = true;
       const styleHint = selectedStyleInfo?.displayName || '';
-      startGeneration(userRequirement, styleHint);
+      startGeneration(userRequirement, {
+        styleHint,
+        appSpecId: routingResult.appSpecId,
+        styleId: routingResult.selectedStyleId
+      });
     }
   }, [routingResult.prototypeUrl, userRequirement, stage, selectedStyleInfo, startGeneration]);
 
@@ -233,14 +207,7 @@ export function PrototypeConfirmation({
     setIsFullscreen(prev => !prev);
   };
 
-  /**
-   * 获取当前显示的文件
-   */
-  const displayFile: GeneratedFile | null = selectedFile
-    ? generatedFiles.find(f => f.path === selectedFile) || currentFile
-    : currentFile || (generatedFiles.length > 0 ? generatedFiles[0] : null);
-
-  // ========== 渲染 ==========
+  // 获取选中风格的显示信息
 
   return (
     <div className={`flex flex-col ${isFullscreen ? 'fixed inset-0 z-50 bg-white dark:bg-gray-900 p-4' : 'h-full'}`} data-testid="prototype-confirmation-panel">
@@ -338,11 +305,12 @@ export function PrototypeConfirmation({
         </Alert>
       )}
 
-      {/* 主要内容区域 */}
+      {/* 主要内容区域 - 响应式分屏布局 */}
       <div className="flex-1 flex flex-col lg:flex-row gap-4 min-h-0">
-        {/* 左侧：预览/代码切换区域 - 增加宽度占比 (75%) */}
-        <div className={`${isFullscreen ? 'flex-1' : 'lg:flex-[3]'} min-h-[400px]`}>
-          <Card className="h-full flex flex-col border-2">
+        
+        {/* Mobile/Tablet Layout (Tabbed) - Hidden on LG */}
+        <div className={`lg:hidden flex-1 min-h-[400px] ${isFullscreen ? 'hidden' : ''}`}>
+           <Card className="h-full flex flex-col border-2">
             {/* 视图切换标签 */}
             <div className="flex items-center justify-between p-3 border-b">
               <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
@@ -361,238 +329,95 @@ export function PrototypeConfirmation({
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
-
-              {viewMode === 'code' && generatedFiles.length > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  {generatedFiles.length} 个文件
-                </span>
-              )}
             </div>
-
-            {/* 内容区 */}
-            <div className="flex-1 p-0 overflow-hidden">
-              {viewMode === 'preview' ? (
-                // 预览模式
-                <PrototypePreview
-                  previewUrl={effectivePreviewUrl}
-                  isGenerating={isGenerating}
-                  elapsedTime={elapsedTime}
-                  stage={stage}
-                  iframeKey={iframeKey}
-                />
-              ) : viewMode === 'code' ? (
-                // 代码模式
-                <div className="h-full flex">
-                  {/* 文件列表 */}
-                  <div className="w-48 bg-gray-900 border-r border-gray-700 overflow-y-auto">
-                    <div className="p-2 text-xs text-gray-400 font-medium border-b border-gray-700">
-                      文件列表 ({generatedFiles.length})
-                    </div>
-                    {generatedFiles.map((file) => (
-                      <button
-                        key={file.path}
-                        onClick={() => setSelectedFile(file.path)}
-                        className={cn(
-                          'w-full px-3 py-2 text-left text-xs font-mono flex items-center gap-2 hover:bg-gray-800 transition-colors',
-                          selectedFile === file.path ? 'bg-gray-800 text-white' : 'text-gray-400'
-                        )}
-                      >
-                        <FileCode className="w-3 h-3 flex-shrink-0" />
-                        <span className="truncate">{file.path}</span>
-                        {file.completed && <Check className="w-3 h-3 text-green-500 flex-shrink-0" />}
-                      </button>
-                    ))}
-                    {currentFile && (
-                      <button
-                        onClick={() => setSelectedFile(currentFile.path)}
-                        className={cn(
-                          'w-full px-3 py-2 text-left text-xs font-mono flex items-center gap-2 hover:bg-gray-800 transition-colors',
-                          selectedFile === currentFile.path ? 'bg-gray-800 text-white' : 'text-gray-400'
-                        )}
-                      >
-                        <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />
-                        <span className="truncate">{currentFile.path}</span>
-                      </button>
-                    )}
-                    {generatedFiles.length === 0 && !currentFile && (
-                      <div className="p-3 text-xs text-gray-500 text-center">
-                        {isGenerating ? '等待代码生成...' : '暂无文件'}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 代码显示 */}
-                  <div className="flex-1 overflow-hidden bg-gray-900">
-                    {displayFile ? (
-                      <div className="h-full flex flex-col">
-                        <div className="px-4 py-2 bg-[#36322F] text-white flex items-center justify-between border-b border-gray-700">
-                          <div className="flex items-center gap-2">
-                            {!displayFile.completed && (
-                              <Loader2 className="w-4 h-4 animate-spin text-orange-400" />
-                            )}
-                            {displayFile.completed && (
-                              <Check className="w-4 h-4 text-green-500" />
-                            )}
-                            <span className="font-mono text-sm">{displayFile.path}</span>
-                          </div>
-                        </div>
-                        <div className="flex-1 overflow-auto">
-                          <SyntaxHighlighter
-                            language={getSyntaxLanguage(displayFile.type)}
-                            style={vscDarkPlus}
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              fontSize: '0.75rem',
-                              background: 'transparent',
-                              minHeight: '100%',
-                            }}
-                            showLineNumbers={true}
-                            wrapLongLines={true}
-                          >
-                            {displayFile.content || '// 等待代码生成...'}
-                          </SyntaxHighlighter>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex items-center justify-center h-full text-gray-500">
-                        <div className="text-center">
-                          <Code className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                          <p className="text-sm">选择文件查看代码</p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                // 日志模式
-                <ScrollArea className="h-full p-4" ref={logContainerRef}>
-                  <div className="space-y-1 font-mono text-xs">
-                    {generationLog.length > 0 ? (
-                      generationLog.map((log, index) => (
-                        <div key={index} className="text-gray-600 dark:text-gray-400">
-                          {log}
-                        </div>
-                      ))
-                    ) : (
-                      <div className="text-gray-400 text-center py-8">
-                        暂无日志
-                      </div>
-                    )}
-                  </div>
-                </ScrollArea>
-              )}
-            </div>
-
-            {/* 迭代输入框（生成完成后显示） */}
-            {stage === 'complete' && (
-              <div className="p-3 border-t bg-gray-50 dark:bg-gray-800/50">
-                <div className="flex gap-2">
-                  <Input
-                    value={iterationInput}
-                    onChange={(e) => setIterationInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSendIteration();
-                      }
-                    }}
-                    placeholder="输入修改需求，例如：把标题改成蓝色、增加一个按钮..."
-                    className="flex-1"
-                    disabled={loading}
+            {/* Mobile Content */}
+            <div className="flex-1 p-0 overflow-hidden relative">
+               {viewMode === 'preview' && (
+                  <PrototypePreview
+                    previewUrl={effectivePreviewUrl}
+                    isGenerating={isGenerating}
+                    elapsedTime={elapsedTime}
+                    stage={stage}
+                    iframeKey={iframeKey}
+                    streamedCode={streamedCode}
                   />
-                  <Button
-                    onClick={handleSendIteration}
-                    disabled={!iterationInput.trim() || loading}
-                    size="sm"
-                  >
-                    <Send className="w-4 h-4" />
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  按Enter发送迭代请求，AI将实时修改原型
-                </p>
-              </div>
-            )}
-          </Card>
+               )}
+               {viewMode === 'code' && (
+                  <div className="h-full bg-[#1e1e1e] p-4 overflow-y-auto font-mono text-xs text-gray-300">
+                     <pre className="whitespace-pre-wrap break-all">{streamedCode}</pre>
+                  </div>
+               )}
+               {viewMode === 'log' && (
+                  <ScrollArea className="h-full p-4">
+                    {generationLog.map((log, i) => <div key={i} className="text-xs font-mono mb-1">{log}</div>)}
+                  </ScrollArea>
+               )}
+            </div>
+           </Card>
         </div>
 
-        {/* 右侧：选择摘要（全屏模式下隐藏） */}
-        {!isFullscreen && (
-          <div className="lg:flex-1 space-y-4">
-            {/* 意图类型 */}
-            <Card className="p-4 border-2">
-              <div className="flex items-start gap-3">
-                <Sparkles className="h-5 w-5 text-purple-600 flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">
-                    意图类型
-                  </h4>
-                  <div className="flex items-center gap-2">
-                    <span className="text-2xl">{branchInfo.icon}</span>
-                    <div>
-                      <p className="font-medium">{branchInfo.name}</p>
-                      <p className="text-xs text-muted-foreground">{branchInfo.description}</p>
-                    </div>
-                  </div>
-                </div>
+        {/* Desktop Split Layout (Always Visible on LG) */}
+        <div className="hidden lg:flex flex-1 gap-0 h-full shadow-xl rounded-xl overflow-hidden border-2 border-gray-200 dark:border-gray-800">
+           
+           {/* Left: Code Terminal (40%) */}
+           <div className="w-[40%] flex flex-col bg-[#1e1e1e] border-r border-white/10">
+              <div className="h-10 flex items-center px-4 bg-[#2d2d2d] border-b border-black/20 justify-between">
+                 <div className="flex items-center gap-2 text-gray-400 text-xs font-mono">
+                    <Code className="w-3 h-3" />
+                    <span>GENERATOR_TERMINAL</span>
+                 </div>
+                 {isGenerating && <Loader2 className="w-3 h-3 text-green-500 animate-spin" />}
               </div>
-            </Card>
-
-            {/* 选择的模板 */}
-            <Card className="p-4 border-2">
-              <div className="flex items-start gap-3">
-                <FileText className="h-5 w-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">
-                    选择的模板
-                  </h4>
-                  {selectedTemplate ? (
-                    <div>
-                      <p className="font-medium">{selectedTemplate.name}</p>
-                      <p className="text-xs text-muted-foreground">{selectedTemplate.description}</p>
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground text-sm">未选择模板（从零设计）</p>
-                  )}
-                </div>
+              
+              <div className="flex-1 overflow-y-auto p-4 font-mono text-xs text-green-400/90 selection:bg-green-900 selection:text-white" ref={logContainerRef}>
+                 <pre className="whitespace-pre-wrap break-all">
+                   {streamedCode || '// Initializing AI Generator...'}
+                   {isGenerating && <span className="inline-block w-1.5 h-3 bg-green-500 ml-1 animate-pulse align-middle" />}
+                 </pre>
               </div>
-            </Card>
 
-            {/* 设计风格 */}
-            <Card className="p-4 border-2">
-              <div className="flex items-start gap-3">
-                <Palette className="h-5 w-5 text-pink-600 flex-shrink-0 mt-0.5" />
-                <div className="flex-1">
-                  <h4 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1">
-                    设计风格
-                  </h4>
-                  {selectedStyleInfo ? (
-                    <div className="flex items-center gap-2">
-                      <Badge className="bg-gradient-to-r from-purple-600 to-blue-600 text-white border-0">
-                        {selectedStyleInfo.identifier}
-                      </Badge>
-                      <span className="font-medium">{selectedStyleInfo.displayName}</span>
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground text-sm">
-                      {routingResult.selectedStyleId || '未选择风格'}
-                    </p>
-                  )}
-                </div>
+              {/* Chat Input Area */}
+              <div className="p-3 bg-[#252526] border-t border-white/5">
+                 <div className="relative">
+                    <input 
+                      className="w-full bg-[#3c3c3c] text-white text-xs rounded px-3 py-2 pr-8 focus:outline-none focus:ring-1 focus:ring-blue-500 placeholder:text-gray-500"
+                      placeholder="Type to iterate (e.g., 'Make button blue')..."
+                      value={iterationInput}
+                      onChange={(e) => setIterationInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendIteration();
+                        }
+                      }}
+                      disabled={loading || isGenerating}
+                    />
+                    <button 
+                      className="absolute right-1.5 top-1.5 text-gray-400 hover:text-white disabled:opacity-50"
+                      onClick={handleSendIteration}
+                      disabled={!iterationInput.trim() || loading || isGenerating}
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                 </div>
               </div>
-            </Card>
+           </div>
 
-            {/* V2.0确认提示 - 保留作为辅助提示，详细信息在Dialog中 */}
-            <Alert className="border-purple-200 bg-purple-50 dark:bg-purple-900/10">
-              <CheckCircle2 className="h-4 w-4 text-purple-600" />
-              <AlertDescription className="text-purple-800 dark:text-purple-200">
-                <strong>V2.0设计确认机制：</strong>
-                确认设计后，系统将基于此方案生成完整的全栈代码。
-              </AlertDescription>
-            </Alert>
-          </div>
-        )}
+           {/* Right: Preview (60%) */}
+           <div className="flex-1 bg-white dark:bg-gray-900 relative">
+              <PrototypePreview
+                 previewUrl={effectivePreviewUrl}
+                 isGenerating={isGenerating}
+                 elapsedTime={elapsedTime}
+                 stage={stage}
+                 iframeKey={iframeKey}
+                 // On desktop split view, we don't need the overlay code stream since it's on the left
+                 streamedCode={undefined} 
+              />
+           </div>
+
+        </div>
+
       </div>
 
       {/* 底部操作按钮 */}

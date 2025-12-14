@@ -111,15 +111,12 @@ export function TopNav(): React.ReactElement {
    *
    * 设计理念：应用管理型导航（方案B）
    * - 直达Dashboard核心工作台
-   * - 快速创建新应用
-   * - 模板库快速启动
+   * - 应用模版快速启动
    * - 产品功能介绍
    */
   const navLinks = [
     { href: "/dashboard", label: "我的项目" },   // ✅ 修复: /projects → /dashboard（实际路由）
-    { href: "/create-v2", label: "创建应用" },   // ✅ V2.0: 切换到意图识别+双重选择机制
-    { href: "/templates", label: "模板库" },     // ✅ 保留: 快速启动
-    { href: "/#features", label: "功能" },       // ✅ 保留: 产品介绍
+    { href: "/templates", label: "应用模版" },     // ✅ 保留: 快速启动
   ];
 
   return (
@@ -184,7 +181,7 @@ export function TopNav(): React.ReactElement {
                   <>
                     <Button asChild className="w-full rounded-full">
                       <Link
-                        href="/create-v2"
+                        href="/"
                         data-location="mobile-menu"
                         onClick={() => setMobileMenuOpen(false)}
                       >
@@ -295,7 +292,7 @@ export function TopNav(): React.ReactElement {
 
               {/* 免费开始按钮 */}
               <Button asChild size="sm" className="rounded-md px-4 font-medium">
-                <Link href="/create-v2" data-location="header">
+                <Link href="/" data-location="header">
                   免费开始
                 </Link>
               </Button>

@@ -5,6 +5,8 @@
 
 import type { DesignStyle } from '@/types/design-style';
 import type { IntentClassificationResult, RequirementIntent } from '@/types/intent';
+import { getApiBaseUrl } from '@/lib/api/base-url';
+import { getToken } from '@/lib/auth/token';
 
 /** 原型请求超时时间（毫秒），超过即判定依赖服务未响应
  * 参考 open-lovable-cn: E2B沙箱创建通常需要30-40秒，生成代码可能需要60-90秒
@@ -95,8 +97,9 @@ export async function generatePrototypeStream(
 
   try {
     const payload = buildPayload(request);
-    const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
+    const apiBaseUrl = getApiBaseUrl();
     const url = `${apiBaseUrl}/v1/prototype/generate/stream`;
+    const token = getToken();
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), PROTOTYPE_GENERATION_TIMEOUT_MS);
@@ -106,9 +109,11 @@ export async function generatePrototypeStream(
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
+        ...(token ? { Authorization: token } : {}),
       },
       body: JSON.stringify(payload),
       signal: controller.signal,
+      credentials: 'include',
     });
 
     clearTimeout(timeoutId);

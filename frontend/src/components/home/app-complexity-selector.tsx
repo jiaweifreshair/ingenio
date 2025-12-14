@@ -7,9 +7,10 @@ import { Check } from "lucide-react";
 interface AppComplexitySelectorProps {
     selectedMode: AppComplexityMode | null;
     onSelect: (mode: AppComplexityMode) => void;
+    onSelectExample?: (mode: AppComplexityMode, prompt: string) => void;
 }
 
-export function AppComplexitySelector({ selectedMode, onSelect }: AppComplexitySelectorProps) {
+export function AppComplexitySelector({ selectedMode, onSelect, onSelectExample }: AppComplexitySelectorProps) {
     return (
         <section className="py-12 px-6">
             <div className="max-w-6xl mx-auto">
@@ -18,7 +19,7 @@ export function AppComplexitySelector({ selectedMode, onSelect }: AppComplexityS
                     <p className="text-muted-foreground">根据您的需求选择合适的复杂度，AI将智能匹配最佳技术方案</p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {APP_MODES.map((mode) => {
                         const isSelected = selectedMode === mode.id;
                         const Icon = mode.icon;
@@ -61,7 +62,23 @@ export function AppComplexitySelector({ selectedMode, onSelect }: AppComplexityS
                                     {mode.techStack}
                                 </div>
 
-                                <div className="flex flex-wrap gap-2">
+                                {mode.exampleTitle && (
+                                    <div className="mt-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                                        <span onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (onSelectExample && mode.examplePrompt) {
+                                                onSelectExample(mode.id, mode.examplePrompt);
+                                            } else {
+                                                // Fallback if no handler, just select mode
+                                                onSelect(mode.id);
+                                            }
+                                        }} className="text-xs text-muted-foreground hover:text-primary underline decoration-dotted underline-offset-4 flex items-center gap-1 transition-colors">
+                                            示例：{mode.exampleTitle}
+                                        </span>
+                                    </div>
+                                )}
+
+                                <div className="flex flex-wrap gap-2 mt-4">
                                     {mode.tags.map(tag => (
                                         <span key={tag} className="px-2 py-0.5 rounded text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-500 font-medium">
                                             {tag}

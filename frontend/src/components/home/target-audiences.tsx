@@ -96,10 +96,10 @@ export function TargetAudiences(): React.ReactElement {
   ];
 
   return (
-    <section className="w-full py-24 bg-slate-50/50 dark:bg-slate-950/50">
+    <section className="w-full py-12 bg-slate-50/50 dark:bg-slate-950/50">
       <div className="container mx-auto px-6">
         {/* 区域标题 */}
-        <div className="mb-16 text-center">
+        <div className="mb-10 text-center">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground mb-6 tracking-tight">
             适合所有年龄段的
             <span className="block bg-gradient-to-r from-pink-500 to-violet-500 bg-clip-text text-transparent mt-2">

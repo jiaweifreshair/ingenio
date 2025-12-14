@@ -25,6 +25,8 @@ interface AppSpec {
   planResult?: {
     modules: Module[];
   };
+  frontendPrototype?: Record<string, unknown>;
+  frontendPrototypeUrl?: string;
 }
 
 interface StepResultPanelProps {
@@ -185,6 +187,35 @@ export function StepResultPanel({
 
     return (
       <div className="space-y-6">
+        {/* V2.0 OpenLovable Preview Integration */}
+        {appSpec?.frontendPrototypeUrl && (
+          <Card className="border-purple-200 dark:border-purple-800 overflow-hidden">
+            <CardHeader className="bg-purple-50 dark:bg-purple-900/10 pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Layout className="h-4 w-4 text-purple-600" />
+                  生成的前端原型
+                </CardTitle>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="h-8 text-xs"
+                  onClick={() => window.open(appSpec.frontendPrototypeUrl, '_blank')}
+                >
+                  新窗口打开
+                </Button>
+              </div>
+            </CardHeader>
+            <div className="aspect-video w-full bg-gray-100 dark:bg-gray-900 relative">
+              <iframe 
+                src={appSpec.frontendPrototypeUrl} 
+                className="absolute inset-0 w-full h-full border-0"
+                title="Prototype Preview"
+              />
+            </div>
+          </Card>
+        )}
+
         <div className="grid grid-cols-3 gap-4">
           <Card>
             <CardContent className="pt-6 flex flex-col items-center text-center">

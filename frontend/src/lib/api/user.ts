@@ -53,14 +53,22 @@ export interface ChangePasswordRequest {
 
 /**
  * API密钥类型
+ * 与后端 ApiKeyResponse 对应
  */
 export interface ApiKey {
   id: string;
   name: string;
-  key: string;
-  createdAt: string;
-  lastUsed?: string;
+  keyPrefix: string;        // 密钥前缀（显示用，如：ing_xxxxx）
+  fullKey?: string;         // 完整密钥（仅在创建时返回一次）
+  description?: string;
+  scopes?: string[];
+  isActive?: boolean;
+  lastUsedAt?: string;      // 最后使用时间
+  lastUsedIp?: string;
+  usageCount?: number;
+  rateLimit?: number;
   expiresAt?: string;
+  createdAt: string;
 }
 
 /**

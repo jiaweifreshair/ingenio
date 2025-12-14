@@ -1,20 +1,16 @@
 /**
  * useGenerationFlow Hook
- * 管理完整的生成流程：分析 → 风格选择 → 全量生成 → 导航
+ * 管理完整的生成流程：分析 → 原型预览 → 确认生成 → 导航
  *
- * 职责：
- * - 集成SSE分析Hook
- * - 处理表单提交
- * - 管理流程阶段切换
- * - 调用完整生成API
- * - 处理导航跳转
- * - 统一错误处理
+ * V2.0 简化版：统一使用V2 API链路
+ * - routeRequirement: 意图识别 + 模板匹配
+ * - selectStyleAndGeneratePrototype: 风格选择 + 原型生成
+ * - confirmDesign + executeCodeGeneration: 确认设计 + 代码生成
  *
  * 流程说明：
- * 1. 用户点击"生成应用" → 开始SSE分析（analyzing阶段）
- * 2. SSE分析完成 → 切换到风格选择（style-selection阶段）
- * 3. 用户选择风格 → 调用完整生成API（generating阶段）
- * 4. 生成成功 → 显示成功动画并导航（navigating阶段）
+ * 1. 用户点击"生成应用" → 启动SSE分析 + 路由识别（并行）
+ * 2. 分析完成 → 自动选择默认风格生成原型 → 进入原型预览
+ * 3. 用户确认设计 → 调用代码生成API → 跳转到wizard页面
  *
  * @author Ingenio Team
  * @since V2.0
@@ -24,8 +20,12 @@ import { useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
 import { useAnalysisSse, type AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
-import { generateAppSpec, type GenerateRequest } from '@/lib/api/generate';
-import { APIError } from '@/lib/api/client';
+import {
+  routeRequirement,
+  confirmDesign,
+  executeCodeGeneration,
+  type PlanRoutingResult
+} from '@/lib/api/plan-routing';
 import type { UniaixModel } from '@/lib/api/uniaix';
 import type { PhaseType } from '@/types/requirement-form';
 
@@ -45,13 +45,17 @@ export interface UseGenerationFlowProps {
   setCurrentPhase: (phase: PhaseType) => void;
   /** 设置显示成功动画 */
   setShowSuccess: (show: boolean) => void;
+  /** 路由结果 (V2) */
+  routingResult?: PlanRoutingResult | null;
+  /** 设置路由结果 */
+  setRoutingResult?: (result: PlanRoutingResult | null) => void;
 }
 
 /**
  * useGenerationFlow Hook返回值
+ * V2.0简化版：移除handleStyleSelected（风格选择已自动化）
  */
 export interface UseGenerationFlowReturn {
-  // ==================== SSE分析状态 ====================
   /** 分析消息列表 */
   messages: AnalysisProgressMessage[];
   /** SSE连接状态 */
@@ -60,27 +64,26 @@ export interface UseGenerationFlowReturn {
   isCompleted: boolean;
   /** 分析错误信息 */
   analysisError: string | null;
-
-  // ==================== 方法 ====================
   /** 处理表单提交（启动分析） */
   handleFormSubmit: (e: React.FormEvent) => Promise<void>;
-  /** 处理风格选择 */
-  handleStyleSelected: (style: string) => void;
-  /** 处理取消风格选择 */
+  /** 处理取消/返回 */
   handleStyleCancel: () => void;
+  /** 确认设计并生成代码 */
+  handleConfirmDesign: () => Promise<void>;
 }
 
 /**
  * useGenerationFlow Hook
- * 管理完整的生成流程
+ * 管理完整的V2生成流程
  */
 export function useGenerationFlow({
   requirement,
-  selectedModel,
   setLoading,
   setShowAnalysis,
   setCurrentPhase,
   setShowSuccess,
+  routingResult,
+  setRoutingResult,
 }: UseGenerationFlowProps): UseGenerationFlowReturn {
   const router = useRouter();
   const { toast } = useToast();
@@ -94,10 +97,11 @@ export function useGenerationFlow({
     connect: startAnalysis,
   } = useAnalysisSse({
     requirement,
-    autoConnect: false, // 手动控制连接
+    autoConnect: false,
     onComplete: () => {
-      // SSE分析完成，切换到风格选择阶段
-      console.log('[useGenerationFlow] SSE分析完成，进入风格选择阶段');
+      // SSE分析完成，切换到style-selection阶段
+      // 实际的原型生成逻辑在RequirementForm的useEffect中处理
+      console.log('[useGenerationFlow] SSE分析完成，准备生成原型');
       setCurrentPhase('style-selection');
     },
     onError: (error) => {
@@ -114,131 +118,8 @@ export function useGenerationFlow({
   });
 
   /**
-   * 调用完整生成API并导航
-   * 在用户选择风格后调用
-   */
-  const handleFullGeneration = useCallback(async (): Promise<void> => {
-    console.log('[useGenerationFlow] 开始完整生成流程');
-    console.log('[useGenerationFlow] requirement:', requirement);
-    console.log('[useGenerationFlow] selectedModel:', selectedModel);
-
-    try {
-      // 构造请求参数
-      const request: GenerateRequest = {
-        requirement: requirement.trim(),
-        model: selectedModel,
-        tenantId: 'default-tenant',
-        userId: 'default-user',
-      };
-
-      console.log('[useGenerationFlow] API请求参数:', JSON.stringify(request, null, 2));
-
-      // 添加超时保护（120秒）
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        console.error('[useGenerationFlow] API调用超时（120秒）');
-        controller.abort();
-      }, 120000);
-
-      // 调用API
-      console.log('[useGenerationFlow] 正在调用generateAppSpec API...');
-      const startTime = Date.now();
-      const response = await generateAppSpec(request);
-      const duration = Date.now() - startTime;
-      clearTimeout(timeoutId);
-
-      console.log('[useGenerationFlow] API响应耗时:', duration, 'ms');
-      console.log('[useGenerationFlow] response.success:', response.success);
-      console.log('[useGenerationFlow] response.data:', JSON.stringify(response.data, null, 2));
-
-      if (response.success && response.data) {
-        // 验证appSpecId
-        const appSpecId = response.data.appSpecId?.trim();
-        console.log('[useGenerationFlow] 提取的appSpecId:', appSpecId);
-
-        if (!appSpecId) {
-          console.error('[useGenerationFlow] appSpecId为空');
-          console.error('[useGenerationFlow] 完整response对象:', response);
-
-          toast({
-            title: '生成失败',
-            description: '服务器未返回有效的AppSpec ID，请重试或联系技术支持',
-            variant: 'destructive',
-            duration: 15000,
-          });
-          setLoading(false);
-          setShowAnalysis(false);
-          setCurrentPhase('idle');
-          return;
-        }
-
-        // 生成成功
-        console.log('[useGenerationFlow] 生成成功，appSpecId:', appSpecId);
-        const targetUrl = `/wizard/${appSpecId}`;
-
-        // 切换到导航阶段
-        setCurrentPhase('navigating');
-
-        // 显示成功动画
-        setShowSuccess(true);
-        setLoading(false);
-
-        // 显示成功提示
-        toast({
-          title: '生成成功',
-          description: `正在跳转到向导页面... (${duration}ms)`,
-          duration: 3000,
-        });
-
-        // 延迟导航，让用户看到成功动画
-        setTimeout(() => {
-          console.log('[useGenerationFlow] 执行导航:', targetUrl);
-          router.push(targetUrl);
-        }, 800);
-      } else {
-        // API调用失败
-        console.error('[useGenerationFlow] API调用失败');
-        console.error('[useGenerationFlow] response.error:', response.error);
-
-        toast({
-          title: '生成失败',
-          description: response.error || '服务器错误，请稍后重试',
-          variant: 'destructive',
-          duration: 10000,
-        });
-        setLoading(false);
-        setShowAnalysis(false);
-        setCurrentPhase('idle');
-      }
-    } catch (err) {
-      // 异常捕获
-      console.error('[useGenerationFlow] 完整生成流程异常:', err);
-
-      let errorMessage = '发生未知错误';
-      if (err instanceof APIError) {
-        errorMessage = `API错误: ${err.message}`;
-      } else if (err instanceof Error) {
-        errorMessage = err.message;
-        if (err.name === 'AbortError') {
-          errorMessage = '请求超时（120秒），请简化需求描述后重试';
-        }
-      }
-
-      toast({
-        title: '系统错误',
-        description: errorMessage,
-        variant: 'destructive',
-        duration: 15000,
-      });
-      setLoading(false);
-      setShowAnalysis(false);
-      setCurrentPhase('idle');
-    }
-  }, [requirement, selectedModel, setLoading, setShowAnalysis, setCurrentPhase, setShowSuccess, toast, router]);
-
-  /**
    * 表单提交处理
-   * 验证后启动SSE分析
+   * 验证后启动SSE分析 + V2路由识别（并行）
    */
   const handleFormSubmit = useCallback(
     async (e: React.FormEvent): Promise<void> => {
@@ -247,7 +128,6 @@ export function useGenerationFlow({
 
       // 验证
       if (!requirement.trim()) {
-        console.log('[useGenerationFlow] 验证失败：空需求');
         toast({
           title: '验证错误',
           description: '需求描述不能为空',
@@ -257,7 +137,6 @@ export function useGenerationFlow({
       }
 
       if (requirement.trim().length < 10) {
-        console.log('[useGenerationFlow] 验证失败：需求太短');
         toast({
           title: '验证错误',
           description: '需求描述至少需要10个字符',
@@ -266,61 +145,120 @@ export function useGenerationFlow({
         return;
       }
 
-      // 显示分析面板并开始SSE连接
+      // 显示分析面板并开始
       setLoading(true);
       setShowAnalysis(true);
       setCurrentPhase('analyzing');
-      console.log('[useGenerationFlow] 开始实时分析阶段');
+      console.log('[useGenerationFlow] 开始分析阶段');
 
-      // 启动SSE分析
+      // 1. 启动SSE分析（视觉效果）
       startAnalysis();
+
+      // 2. 并行调用V2路由API（获取appSpecId）
+      try {
+        console.log('[useGenerationFlow] 调用routeRequirement:', requirement);
+        const result = await routeRequirement({ userRequirement: requirement });
+        console.log('[useGenerationFlow] 路由结果:', result);
+
+        if (setRoutingResult) {
+          setRoutingResult(result);
+        }
+      } catch (err) {
+        console.error('[useGenerationFlow] 路由失败:', err);
+        toast({
+          title: '分析失败',
+          description: err instanceof Error ? err.message : '服务器连接失败',
+          variant: 'destructive',
+        });
+        setLoading(false);
+        setShowAnalysis(false);
+        setCurrentPhase('idle');
+      }
     },
-    [requirement, setLoading, setShowAnalysis, setCurrentPhase, startAnalysis, toast]
+    [requirement, setLoading, setShowAnalysis, setCurrentPhase, startAnalysis, toast, setRoutingResult]
   );
 
   /**
-   * 处理风格选择
-   * 用户选择风格后，切换到生成阶段并调用完整生成API
-   */
-  const handleStyleSelected = useCallback(
-    (style: string): void => {
-      console.log('[useGenerationFlow] 用户选择风格:', style);
-
-      setCurrentPhase('generating');
-
-      // TODO: 等待后端支持selectedStyle参数后，将风格传递给生成API
-      console.log('[useGenerationFlow] 已保存用户选择的风格（待后端API支持）:', style);
-
-      // 延迟一下让用户看到选中状态
-      setTimeout(() => {
-        handleFullGeneration();
-      }, 500);
-    },
-    [setCurrentPhase, handleFullGeneration]
-  );
-
-  /**
-   * 处理取消风格选择
-   * 返回到输入表单
+   * 处理取消/返回
+   * 重置到初始状态
    */
   const handleStyleCancel = useCallback((): void => {
-    console.log('[useGenerationFlow] 取消风格选择，返回输入表单');
-
+    console.log('[useGenerationFlow] 取消，返回输入表单');
     setLoading(false);
     setShowAnalysis(false);
     setCurrentPhase('idle');
-  }, [setLoading, setShowAnalysis, setCurrentPhase]);
+    if (setRoutingResult) {
+      setRoutingResult(null);
+    }
+  }, [setLoading, setShowAnalysis, setCurrentPhase, setRoutingResult]);
+
+  /**
+   * 确认设计并生成代码
+   * V2完整流程：confirmDesign → executeCodeGeneration → 跳转wizard
+   */
+  const handleConfirmDesign = useCallback(async (): Promise<void> => {
+    if (!routingResult?.appSpecId) {
+      toast({
+        title: '错误',
+        description: 'AppSpec ID 丢失，请重新开始',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setLoading(true);
+    console.log('[useGenerationFlow] 开始确认设计:', routingResult.appSpecId);
+
+    try {
+      // Step 1: 确认设计
+      console.log('[useGenerationFlow] 调用confirmDesign...');
+      const confirmResult = await confirmDesign(routingResult.appSpecId);
+      console.log('[useGenerationFlow] 确认结果:', confirmResult);
+
+      if (!confirmResult.success || !confirmResult.canProceedToExecute) {
+        throw new Error(confirmResult.message || '设计确认失败');
+      }
+
+      // Step 2: 执行代码生成
+      console.log('[useGenerationFlow] 调用executeCodeGeneration...');
+      const codeResult = await executeCodeGeneration(routingResult.appSpecId);
+      console.log('[useGenerationFlow] 代码生成结果:', codeResult);
+
+      if (codeResult.success) {
+        // 显示成功动画
+        setShowSuccess(true);
+
+        toast({
+          title: '生成成功',
+          description: '正在跳转到应用详情页...',
+          duration: 3000,
+        });
+
+        // 延迟跳转，让用户看到成功动画
+        setTimeout(() => {
+          router.push(`/wizard/${routingResult.appSpecId}`);
+        }, 800);
+      } else {
+        throw new Error(codeResult.error || '代码生成失败');
+      }
+    } catch (err) {
+      console.error('[useGenerationFlow] 生成失败:', err);
+      toast({
+        title: '生成失败',
+        description: err instanceof Error ? err.message : '生成失败，请重试',
+        variant: 'destructive',
+      });
+      setLoading(false);
+    }
+  }, [routingResult, setLoading, setShowSuccess, router, toast]);
 
   return {
-    // SSE分析状态
     messages,
     isConnected,
     isCompleted,
     analysisError,
-
-    // 方法
     handleFormSubmit,
-    handleStyleSelected,
     handleStyleCancel,
+    handleConfirmDesign,
   };
 }

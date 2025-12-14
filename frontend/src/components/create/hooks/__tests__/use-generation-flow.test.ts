@@ -3,14 +3,14 @@
  *
  * 测试场景：
  * - 表单提交验证
- * - 分析流程启动
- * - 风格选择处理
- * - 取消风格选择
- * - 完整生成流程（成功）
- * - 错误处理
+ * - 分析流程启动（SSE + V2路由API）
+ * - 取消返回处理
+ * - 确认设计并生成代码
+ *
+ * V2.0简化版：使用V2 API链路
  *
  * @author Ingenio Team
- * @since V2.0 Day 6 Phase 6.4
+ * @since V2.0
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -18,12 +18,16 @@ import { renderHook, act, waitFor } from '@testing-library/react';
 import { useGenerationFlow } from '../use-generation-flow';
 import { UNIAIX_MODELS, type UniaixModel } from '@/lib/api/uniaix';
 import type { AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
+import type { PlanRoutingResult, RoutingBranch } from '@/lib/api/plan-routing';
+import { RequirementIntent } from '@/types/intent';
 
 // Mock依赖
 const mockPush = vi.fn();
 const mockToast = vi.fn();
 const mockConnect = vi.fn();
-const mockGenerateAppSpec = vi.fn();
+const mockRouteRequirement = vi.fn();
+const mockConfirmDesign = vi.fn();
+const mockExecuteCodeGeneration = vi.fn();
 
 const mockAnalysisSse = {
   messages: [] as AnalysisProgressMessage[],
@@ -45,9 +49,10 @@ vi.mock('@/hooks/use-analysis-sse', () => ({
   useAnalysisSse: () => mockAnalysisSse,
 }));
 
-vi.mock('@/lib/api/generate', () => ({
-  generateAppSpec: (...args: unknown[]) => mockGenerateAppSpec(...args),
-  APIError: class APIError extends Error {},
+vi.mock('@/lib/api/plan-routing', () => ({
+  routeRequirement: (...args: unknown[]) => mockRouteRequirement(...args),
+  confirmDesign: (...args: unknown[]) => mockConfirmDesign(...args),
+  executeCodeGeneration: (...args: unknown[]) => mockExecuteCodeGeneration(...args),
 }));
 
 describe('useGenerationFlow', () => {
@@ -58,6 +63,8 @@ describe('useGenerationFlow', () => {
     setShowAnalysis: ReturnType<typeof vi.fn>;
     setCurrentPhase: ReturnType<typeof vi.fn>;
     setShowSuccess: ReturnType<typeof vi.fn>;
+    routingResult?: PlanRoutingResult | null;
+    setRoutingResult?: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -70,13 +77,17 @@ describe('useGenerationFlow', () => {
       setShowAnalysis: vi.fn(),
       setCurrentPhase: vi.fn(),
       setShowSuccess: vi.fn(),
+      routingResult: null,
+      setRoutingResult: vi.fn(),
     };
 
     // 清空所有mock
     mockPush.mockClear();
     mockToast.mockClear();
     mockConnect.mockClear();
-    mockGenerateAppSpec.mockClear();
+    mockRouteRequirement.mockClear();
+    mockConfirmDesign.mockClear();
+    mockExecuteCodeGeneration.mockClear();
 
     // 重置mockAnalysisSse
     mockAnalysisSse.messages = [];
@@ -139,9 +150,14 @@ describe('useGenerationFlow', () => {
 
   /**
    * 测试3: 表单提交成功启动分析
-   * 验证表单提交后正确启动SSE分析
+   * 验证表单提交后正确启动SSE分析和V2路由API
    */
-  it('应该在表单提交成功后启动SSE分析', async () => {
+  it('应该在表单提交成功后启动SSE分析和V2路由API', async () => {
+    mockRouteRequirement.mockResolvedValue({
+      appSpecId: 'test-app-spec-123',
+      intent: 'design',
+    });
+
     const { result } = renderHook(() => useGenerationFlow(defaultProps));
 
     const mockEvent = { preventDefault: vi.fn() } as unknown as React.FormEvent;
@@ -153,6 +169,9 @@ describe('useGenerationFlow', () => {
     // 等待异步操作完成
     await waitFor(() => {
       expect(mockConnect).toHaveBeenCalled();
+      expect(mockRouteRequirement).toHaveBeenCalledWith({
+        userRequirement: '创建一个功能完整的电商平台',
+      });
     });
 
     expect(defaultProps.setLoading).toHaveBeenCalledWith(true);
@@ -161,30 +180,10 @@ describe('useGenerationFlow', () => {
   });
 
   /**
-   * 测试4: 风格选择处理
-   * 验证用户选择风格后切换到生成阶段
+   * 测试4: 取消返回处理
+   * 验证取消后返回idle状态
    */
-  it('应该在用户选择风格后切换到生成阶段', async () => {
-    const { result } = renderHook(() => useGenerationFlow(defaultProps));
-
-    // Mock成功的API响应
-    mockGenerateAppSpec.mockResolvedValue({
-      success: true,
-      data: { appSpecId: 'test-app-spec-123' },
-    });
-
-    await act(async () => {
-      result.current.handleStyleSelected('现代极简');
-    });
-
-    expect(defaultProps.setCurrentPhase).toHaveBeenCalledWith('generating');
-  });
-
-  /**
-   * 测试5: 取消风格选择
-   * 验证取消风格选择后返回idle状态
-   */
-  it('应该在取消风格选择后返回idle状态', () => {
+  it('应该在取消后返回idle状态', () => {
     const { result } = renderHook(() => useGenerationFlow(defaultProps));
 
     act(() => {
@@ -194,32 +193,48 @@ describe('useGenerationFlow', () => {
     expect(defaultProps.setLoading).toHaveBeenCalledWith(false);
     expect(defaultProps.setShowAnalysis).toHaveBeenCalledWith(false);
     expect(defaultProps.setCurrentPhase).toHaveBeenCalledWith('idle');
+    expect(defaultProps.setRoutingResult).toHaveBeenCalledWith(null);
   });
 
   /**
-   * 测试6: 完整生成流程（成功）
-   * 验证生成成功后显示成功动画并导航
+   * 测试5: 确认设计并生成代码（成功）
+   * 验证确认设计后调用代码生成API并导航
    */
-  it('应该在生成成功后显示成功动画并导航', async () => {
-    const { result } = renderHook(() => useGenerationFlow(defaultProps));
+  it('应该在确认设计后成功生成代码并导航', async () => {
+    const propsWithResult = {
+      ...defaultProps,
+      routingResult: {
+        appSpecId: 'test-app-spec-123',
+        intent: RequirementIntent.DESIGN_FROM_SCRATCH,
+        confidence: 0.95,
+        branch: 'DESIGN' as RoutingBranch,
+        prototypeGenerated: true,
+        nextAction: 'confirm_design',
+        requiresUserConfirmation: true,
+      },
+    };
 
-    // Mock成功的API响应
-    mockGenerateAppSpec.mockResolvedValue({
+    mockConfirmDesign.mockResolvedValue({
       success: true,
-      data: { appSpecId: 'test-app-spec-123' },
+      canProceedToExecute: true,
     });
+
+    mockExecuteCodeGeneration.mockResolvedValue({
+      success: true,
+    });
+
+    const { result } = renderHook(() => useGenerationFlow(propsWithResult));
 
     await act(async () => {
-      result.current.handleStyleSelected('现代极简');
+      await result.current.handleConfirmDesign();
     });
 
-    // 等待异步操作完成
     await waitFor(() => {
-      expect(defaultProps.setCurrentPhase).toHaveBeenCalledWith('navigating');
+      expect(mockConfirmDesign).toHaveBeenCalledWith('test-app-spec-123');
+      expect(mockExecuteCodeGeneration).toHaveBeenCalledWith('test-app-spec-123');
     });
 
     expect(defaultProps.setShowSuccess).toHaveBeenCalledWith(true);
-    expect(defaultProps.setLoading).toHaveBeenCalledWith(false);
     expect(mockToast).toHaveBeenCalledWith(
       expect.objectContaining({
         title: '生成成功',
@@ -228,72 +243,66 @@ describe('useGenerationFlow', () => {
   });
 
   /**
-   * 测试7: 生成失败处理（API错误）
-   * 验证API返回错误时显示错误提示
+   * 测试6: 确认设计失败处理
+   * 验证设计确认失败时显示错误提示
    */
-  it('应该在API返回错误时显示错误提示', async () => {
-    const { result } = renderHook(() => useGenerationFlow(defaultProps));
+  it('应该在设计确认失败时显示错误提示', async () => {
+    const propsWithResult = {
+      ...defaultProps,
+      routingResult: {
+        appSpecId: 'test-app-spec-123',
+        intent: RequirementIntent.DESIGN_FROM_SCRATCH,
+        confidence: 0.95,
+        branch: 'DESIGN' as RoutingBranch,
+        prototypeGenerated: true,
+        nextAction: 'confirm_design',
+        requiresUserConfirmation: true,
+      },
+    };
 
-    // Mock失败的API响应
-    mockGenerateAppSpec.mockResolvedValue({
+    mockConfirmDesign.mockResolvedValue({
       success: false,
-      error: '服务器错误',
+      message: '设计确认失败',
     });
+
+    const { result } = renderHook(() => useGenerationFlow(propsWithResult));
 
     await act(async () => {
-      result.current.handleStyleSelected('现代极简');
+      await result.current.handleConfirmDesign();
     });
 
-    // 等待异步操作完成
     await waitFor(() => {
       expect(mockToast).toHaveBeenCalledWith(
         expect.objectContaining({
           title: '生成失败',
-          description: '服务器错误',
           variant: 'destructive',
         })
       );
     });
 
     expect(defaultProps.setLoading).toHaveBeenCalledWith(false);
-    expect(defaultProps.setShowAnalysis).toHaveBeenCalledWith(false);
-    expect(defaultProps.setCurrentPhase).toHaveBeenCalledWith('idle');
   });
 
   /**
-   * 测试8: 生成失败处理（appSpecId为空）
-   * 验证appSpecId为空时显示错误提示
+   * 测试7: 无routingResult时显示错误
+   * 验证没有routingResult时显示错误提示
    */
-  it('应该在appSpecId为空时显示错误提示', async () => {
+  it('应该在没有routingResult时显示错误提示', async () => {
     const { result } = renderHook(() => useGenerationFlow(defaultProps));
 
-    // Mock返回空appSpecId的响应
-    mockGenerateAppSpec.mockResolvedValue({
-      success: true,
-      data: { appSpecId: '' },
-    });
-
     await act(async () => {
-      result.current.handleStyleSelected('现代极简');
+      await result.current.handleConfirmDesign();
     });
 
-    // 等待异步操作完成
-    await waitFor(() => {
-      expect(mockToast).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: '生成失败',
-          description: expect.stringContaining('未返回有效的AppSpec ID'),
-          variant: 'destructive',
-        })
-      );
+    expect(mockToast).toHaveBeenCalledWith({
+      title: '错误',
+      description: 'AppSpec ID 丢失，请重新开始',
+      variant: 'destructive',
     });
-
-    expect(defaultProps.setLoading).toHaveBeenCalledWith(false);
-    expect(defaultProps.setCurrentPhase).toHaveBeenCalledWith('idle');
   });
 
   /**
-   * 测试9: SSE分析状态同步
+   * 测试8: SSE分析状态同步
    * 验证SSE分析状态正确暴露给组件
    */
   it('应该正确暴露SSE分析状态', () => {

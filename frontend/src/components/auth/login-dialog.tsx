@@ -11,7 +11,6 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { LoginForm } from './login-form';
-import { OAuthButtons } from './oauth-buttons';
 import { LogIn } from 'lucide-react';
 
 /**
@@ -87,21 +86,6 @@ export function LoginDialog({
         <div className="space-y-6 py-4">
           {/* 登录表单 */}
           <LoginForm onSuccess={handleLoginSuccess} />
-
-          {/* 分割线 */}
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <span className="w-full border-t" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">
-                或使用以下方式登录
-              </span>
-            </div>
-          </div>
-
-          {/* OAuth登录按钮 */}
-          <OAuthButtons />
 
           {/* 注册引导 */}
           <div className="text-center text-sm text-muted-foreground">

@@ -267,3 +267,51 @@ test.describe('会话过期处理', () => {
     await expectRedirectToLogin(page);
   });
 });
+
+test.describe('真实登录流程测试', () => {
+  test.beforeEach(async ({ page }) => {
+    await clearAuthToken(page);
+  });
+
+  test('使用有效凭据登录应成功', async ({ page }) => {
+    // 导航到登录页面
+    await page.goto('/login');
+    await page.waitForLoadState('networkidle');
+
+    // 填写登录表单
+    await page.fill('#identifier', 'playwrighttest');
+    await page.fill('#password', 'PlayTest2024');
+
+    // 点击登录按钮
+    await page.click('button[type="submit"]');
+
+    // 等待登录完成（页面跳转或toast出现）
+    await page.waitForTimeout(3000);
+
+    // 验证登录成功 - 检查是否跳转离开登录页
+    const currentUrl = page.url();
+    expect(currentUrl).not.toContain('/login');
+
+    // 验证localStorage中有token
+    const token = await page.evaluate(() => localStorage.getItem('auth_token'));
+    expect(token).not.toBeNull();
+  });
+
+  test('使用无效密码登录应失败', async ({ page }) => {
+    await page.goto('/login');
+    await page.waitForLoadState('networkidle');
+
+    // 填写错误密码
+    await page.fill('#identifier', 'playwrighttest');
+    await page.fill('#password', 'wrongpassword');
+
+    // 点击登录按钮
+    await page.click('button[type="submit"]');
+
+    // 等待响应
+    await page.waitForTimeout(2000);
+
+    // 应该仍在登录页
+    expect(page.url()).toContain('/login');
+  });
+});

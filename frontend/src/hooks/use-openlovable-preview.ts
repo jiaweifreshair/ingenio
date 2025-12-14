@@ -87,7 +87,7 @@ export interface UseOpenLovablePreviewReturn {
   /** 是否正在刷新 */
   isReloading: boolean;
   /** 开始生成 */
-  startGeneration: (requirement: string, styleHint?: string) => Promise<void>;
+  startGeneration: (userMessage: string, options?: { styleHint?: string; appSpecId?: string; styleId?: string }) => Promise<void>;
   /** 发送迭代修改消息 */
   sendIterationMessage: (message: string) => Promise<void>;
   /** 刷新预览 */
@@ -97,6 +97,28 @@ export interface UseOpenLovablePreviewReturn {
 }
 
 // ==================== 工具函数 ====================
+
+/**
+ * 验证URL是否合法
+ * 防止API返回的无效URL（如包含中文的测试消息）导致前端崩溃
+ */
+function isValidUrl(urlString: string | null | undefined): boolean {
+  if (!urlString || typeof urlString !== 'string') {
+    return false;
+  }
+  // 检查是否包含中文字符（明显的无效URL）
+  if (/[\u4e00-\u9fa5]/.test(urlString)) {
+    console.error(`[URL验证] ❌ URL包含中文字符: "${urlString}"`);
+    return false;
+  }
+  try {
+    const url = new URL(urlString);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    console.error(`[URL验证] ❌ URL格式无效: "${urlString}"`);
+    return false;
+  }
+}
 
 /**
  * 从文件路径推断文件类型
@@ -267,7 +289,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
   /**
    * SSE流式生成代码
    */
-  const generateCodeStream = useCallback(async (userMessage: string, sandboxId: string): Promise<void> => {
+  const generateCodeStreamPayload = useCallback(async (payload: { userRequirement: string; sandboxId: string; designStyle?: string; appSpecId?: string }): Promise<void> => {
     return new Promise((resolve, reject) => {
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
       const apiUrl = `${API_BASE_URL}/v1/openlovable/generate/stream`;
@@ -281,10 +303,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': token } : {}),
         },
-        body: JSON.stringify({
-          userMessage,
-          sandboxId,
-        }),
+        body: JSON.stringify(payload),
       })
         .then(response => {
           if (!response.ok) {
@@ -331,7 +350,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
                       ...(token ? { 'Authorization': token } : {}),
                     },
                     body: JSON.stringify({
-                      sandboxId,
+                      sandboxId: payload.sandboxId,
                       response: fullAIResponse
                     })
                   });
@@ -352,7 +371,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
                         'Content-Type': 'application/json',
                         ...(token ? { 'Authorization': token } : {}),
                       },
-                      body: JSON.stringify({ sandboxId }),
+                      body: JSON.stringify({ sandboxId: payload.sandboxId }),
                     });
                     if (restartResponse.ok) {
                       addLog('✅ Vite服务器重启成功，预览即将更新');
@@ -429,7 +448,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
   /**
    * 开始生成
    */
-  const startGeneration = useCallback(async (requirement: string, styleHint?: string) => {
+  const startGeneration = useCallback(async (userMessage: string, options?: { styleHint?: string; appSpecId?: string; styleId?: string }) => {
     if (isGeneratingRef.current) {
       console.warn('[useOpenLovablePreview] 已有生成任务在进行中');
       return;
@@ -453,35 +472,52 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
       addLog('📦 创建AI沙箱（Vercel Sandbox）...');
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
       const token = getToken();
-      const sandboxResponse = await fetch(`${API_BASE_URL}/v1/openlovable/sandbox/create`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': token } : {}),
-        },
-      });
+      
+      let currentSandboxId = sandboxInfo?.sandboxId;
+      
+      // 如果没有sandboxId，则创建新的
+      if (!currentSandboxId) {
+        const sandboxResponse = await fetch(`${API_BASE_URL}/v1/openlovable/sandbox/create`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': token } : {}),
+          },
+        });
 
-      if (!sandboxResponse.ok) {
-        throw new Error(`创建沙箱失败: ${sandboxResponse.statusText}`);
+        if (!sandboxResponse.ok) {
+          throw new Error(`创建沙箱失败: ${sandboxResponse.statusText}`);
+        }
+
+        const sandboxData = await sandboxResponse.json();
+        currentSandboxId = sandboxData.data.sandboxId;
+        
+        // 验证sandbox URL是否合法（防止API返回测试消息等无效URL）
+        if (!isValidUrl(sandboxData.data.url)) {
+          throw new Error(`沙箱URL无效: ${sandboxData.data.url || '空'}`);
+        }
+
+        setSandboxInfo(sandboxData.data);
+        addLog(`✅ 沙箱创建成功: ${currentSandboxId}`);
+        addLog(`🌐 预览地址: ${sandboxData.data.url}`);
+      } else {
+        addLog(`♻️ 复用现有沙箱: ${currentSandboxId}`);
       }
-
-      const sandboxResult = await sandboxResponse.json();
-      const sandbox: SandboxInfo = sandboxResult.data;
-
-      setSandboxInfo(sandbox);
-      addLog(`✅ 沙箱创建成功: ${sandbox.sandboxId}`);
-      addLog(`🌐 预览地址: ${sandbox.url}`);
 
       // Step 2: 生成AI代码
       setStage('generating');
       addLog('🤖 AI正在生成代码（流式输出）...');
 
-      // 构建生成prompt，包含风格提示
-      const generatePrompt = styleHint
-        ? `${requirement}\n\n设计风格要求：${styleHint}`
-        : requirement;
+      if (!currentSandboxId) {
+        throw new Error('Sandbox ID not available');
+      }
 
-      await generateCodeStream(generatePrompt, sandbox.sandboxId);
+      await generateCodeStreamPayload({
+        userRequirement: userMessage,
+        sandboxId: currentSandboxId,
+        designStyle: options?.styleId || options?.styleHint,
+        appSpecId: options?.appSpecId
+      });
 
       // Step 3: 生成完成
       setStage('complete');
@@ -496,7 +532,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
     } finally {
       isGeneratingRef.current = false;
     }
-  }, [addLog, generateCodeStream]);
+  }, [addLog, sandboxInfo, generateCodeStreamPayload]);
 
   /**
    * 发送迭代修改消息
@@ -515,7 +551,10 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
       setStreamedCode('');
       setCurrentFile(null);
 
-      await generateCodeStream(message, sandboxInfo.sandboxId);
+      await generateCodeStreamPayload({
+        userRequirement: message,
+        sandboxId: sandboxInfo.sandboxId
+      });
 
       addLog('✅ 迭代修改完成');
     } catch (err) {
@@ -526,7 +565,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
     } finally {
       isGeneratingRef.current = false;
     }
-  }, [sandboxInfo, addLog, generateCodeStream]);
+  }, [sandboxInfo, addLog, generateCodeStreamPayload]);
 
   /**
    * 刷新预览

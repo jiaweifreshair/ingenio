@@ -27,9 +27,9 @@ export function ScenarioSelection({
   const scenarios = Object.values(SCENARIO_CONFIGS);
 
   return (
-    <section className="py-24 bg-slate-50/50 dark:bg-slate-900/20">
+    <section className="py-12 bg-slate-50/50 dark:bg-slate-900/20">
       <div className="container px-6 mx-auto">
-        <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-16">
+        <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-10">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground tracking-tight">
             全行业场景覆盖
           </h2>

@@ -72,6 +72,8 @@ interface AppSpecWithPlan {
     }>;
     estimatedHours?: number;
   };
+  frontendPrototype?: Record<string, unknown>;
+  frontendPrototypeUrl?: string;
 }
 
 export default function WizardPage() {
@@ -191,7 +193,9 @@ export default function WizardPage() {
                 requirement: fullAppSpec.userRequirement,
                 model: 'qwen-max',
                 qualityScore: fullAppSpec.qualityScore,
-                planResult: fullAppSpec.planResult
+                planResult: fullAppSpec.planResult,
+                frontendPrototype: fullAppSpec.frontendPrototype as Record<string, unknown>,
+                frontendPrototypeUrl: fullAppSpec.frontendPrototypeUrl
               });
               setTask(prev => ({
                 ...prev,

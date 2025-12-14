@@ -9,7 +9,7 @@
  *
  * @author Ingenio Team
  * @since V2.0.1 (深度融合版)
- * @deprecated 建议使用V2.0创建流程 /create-v2
+ * @deprecated 建议使用V2.0创建流程 /
  */
 
 'use client';
@@ -60,9 +60,9 @@ export function FormActions({
     if (requirement && requirement.trim().length >= 10) {
       // 未来可以通过URL参数或状态管理传递需求
       // 目前直接跳转到V2.0页面
-      router.push(`/create-v2`);
+      router.push(`/`);
     } else {
-      router.push(`/create-v2`);
+      router.push(`/`);
     }
   }
 

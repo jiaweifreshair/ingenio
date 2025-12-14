@@ -42,9 +42,9 @@ const faqs: ReadonlyArray<FAQItem> = [
  */
 export function FAQAccordion(): React.ReactElement {
   return (
-    <section id="faq" className="w-full py-24">
+    <section id="faq" className="w-full py-12">
       <div className="container mx-auto px-6">
-        <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-16">
+        <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-10">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground tracking-tight">
             常见问题
           </h2>

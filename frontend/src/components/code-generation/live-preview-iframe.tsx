@@ -37,6 +37,28 @@ import {
 import type { SandboxStatus } from '@/lib/sandbox/sandbox-manager';
 
 /**
+ * 验证URL是否合法
+ * 防止API返回的无效URL（如包含中文的测试消息）导致前端崩溃
+ */
+function isValidUrl(urlString: string | null | undefined): boolean {
+  if (!urlString || typeof urlString !== 'string') {
+    return false;
+  }
+  // 检查是否包含中文字符（明显的无效URL）
+  if (/[\u4e00-\u9fa5]/.test(urlString)) {
+    console.error(`[URL验证] ❌ URL包含中文字符: "${urlString}"`);
+    return false;
+  }
+  try {
+    const url = new URL(urlString);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    console.error(`[URL验证] ❌ URL格式无效: "${urlString}"`);
+    return false;
+  }
+}
+
+/**
  * 设备类型
  */
 export type DeviceType = 'mobile' | 'tablet' | 'desktop' | 'fullscreen';
@@ -134,6 +156,9 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
 
   const [iframeKey, setIframeKey] = useState(0);
 
+  // 验证previewUrl是否合法，防止无效URL导致错误
+  const validPreviewUrl = isValidUrl(previewUrl) ? previewUrl : null;
+
   // 获取设备配置
   const deviceConfig = deviceConfigs[device];
   const statusConfig = statusConfigs[sandboxStatus];
@@ -194,14 +219,14 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
    * 在新窗口打开
    */
   const openInNewWindow = useCallback(() => {
-    if (previewUrl) {
-      window.open(previewUrl, '_blank');
+    if (validPreviewUrl) {
+      window.open(validPreviewUrl, '_blank');
     }
-  }, [previewUrl]);
+  }, [validPreviewUrl]);
 
   // 自动刷新
   useEffect(() => {
-    if (autoRefresh && previewUrl && !isGenerating) {
+    if (autoRefresh && validPreviewUrl && !isGenerating) {
       refreshTimerRef.current = setInterval(handleRefresh, autoRefreshInterval);
     }
 
@@ -210,15 +235,15 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
         clearInterval(refreshTimerRef.current);
       }
     };
-  }, [autoRefresh, previewUrl, isGenerating, autoRefreshInterval, handleRefresh]);
+  }, [autoRefresh, validPreviewUrl, isGenerating, autoRefreshInterval, handleRefresh]);
 
   // URL变化时重新加载
   useEffect(() => {
-    if (previewUrl) {
+    if (validPreviewUrl) {
       setIsLoading(true);
       setHasError(false);
     }
-  }, [previewUrl]);
+  }, [validPreviewUrl]);
 
   // 计算iframe尺寸
   const iframeStyle: React.CSSProperties = device === 'fullscreen'
@@ -276,7 +301,7 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
                 size="sm"
                 className="h-7 w-7 p-0"
                 onClick={handleRefresh}
-                disabled={isRefreshing || !previewUrl}
+                disabled={isRefreshing || !validPreviewUrl}
                 title="刷新预览"
               >
                 <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
@@ -300,7 +325,7 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
               size="sm"
               className="h-7 w-7 p-0"
               onClick={openInNewWindow}
-              disabled={!previewUrl}
+              disabled={!validPreviewUrl}
               title="在新窗口打开"
             >
               <ExternalLink className="h-4 w-4" />
@@ -347,8 +372,8 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
                 显示预览
               </Button>
             </motion.div>
-          ) : !previewUrl ? (
-            // 无URL状态
+          ) : !validPreviewUrl ? (
+            // 无URL状态（包括URL无效的情况）
             <motion.div
               key="no-url"
               initial={{ opacity: 0 }}
@@ -424,9 +449,9 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
 
               {/* Iframe */}
               <iframe
-                key={`${previewUrl}-${iframeKey}`}
+                key={`${validPreviewUrl}-${iframeKey}`}
                 ref={iframeRef}
-                src={previewUrl}
+                src={validPreviewUrl || ''}
                 style={iframeStyle}
                 className="border-0"
                 title="应用预览"
@@ -442,8 +467,8 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
       {/* 底部状态栏 */}
       <div className="px-4 py-1.5 border-t bg-muted/30 text-xs text-muted-foreground flex items-center justify-between">
         <div className="flex items-center gap-4">
-          {previewUrl && (
-            <span className="truncate max-w-xs">{previewUrl}</span>
+          {validPreviewUrl && (
+            <span className="truncate max-w-xs">{validPreviewUrl}</span>
           )}
         </div>
         <div className="flex items-center gap-4">

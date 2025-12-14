@@ -18,7 +18,7 @@ import {
 } from '@/lib/api/projects';
 import type { Project, ProjectStats, ProjectFilters } from '@/types/project';
 import { ProjectStatus } from '@/types/project';
-import { Plus, AlertCircle, Inbox, Sparkles, Palette, Clock } from 'lucide-react';
+import { Plus, AlertCircle, Inbox, Sparkles, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
 /**
@@ -55,6 +55,15 @@ export default function DashboardPage(): React.ReactElement {
       setStats(data);
     } catch (err) {
       console.error('加载统计数据失败:', err);
+      // 设置默认统计数据，避免页面显示异常
+      setStats({
+        totalProjects: 0,
+        monthlyNewProjects: 0,
+        generatingTasks: 0,
+        publishedProjects: 0,
+        draftProjects: 0,
+        archivedProjects: 0,
+      });
       toast({
         title: '加载失败',
         description: '无法加载统计数据，请刷新页面重试',
@@ -223,7 +232,7 @@ export default function DashboardPage(): React.ReactElement {
    * 创建新应用 - V2.0意图识别+双重选择机制
    */
   const handleCreateNew = () => {
-    router.push('/create-v2');
+    router.push('/');
   };
 
   return (
@@ -273,27 +282,7 @@ export default function DashboardPage(): React.ReactElement {
                 <div className="text-xs text-muted-foreground">智能需求分析</div>
               </div>
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                // SuperDesign需要项目ID，检查是否有项目
-                if (!projects || projects.length === 0) {
-                  // 没有项目时，引导用户创建（V2.0流程）
-                  router.push('/create-v2');
-                  return;
-                }
-                // 使用最新项目进入SuperDesign
-                const latestProject = projects[0];
-                router.push(`/superdesign/${latestProject.id}`);
-              }}
-              className="flex items-center gap-2 h-auto p-4 justify-start"
-            >
-              <Palette className="h-5 w-5 text-blue-500" />
-              <div className="text-left">
-                <div className="font-semibold">SuperDesign</div>
-                <div className="text-xs text-muted-foreground">多方案UI生成</div>
-              </div>
-            </Button>
+
             <Button
               variant="outline"
               onClick={() => router.push('/dashboard')}

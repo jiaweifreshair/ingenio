@@ -30,6 +30,25 @@ export function getApiBaseUrl(): string {
     return RELATIVE_API_BASE_URL;
   }
 
+  // 防御性检查：如果包含非法字符（如中文），回退到默认值并打印错误
+  // 解决 "TypeError: Failed to construct 'URL': Invalid URL" 问题
+  try {
+    // 尝试构建 URL 对象来验证合法性
+    // 注意：raw 可能不包含协议头（虽然不推荐），这里暂时只检查明显错误
+    if (/[\u4e00-\u9fa5]/.test(raw)) {
+       console.error(`[BaseURL] ❌ 检测到非法 Base URL 配置 (包含中文): "${raw}". 已自动回退到默认值: ${DEFAULT_API_BASE_URL}`);
+       return DEFAULT_API_BASE_URL;
+    }
+    
+    // 简单的 URL 格式验证
+    if (raw.startsWith('http')) {
+        new URL(raw);
+    }
+  } catch (e) {
+    console.error(`[BaseURL] ❌ Base URL 配置无效: "${raw}". 错误: ${(e as Error).message}. 已自动回退到默认值: ${DEFAULT_API_BASE_URL}`);
+    return DEFAULT_API_BASE_URL;
+  }
+
   let normalized = raw.replace(/\/+$/, '');
 
   // 如果用户仍然配置为 /api/v1 或 /v1，统一截断到 /api，避免出现 /v1/v1。

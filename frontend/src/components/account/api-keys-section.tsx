@@ -159,7 +159,9 @@ export function ApiKeysSection(): React.ReactElement {
    */
   const handleCopyKey = async (key: ApiKey) => {
     try {
-      await navigator.clipboard.writeText(key.key)
+      // 优先复制完整密钥（仅创建时有），否则复制前缀
+      const keyToCopy = key.fullKey || key.keyPrefix
+      await navigator.clipboard.writeText(keyToCopy)
       setCopiedKeys(new Set([...copiedKeys, key.id]))
 
       toast({
@@ -200,12 +202,14 @@ export function ApiKeysSection(): React.ReactElement {
 
   /**
    * 格式化密钥显示（部分隐藏）
+   * @param keyPrefix 密钥前缀
+   * @param fullKey 完整密钥（可选，仅创建时有）
+   * @param isVisible 是否显示完整密钥
    */
-  const formatKey = (key: string, isVisible: boolean): string => {
-    if (isVisible) return key
-    const prefix = key.substring(0, 8)
-    const suffix = key.substring(key.length - 4)
-    return `${prefix}${"*".repeat(20)}${suffix}`
+  const formatKey = (keyPrefix: string, fullKey: string | undefined, isVisible: boolean): string => {
+    if (isVisible && fullKey) return fullKey
+    // 显示前缀 + 星号
+    return `${keyPrefix}${"*".repeat(20)}`
   }
 
   /**
@@ -360,23 +364,26 @@ export function ApiKeysSection(): React.ReactElement {
                   
                   <div className="flex items-center gap-3 max-w-md">
                     <div className="flex-1 h-10 flex items-center px-3 rounded-lg bg-muted/50 font-mono text-sm text-foreground/80 select-all border border-transparent group-hover:border-border/50 transition-colors">
-                      {formatKey(apiKey.key, isVisible)}
+                      {formatKey(apiKey.keyPrefix, apiKey.fullKey, isVisible)}
                     </div>
                     
                     <div className="flex items-center gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-9 w-9 rounded-full hover:bg-muted"
-                        onClick={() => toggleKeyVisibility(apiKey.id)}
-                        title={isVisible ? "隐藏密钥" : "显示密钥"}
-                      >
-                        {isVisible ? (
-                          <EyeOff className="h-4 w-4 text-muted-foreground" />
-                        ) : (
-                          <Eye className="h-4 w-4 text-muted-foreground" />
-                        )}
-                      </Button>
+                      {/* 只有当有完整密钥时才显示切换可见性按钮 */}
+                      {apiKey.fullKey && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 rounded-full hover:bg-muted"
+                          onClick={() => toggleKeyVisibility(apiKey.id)}
+                          title={isVisible ? "隐藏密钥" : "显示密钥"}
+                        >
+                          {isVisible ? (
+                            <EyeOff className="h-4 w-4 text-muted-foreground" />
+                          ) : (
+                            <Eye className="h-4 w-4 text-muted-foreground" />
+                          )}
+                        </Button>
+                      )}
 
                       <Button
                         variant="ghost"
@@ -398,7 +405,7 @@ export function ApiKeysSection(): React.ReactElement {
                 <div className="flex items-center gap-4 pl-0 sm:pl-6 sm:border-l border-border/40">
                   <div className="hidden sm:block text-xs text-right text-muted-foreground">
                     <div className="mb-1">最后使用</div>
-                    <div className="font-medium">{apiKey.lastUsed ? formatDate(apiKey.lastUsed) : '未使用'}</div>
+                    <div className="font-medium">{apiKey.lastUsedAt ? formatDate(apiKey.lastUsedAt) : '未使用'}</div>
                   </div>
                   
                   <Button

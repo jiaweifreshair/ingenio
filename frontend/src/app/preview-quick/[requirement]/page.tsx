@@ -44,6 +44,28 @@ import LivePreviewIframe from '@/components/code-generation/live-preview-iframe'
 import type { SandboxStatus } from '@/lib/sandbox/sandbox-manager';
 
 /**
+ * 验证URL是否合法
+ * 防止API返回的无效URL（如包含中文的测试消息）导致前端崩溃
+ */
+function isValidUrl(urlString: string | null | undefined): boolean {
+  if (!urlString || typeof urlString !== 'string') {
+    return false;
+  }
+  // 检查是否包含中文字符（明显的无效URL）
+  if (/[\u4e00-\u9fa5]/.test(urlString)) {
+    console.error(`[URL验证] ❌ URL包含中文字符: "${urlString}"`);
+    return false;
+  }
+  try {
+    const url = new URL(urlString);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    console.error(`[URL验证] ❌ URL格式无效: "${urlString}"`);
+    return false;
+  }
+}
+
+/**
  * 沙箱信息
  */
 interface SandboxInfo {
@@ -283,6 +305,11 @@ export default function QuickPreviewPage() {
 
       const sandboxResult = await sandboxResponse.json();
       const sandbox: SandboxInfo = sandboxResult.data;
+
+      // 验证sandbox URL是否合法（防止API返回测试消息等无效URL）
+      if (!isValidUrl(sandbox.url)) {
+        throw new Error(`沙箱URL无效: ${sandbox.url || '空'}`);
+      }
 
       setSandboxInfo(sandbox);
       addLog(`✅ 沙箱创建成功: ${sandbox.sandboxId}`);

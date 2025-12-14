@@ -103,5 +103,5 @@ export const TEMPLATE_REQUIREMENTS: Record<string, string> = {
  */
 export function getTemplateRequirement(templateId: string, templateName?: string): string {
   return TEMPLATE_REQUIREMENTS[templateId] ||
-    `创建一个${templateName || templateId}应用，请根据模板库的描述实现相关功能`;
+    `创建一个${templateName || templateId}应用，请根据应用模版的描述实现相关功能`;
 }

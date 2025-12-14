@@ -53,7 +53,7 @@ test.describe("移动端导航 - TopNav Sheet", () => {
     // 验证所有导航链接可见
     const navLinks = [
       "功能",
-      "模板库",
+      "应用模版",
       "校园案例",
       "三步创建",
       "常见问题",
@@ -86,15 +86,15 @@ test.describe("移动端导航 - TopNav Sheet", () => {
     const menuButton = page.getByRole("button", { name: /打开菜单/i });
     await menuButton.click();
 
-    // 点击模板库链接
-    const templatesLink = page.getByRole("link", { name: "模板库" });
+    // 点击应用模版链接
+    const templatesLink = page.getByRole("link", { name: "应用模版" });
     await templatesLink.click();
 
     // Sheet应该关闭（标题不再可见）
     const sheetTitle = page.getByRole("heading", { name: "秒构AI" });
     await expect(sheetTitle).not.toBeVisible();
 
-    // URL应该跳转到模板库
+    // URL应该跳转到应用模版
     await expect(page).toHaveURL("/templates");
   });
 

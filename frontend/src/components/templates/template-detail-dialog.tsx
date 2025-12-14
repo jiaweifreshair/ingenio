@@ -99,7 +99,7 @@ export function TemplateDetailDialog({
   const handleUseTemplate = () => {
     onUseTemplate?.(template);
     // V2.0: 使用意图识别+双重选择机制的创建流程
-    router.push(`/create-v2?template=${template.id}`);
+    router.push(`/?template=${template.id}`);
     onClose();
   };
 

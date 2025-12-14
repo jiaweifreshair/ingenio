@@ -49,9 +49,9 @@ export function UseCaseCards(): React.ReactElement {
   };
 
   return (
-    <section id="usecases" className="w-full py-24">
+    <section id="usecases" className="w-full py-12">
       <div className="container mx-auto px-6">
-        <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-16">
+        <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-10">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground tracking-tight">
             精选校园案例
           </h2>

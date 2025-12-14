@@ -52,7 +52,66 @@ function buildFetchOptions(options: RequestInit = {}): RequestInit {
 }
 
 /**
+ * 判断是否为后端通用错误文案
+ * 避免覆盖更有意义的 HTTP 状态描述（如 Bad Gateway）
+ */
+function isGenericSystemError(message: string): boolean {
+  const normalized = message.trim();
+  return (
+    normalized === '系统错误' ||
+    normalized === 'System error' ||
+    normalized === 'Internal Server Error'
+  );
+}
+
+/**
+ * 从非 2xx 响应中提取更友好的错误信息
+ * - 优先读取 JSON 中的 message/error 字段
+ * - 若为“系统错误”等泛化文案，则保留 HTTP statusText
+ * - 若 statusText 为空，则按常见状态码补全文案
+ */
+async function getReadableErrorMessage(response: Response): Promise<string> {
+  const STATUS_TEXT_MAP: Record<number, string> = {
+    502: 'Bad Gateway',
+    500: 'Internal Server Error',
+    503: 'Service Unavailable',
+    504: 'Gateway Timeout',
+  };
+
+  const httpText =
+    response.statusText ||
+    STATUS_TEXT_MAP[response.status] ||
+    `HTTP ${response.status}`;
+
+  const contentType = response.headers.get('content-type') ?? '';
+  if (!contentType.includes('application/json')) {
+    return httpText;
+  }
+
+  try {
+    const errorBody = (await response.json()) as unknown;
+    if (typeof errorBody === 'object' && errorBody !== null) {
+      const bodyRecord = errorBody as Record<string, unknown>;
+      const messageCandidate =
+        (typeof bodyRecord.message === 'string' && bodyRecord.message.trim()) ||
+        (typeof bodyRecord.error === 'string' && bodyRecord.error.trim()) ||
+        '';
+
+      if (messageCandidate) {
+        return isGenericSystemError(messageCandidate) ? httpText : messageCandidate;
+      }
+    }
+  } catch {
+    // 解析失败时回退到 HTTP 文案
+  }
+
+  return httpText;
+}
+
+/**
  * 获取项目统计数据
+ * 
+ * 注意：此接口通过 Next.js BFF 代理访问后端，避免跨域问题
  */
 export async function getProjectStats(): Promise<ProjectStats> {
   try {
@@ -62,26 +121,35 @@ export async function getProjectStats(): Promise<ProjectStats> {
     );
 
     if (!response.ok) {
-      // 尝试解析错误响应体
-      let errorMessage = response.statusText;
-      try {
-        const errorBody = await response.json();
-        errorMessage = errorBody.message || errorBody.error || response.statusText;
-      } catch {
-        // 解析失败，忽略
-      }
-      
-      throw new Error(`获取统计数据失败: ${errorMessage || `HTTP ${response.status}`}`);
+      const errorMessage = await getReadableErrorMessage(response);
+      throw new Error(`获取统计数据失败: ${errorMessage}`);
     }
 
     const raw = await response.json();
     const result = normalizeApiResponse<ProjectStats>(raw);
 
     if (!result.success) {
-      throw new Error(result.message || result.error || '获取统计数据失败');
+      // 提供更详细的错误信息用于调试
+      const errorDetail = result.message || result.error || '获取统计数据失败';
+      console.error('getProjectStats API error:', { code: result.code, message: errorDetail, raw });
+      throw new Error(errorDetail);
     }
 
-    return result.data as ProjectStats;
+    // 确保返回有效数据，提供默认值防止 undefined
+    const data = result.data;
+    if (!data) {
+      // 返回默认统计数据，避免页面崩溃
+      return {
+        totalProjects: 0,
+        monthlyNewProjects: 0,
+        generatingTasks: 0,
+        publishedProjects: 0,
+        draftProjects: 0,
+        archivedProjects: 0,
+      };
+    }
+
+    return data;
   } catch (error) {
     console.error('getProjectStats error:', error);
     throw error;
@@ -115,7 +183,8 @@ export async function listProjects(
   );
 
   if (!response.ok) {
-    throw new Error(`获取项目列表失败: ${response.statusText}`);
+    const errorMessage = await getReadableErrorMessage(response);
+    throw new Error(`获取项目列表失败: ${errorMessage}`);
   }
 
   const raw = await response.json();

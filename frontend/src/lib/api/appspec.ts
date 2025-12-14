@@ -61,6 +61,12 @@ export interface AppSpec {
   generatedAt: string;
   /** 耗时（毫秒） */
   durationMs: number;
+  /** 元数据 */
+  metadata?: Record<string, unknown>;
+  /** 前端原型代码 (OpenLovable) */
+  frontendPrototype?: Record<string, unknown>;
+  /** 前端原型预览URL */
+  frontendPrototypeUrl?: string;
 }
 
 /**

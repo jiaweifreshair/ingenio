@@ -43,6 +43,7 @@ export interface SseState {
   error: string | null;
   messages: AnalysisProgressMessage[];
   isCompleted: boolean;
+  finalResult?: unknown;
 }
 
 /**
@@ -68,8 +69,9 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
     onError
   } = options;
 
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);  // 超时计时器引用
+  const terminalEventRef = useRef<'none' | 'complete' | 'error'>('none');
   // 使用ref存储回调函数，避免依赖变化导致无限循环
   const onProgressRef = useRef(onProgress);
   const onCompleteRef = useRef(onComplete);
@@ -87,7 +89,8 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
     isConnecting: false,
     error: null,
     messages: [],
-    isCompleted: false
+    isCompleted: false,
+    finalResult: undefined
   });
 
   // 重连计数器
@@ -126,10 +129,10 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
           isConnecting: false
         });
 
-        // 关闭当前连接
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-          eventSourceRef.current = null;
+        // 关闭当前连接（中止正在进行的fetch流）
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
         }
 
         // 1秒后重连
@@ -146,10 +149,10 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
         });
         onErrorRef.current?.('分析响应超时，请刷新页面重试');
 
-        // 关闭SSE连接
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-          eventSourceRef.current = null;
+        // 关闭SSE连接（中止正在进行的fetch流）
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
         }
       }
     }, IDLE_TIMEOUT_MS);
@@ -177,8 +180,9 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
     }
 
     // 关闭现有连接和超时计时器
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
     clearTimeoutTimer();
 
@@ -188,6 +192,8 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
       messages: [],
       isCompleted: false
     });
+
+    terminalEventRef.current = 'none';
 
     // 启动超时计时器 (等待首次响应)
     resetTimeoutTimer();
@@ -210,10 +216,14 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
         headers['Authorization'] = token;
       }
 
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+
       fetch(apiUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ requirement })
+        body: JSON.stringify({ requirement }),
+        signal: abortController.signal
       }).then(response => {
         if (response.status === 401) {
           throw new Error('未登录或登录已失效，请先登录');
@@ -247,11 +257,13 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
             if (done) {
               console.log('SSE流读取完成');
               clearTimeoutTimer();  // 清理超时计时器
-              updateState({
-                isConnected: false,
-                isCompleted: true
-              });
-              onCompleteRef.current?.();
+              updateState({ isConnected: false });
+
+              // 只有明确收到complete事件才算“已完成”，避免异常断流被误判为成功
+              if (terminalEventRef.current === 'complete') {
+                updateState({ isCompleted: true });
+                onCompleteRef.current?.();
+              }
               return;
             }
 
@@ -288,13 +300,38 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
                       }));
                       onProgressRef.current?.(message);
                     } else if (eventType === 'complete') {
+                      terminalEventRef.current = 'complete';
                       clearTimeoutTimer();  // 清理超时计时器
+                      
+                      // 尝试提取最终结果
+                      let finalResult = undefined;
+                      if (data) {
+                         if (data.result) {
+                            finalResult = data.result;
+                         } else {
+                            finalResult = data;
+                         }
+                      }
+
                       updateState({
                         isCompleted: true,
-                        isConnected: false
+                        isConnected: false,
+                        finalResult
                       });
                       onCompleteRef.current?.();
+                      // 主动中止连接，避免后续done/网络中断被误判为错误
+                      try {
+                        reader.cancel();
+                      } catch {
+                        // ignore
+                      }
+                      if (abortControllerRef.current) {
+                        abortControllerRef.current.abort();
+                        abortControllerRef.current = null;
+                      }
+                      return;
                     } else if (eventType === 'error') {
+                      terminalEventRef.current = 'error';
                       clearTimeoutTimer();  // 清理超时计时器
                       const errorMsg = data.error || '分析失败';
                       updateState({
@@ -302,6 +339,17 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
                         isConnected: false
                       });
                       onErrorRef.current?.(errorMsg);
+                      // 主动中止连接，避免后续done/网络中断被误判为成功
+                      try {
+                        reader.cancel();
+                      } catch {
+                        // ignore
+                      }
+                      if (abortControllerRef.current) {
+                        abortControllerRef.current.abort();
+                        abortControllerRef.current = null;
+                      }
+                      return;
                     }
                   } catch (parseError) {
                     console.error('解析SSE消息失败:', parseError, currentData);
@@ -330,6 +378,16 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
             // 继续读取
             readStream();
           }).catch(error => {
+            if (error instanceof Error && error.name === 'AbortError') {
+              console.log('SSE连接已中止');
+              return;
+            }
+
+            // 若已收到终止事件，则把网络中断视为正常结束，避免DevOverlay报错
+            if (terminalEventRef.current !== 'none') {
+              return;
+            }
+
             console.error('读取SSE流失败:', error);
             updateState({
               error: error.message,
@@ -341,6 +399,10 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
 
         readStream();
       }).catch(error => {
+        if (error instanceof Error && error.name === 'AbortError') {
+          console.log('SSE请求已中止');
+          return;
+        }
         console.error('SSE连接失败:', error);
         updateState({
           error: error.message,
@@ -365,16 +427,17 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
    * 断开连接
    */
   const disconnect = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
 
+    clearTimeoutTimer();
     updateState({
       isConnected: false,
       isConnecting: false
     });
-  }, [updateState]);
+  }, [clearTimeoutTimer, updateState]);
 
   /**
    * 重置状态
@@ -384,7 +447,8 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
     updateState({
       error: null,
       messages: [],
-      isCompleted: false
+      isCompleted: false,
+      finalResult: undefined
     });
   }, [disconnect, updateState]);
 
@@ -407,6 +471,7 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
     error: state.error,
     messages: state.messages,
     isCompleted: state.isCompleted,
+    finalResult: state.finalResult,
 
     // 方法
     connect,

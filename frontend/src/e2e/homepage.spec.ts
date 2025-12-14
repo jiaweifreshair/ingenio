@@ -83,4 +83,31 @@ test.describe('首页功能测试', () => {
     await page.setViewportSize({ width: 1920, height: 1080 });
     await expect(page.getByRole('heading', { name: /你的创意，AI 来实现/ })).toBeVisible();
   });
+
+  test('点击 x 应该清除已选择的标签并回到默认态', async ({ page }) => {
+    // 1) 技术选型：选择后可清除，且清除不应误打开下拉菜单
+    await page.getByRole('button', { name: '技术选型' }).click();
+    await page.getByRole('menuitemcheckbox', { name: /简单网页应用/ }).click();
+    await expect(page.getByRole('button', { name: '清除技术选型', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '清除技术选型', exact: true }).click();
+    await expect(page.getByRole('button', { name: '技术选型' })).toBeVisible();
+    await expect(page.getByRole('menuitemcheckbox', { name: /简单网页应用/ })).toHaveCount(0);
+
+    // 2) 应用场景：选择后可清除，且清除不应误打开下拉菜单
+    await page.getByRole('button', { name: '应用场景' }).click();
+    await page.getByRole('menuitemcheckbox', { name: '电商' }).click();
+    await expect(page.getByRole('button', { name: '清除应用场景', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '清除应用场景', exact: true }).click();
+    await expect(page.getByRole('button', { name: '应用场景' })).toBeVisible();
+    await expect(page.getByRole('menuitemcheckbox', { name: '电商' })).toHaveCount(0);
+
+    // 3) AI 能力：多选后可一键清空，且清除不应误打开下拉菜单
+    await page.getByRole('button', { name: 'AI 能力' }).click();
+    await page.getByRole('menuitemcheckbox', { name: '视觉识别 (Vision)' }).click();
+    await expect(page.getByText('AI 能力 · 已选 1 项')).toBeVisible();
+    await expect(page.getByRole('button', { name: '清除 AI 能力', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '清除 AI 能力', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'AI 能力' })).toBeVisible();
+    await expect(page.getByRole('menuitemcheckbox', { name: '视觉识别 (Vision)' })).toHaveCount(0);
+  });
 });

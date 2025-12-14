@@ -209,7 +209,7 @@ export function AppsSection(): React.ReactElement {
 
         {/* 创建新应用按钮 */}
         <Button asChild className="h-12 rounded-full px-6 shadow-sm hover:shadow-md transition-all">
-          <Link href="/create-v2">
+          <Link href="/">
             <Plus className="mr-2 h-4 w-4" />
             创建新应用
           </Link>
@@ -230,7 +230,7 @@ export function AppsSection(): React.ReactElement {
           </p>
           {!searchQuery && (
             <Button asChild className="mt-6 rounded-full">
-              <Link href="/create-v2">
+              <Link href="/">
                 <Plus className="mr-2 h-4 w-4" />
                 立即创建
               </Link>

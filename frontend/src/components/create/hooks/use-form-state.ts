@@ -15,6 +15,7 @@
 
 import { useState, useCallback } from 'react';
 import { UNIAIX_MODELS, type UniaixModel } from '@/lib/api/uniaix';
+import type { PlanRoutingResult } from '@/lib/api/plan-routing';
 import type { PhaseType, LoadedTemplate } from '@/types/requirement-form';
 
 /**
@@ -38,6 +39,8 @@ export interface UseFormStateReturn {
   currentPhase: PhaseType;
   /** 加载的模板信息 */
   loadedTemplate: LoadedTemplate | null;
+  /** 路由结果 (V2) */
+  routingResult: PlanRoutingResult | null;
 
   // ==================== 方法 ====================
   /** 设置需求描述 */
@@ -56,6 +59,8 @@ export interface UseFormStateReturn {
   setCurrentPhase: (phase: PhaseType) => void;
   /** 设置加载的模板 */
   setLoadedTemplate: (template: LoadedTemplate | null) => void;
+  /** 设置路由结果 */
+  setRoutingResult: (result: PlanRoutingResult | null) => void;
   /** 清除模板 */
   clearTemplate: () => void;
   /** 重置所有状态 */
@@ -83,6 +88,9 @@ export function useFormState(): UseFormStateReturn {
   // ==================== 模板状态 ====================
   const [loadedTemplate, setLoadedTemplate] = useState<LoadedTemplate | null>(null);
 
+  // ==================== V2 路由状态 ====================
+  const [routingResult, setRoutingResult] = useState<PlanRoutingResult | null>(null);
+
   /**
    * 清除已加载的模板
    * 重置为空白表单
@@ -105,6 +113,7 @@ export function useFormState(): UseFormStateReturn {
     setShowAnalysis(false);
     setCurrentPhase('idle');
     setLoadedTemplate(null);
+    setRoutingResult(null);
   }, []);
 
   return {
@@ -117,6 +126,7 @@ export function useFormState(): UseFormStateReturn {
     showAnalysis,
     currentPhase,
     loadedTemplate,
+    routingResult,
 
     // 方法
     setRequirement,
@@ -127,6 +137,7 @@ export function useFormState(): UseFormStateReturn {
     setShowAnalysis,
     setCurrentPhase,
     setLoadedTemplate,
+    setRoutingResult,
     clearTemplate,
     resetAll,
   };

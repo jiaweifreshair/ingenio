@@ -80,10 +80,10 @@ export function ThreeAgentWorkflow(): React.ReactElement {
   ];
 
   return (
-    <section className="py-24" id="features">
+    <section className="py-12" id="features">
       <div className="container mx-auto px-6">
         {/* 区域标题 */}
-        <div className="mb-16 text-center">
+        <div className="mb-10 text-center">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground mb-6 tracking-tight">
             <span className="bg-gradient-to-r from-purple-600 via-blue-600 to-green-600 bg-clip-text text-transparent">
               三大 AI 智脑
@@ -96,7 +96,7 @@ export function ThreeAgentWorkflow(): React.ReactElement {
         </div>
 
         {/* Agent卡片网格 */}
-        <div className="grid gap-8 md:grid-cols-3 mb-16">
+        <div className="grid gap-8 md:grid-cols-3 mb-10">
           {agents.map((agent, index) => (
             <div
               key={agent.id}

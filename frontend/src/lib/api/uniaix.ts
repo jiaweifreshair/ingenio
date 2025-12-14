@@ -300,7 +300,11 @@ export function getModelConfig(modelId: UniaixModel): ModelConfig | undefined {
  * 使用环境变量中的API Key
  */
 export function createUniaixClient(): UniaixClient {
-  const apiKey = process.env.NEXT_PUBLIC_UNIAIX_API_KEY || 'sk-UJEaOXPIxjRVEOQZpqlIj0MaOKGUaC5AClk6TrzuOuBwaj6f';
+  const apiKey = process.env.NEXT_PUBLIC_UNIAIX_API_KEY?.trim();
+
+  if (!apiKey) {
+    throw new UniaixError('未配置 NEXT_PUBLIC_UNIAIX_API_KEY（禁止在代码中硬编码 API Key）');
+  }
 
   return new UniaixClient({
     apiKey,

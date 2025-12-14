@@ -36,11 +36,13 @@
 
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import { PageTransition } from '@/components/ui/page-transition';
 import { useToast } from '@/hooks/use-toast';
 import { TEMPLATE_CONFIGS } from '@/constants/template-configs';
 import { getTemplateRequirement } from '@/constants/templates';
+import { PrototypeConfirmation } from '@/components/prototype/prototype-confirmation';
+import { selectStyleAndGeneratePrototype } from '@/lib/api/plan-routing';
 
 // 导入自定义Hooks
 import {
@@ -71,12 +73,12 @@ export function RequirementForm(): React.ReactElement {
   const {
     requirement,
     selectedModel,
-    selectedStyle,
     loading,
     showSuccess,
     showAnalysis,
     currentPhase,
     loadedTemplate,
+    routingResult,
     setRequirement,
     setSelectedModel,
     setLoading,
@@ -84,6 +86,7 @@ export function RequirementForm(): React.ReactElement {
     setShowAnalysis,
     setCurrentPhase,
     setLoadedTemplate,
+    setRoutingResult,
     clearTemplate,
   } = useFormState();
 
@@ -94,8 +97,8 @@ export function RequirementForm(): React.ReactElement {
     isCompleted,
     analysisError,
     handleFormSubmit,
-    handleStyleSelected,
     handleStyleCancel,
+    handleConfirmDesign,
   } = useGenerationFlow({
     requirement,
     selectedModel,
@@ -103,6 +106,8 @@ export function RequirementForm(): React.ReactElement {
     setShowAnalysis,
     setCurrentPhase,
     setShowSuccess,
+    routingResult,
+    setRoutingResult,
   });
 
   // ==================== 模板初始化Hook ====================
@@ -111,6 +116,35 @@ export function RequirementForm(): React.ReactElement {
     onTemplateLoad: setLoadedTemplate,
     templates: TEMPLATE_CONFIGS,
   });
+
+  // ==================== 自动流转逻辑 ====================
+  useEffect(() => {
+    const processTransition = async () => {
+      // 触发条件：AnalysisPhase ('style-selection' is repurposed as 'analysis-completed' signal from useGenerationFlow)
+      // 并且有 routingResult
+      if (currentPhase === 'style-selection' && routingResult) {
+        try {
+          console.log('[RequirementForm] 自动流转：选择默认风格并生成原型');
+          // 默认选择 'modern_minimal' 风格 (Style A)
+          const prototypeResult = await selectStyleAndGeneratePrototype(routingResult.appSpecId, 'modern_minimal');
+          
+          setRoutingResult(prototypeResult);
+          setCurrentPhase('prototype-preview');
+          setLoading(false);
+        } catch (err) {
+          console.error('[RequirementForm] 自动生成原型失败:', err);
+          toast({
+            title: '原型生成失败',
+            description: '请重试',
+            variant: 'destructive',
+          });
+          setLoading(false);
+        }
+      }
+    };
+
+    processTransition();
+  }, [currentPhase, routingResult, setRoutingResult, setCurrentPhase, setLoading, toast]);
 
   // ==================== 事件处理 ====================
 
@@ -161,19 +195,26 @@ export function RequirementForm(): React.ReactElement {
         {/* 成功动画覆盖层 */}
         <SuccessOverlay show={showSuccess} />
 
-        {/* 分析面板：左右分屏布局 */}
-        {showAnalysis ? (
+        {/* 原型预览确认面板 (Unified Lite Flow) */}
+        {currentPhase === 'prototype-preview' && routingResult ? (
+          <PrototypeConfirmation
+            routingResult={routingResult}
+            userRequirement={requirement}
+            onConfirm={handleConfirmDesign}
+            onBack={handleStyleCancel}
+            loading={loading}
+            error={analysisError}
+          />
+        ) : showAnalysis ? (
+          /* 分析面板：左右分屏布局 */
           <AnalysisPanel
             requirement={requirement}
             selectedModel={selectedModel}
-            selectedStyle={selectedStyle}
             currentPhase={currentPhase}
             messages={messages}
             isConnected={isConnected}
             isCompleted={isCompleted}
             analysisError={analysisError}
-            onStyleSelected={handleStyleSelected}
-            onStyleCancel={handleStyleCancel}
           />
         ) : (
           <>

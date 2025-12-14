@@ -25,7 +25,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 /**
- * 模板库页面
+ * 应用模版页面
  * 展示所有可用的应用模板，支持搜索、筛选、分类浏览
  */
 export default function TemplatesPage(): React.ReactElement {
@@ -127,7 +127,7 @@ export default function TemplatesPage(): React.ReactElement {
       // 跳转到创建页面，携带模板ID参数
       // RequirementForm会自动检测并加载模板
       // V2.0: 使用意图识别+双重选择机制的创建流程
-      window.location.href = `/create-v2?templateId=${template.id}&templateName=${encodeURIComponent(template.name)}`;
+      window.location.href = `/?templateId=${template.id}&templateName=${encodeURIComponent(template.name)}`;
 
       toast({
         title: "使用模板",
@@ -181,7 +181,7 @@ export default function TemplatesPage(): React.ReactElement {
         <div className="container mx-auto px-4 py-8">
           {/* 页面标题 */}
           <div className="mb-8 text-center">
-            <h1 className="mb-4 text-4xl font-bold">模板库</h1>
+            <h1 className="mb-4 text-4xl font-bold">应用模版</h1>
             <p className="text-lg text-muted-foreground">
               精选应用模板，快速启动你的项目
             </p>

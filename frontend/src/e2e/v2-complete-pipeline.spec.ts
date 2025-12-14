@@ -263,124 +263,68 @@ test.describe('场景C: 确认设计 → Execute阶段', () => {
  * 测试V2.0创建流程的完整交互
  */
 test.describe('前端UI集成测试 - V2.0创建流程', () => {
-  test('应该正确渲染V2.0创建向导页面', async ({ page }) => {
-    await page.goto(`${BASE_URL}/create-v2`);
+  test('应该正确渲染首页并包含创建入口', async ({ page }) => {
+    await page.goto(`${BASE_URL}/`);
     await page.waitForLoadState('networkidle');
 
     // 验证页面标题
-    await expect(page.locator('text=描述您想要的应用')).toBeVisible();
+    await expect(page.locator('text=你的创意，AI 来实现')).toBeVisible();
 
-    // 验证输入框存在
-    await expect(page.locator('[data-testid="requirement-input"]')).toBeVisible();
+    // 验证输入框存在 (HeroBanner中的textarea)
+    await expect(page.locator('textarea[placeholder*="在这里输入你想做什么"]')).toBeVisible();
 
     // 验证提交按钮存在
-    await expect(page.locator('[data-testid="submit-requirement"]')).toBeVisible();
-
-    // 验证进度指示器存在
-    await expect(page.locator('text=描述需求')).toBeVisible();
+    await expect(page.locator('button:has-text("生成")')).toBeVisible();
   });
 
-  test('提交需求后应该显示意图识别结果面板', async ({ page }) => {
-    await page.goto(`${BASE_URL}/create-v2`);
+  test('提交需求后应该进入向导模式并显示分析进度', async ({ page }) => {
+    await page.goto(`${BASE_URL}/`);
     await page.waitForLoadState('networkidle');
 
     // 输入需求
-    const input = page.locator('[data-testid="requirement-input"]');
+    const input = page.locator('textarea[placeholder*="在这里输入你想做什么"]');
     await input.fill('创建一个技术博客平台，支持Markdown编辑、代码高亮、评论功能');
 
     // 点击提交
-    const submitButton = page.locator('[data-testid="submit-requirement"]');
+    const submitButton = page.locator('button:has-text("生成")');
     await submitButton.click();
 
-    // 等待意图识别结果面板显示
-    await expect(page.locator('[data-testid="intent-result-panel"]')).toBeVisible({ timeout: 30000 });
-
-    // 验证置信度徽章显示
-    await expect(page.locator('[data-testid="confidence-badge"]')).toBeVisible();
-
-    // 验证确认按钮显示
-    await expect(page.locator('[data-testid="confirm-intent-button"]')).toBeVisible();
+    // 验证进入向导模式（进度条出现）
+    await expect(page.locator('text=深度分析')).toBeVisible({ timeout: 10000 });
+    
+    // 验证正在分析中
+    await expect(page.locator('text=AI正在分析您的需求')).toBeVisible();
   });
 
-  test('原型确认面板应该包含所有必要元素', async ({ page }) => {
-    await page.goto(`${BASE_URL}/create-v2`);
+  test('完整流程：输入需求 -> 分析 -> 原型确认 -> 生成', async ({ page }) => {
+    // 设置较长的超时时间，因为涉及AI生成
+    test.setTimeout(120000);
+
+    await page.goto(`${BASE_URL}/`);
     await page.waitForLoadState('networkidle');
 
     // Step 1: 输入需求
-    const input = page.locator('[data-testid="requirement-input"]');
-    await input.fill('创建一个技术博客平台，支持Markdown编辑、代码高亮、评论功能');
-    await page.locator('[data-testid="submit-requirement"]').click();
+    const input = page.locator('textarea[placeholder*="在这里输入你想做什么"]');
+    await input.fill('创建一个简单的待办事项列表应用，包含添加、删除和标记完成功能');
+    await page.locator('button:has-text("生成")').click();
 
-    // Step 2: 等待并确认意图
-    await page.waitForSelector('[data-testid="intent-result-panel"]', { timeout: 30000 });
-    await page.locator('[data-testid="confirm-intent-button"]').click();
+    // Step 2: 等待分析完成并自动跳转到原型确认
+    // 这可能需要几秒钟
+    await expect(page.locator('[data-testid="prototype-confirmation-panel"]')).toBeVisible({ timeout: 60000 });
 
-    // Step 3: 跳过模板选择（如果有）
-    const templatePanel = page.locator('[data-testid="template-selection-panel"]');
-    if (await templatePanel.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await page.locator('[data-testid="skip-template-button"]').click();
-    }
-
-    // Step 4: 选择风格
-    await page.waitForSelector('[data-testid="style-selection-panel"]', { timeout: 10000 });
-    await page.locator('[data-testid="style-card"]').first().click();
-    await page.locator('[data-testid="confirm-style-button"]').click();
-
-    // Step 5: 验证原型确认面板
-    await expect(page.locator('[data-testid="prototype-confirmation-panel"]')).toBeVisible({ timeout: 30000 });
-
-    // 验证确认设计按钮
+    // Step 3: 验证原型确认面板内容
     await expect(page.locator('[data-testid="confirm-design-button"]')).toBeVisible();
-
-    // 验证返回按钮
-    await expect(page.locator('[data-testid="back-to-style-button"]')).toBeVisible();
-
-    // 验证刷新按钮
     await expect(page.locator('[data-testid="refresh-preview-button"]')).toBeVisible();
-  });
 
-  test('确认设计后应该跳转到Wizard页面', async ({ page }) => {
-    await page.goto(`${BASE_URL}/create-v2`);
-    await page.waitForLoadState('networkidle');
-
-    // Step 1: 输入需求
-    const input = page.locator('[data-testid="requirement-input"]');
-    await input.fill('创建一个技术博客平台，支持Markdown编辑、代码高亮、评论功能');
-    await page.locator('[data-testid="submit-requirement"]').click();
-
-    // Step 2: 等待并确认意图
-    await page.waitForSelector('[data-testid="intent-result-panel"]', { timeout: 30000 });
-    await page.locator('[data-testid="confirm-intent-button"]').click();
-
-    // Step 3: 跳过模板选择（如果有）
-    const templatePanel = page.locator('[data-testid="template-selection-panel"]');
-    if (await templatePanel.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await page.locator('[data-testid="skip-template-button"]').click();
-    }
-
-    // Step 4: 选择风格
-    await page.waitForSelector('[data-testid="style-selection-panel"]', { timeout: 10000 });
-    await page.locator('[data-testid="style-card"]').first().click();
-    await page.locator('[data-testid="confirm-style-button"]').click();
-
-    // Step 5: 等待原型确认面板
-    await page.waitForSelector('[data-testid="prototype-confirmation-panel"]', { timeout: 30000 });
-
-    // Step 6: 等待确认按钮可用并点击
+    // Step 4: 点击确认设计
     const confirmButton = page.locator('[data-testid="confirm-design-button"]');
-    await confirmButton.waitFor({ state: 'visible' });
-
-    // 监听URL变化
-    const urlChangePromise = page.waitForURL(/\/wizard\//, { timeout: 30000 });
-
-    // 点击确认设计按钮
     await confirmButton.click();
 
-    // 验证跳转到Wizard页面
-    await urlChangePromise;
+    // Step 5: 验证跳转到Wizard生成页面
+    await page.waitForURL(/\/wizard\//, { timeout: 30000 });
     expect(page.url()).toContain('/wizard/');
 
-    console.log('确认设计后成功跳转到Wizard页面');
+    console.log('完整流程测试通过：首页 -> 原型确认 -> 生成向导');
   });
 });
 

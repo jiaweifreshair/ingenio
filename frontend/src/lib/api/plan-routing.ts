@@ -156,6 +156,7 @@ export interface PlanRoutingResult {
 
 /**
  * 设计确认结果
+ * V2.0更新：与后端DesignConfirmResponse保持一致
  */
 export interface DesignConfirmResult {
   /** 是否成功 */
@@ -166,6 +167,10 @@ export interface DesignConfirmResult {
   appSpecId?: string;
   /** 是否可以进入Execute阶段 */
   canProceedToExecute?: boolean;
+  /** 设计确认时间 (ISO 8601格式) */
+  designConfirmedAt?: string;
+  /** 下一步操作提示 */
+  nextAction?: string;
 }
 
 // ==================== API 函数 ====================
@@ -360,23 +365,19 @@ export async function confirmDesign(
   }
 
   try {
-    const response = await post<string>(
+    const response = await post<DesignConfirmResult>(
       `/v2/plan-routing/${appSpecId}/confirm-design`,
       {}
     );
 
     console.log('[PlanRouting API] 设计确认响应:', response);
 
-    if (!response.success) {
+    if (!response.success || !response.data) {
       throw new Error(response.error || response.message || '设计确认失败');
     }
 
-    return {
-      success: true,
-      message: response.data || '设计确认成功，可以进入Execute阶段',
-      appSpecId,
-      canProceedToExecute: true,
-    };
+    // 直接返回后端结构化响应
+    return response.data;
   } catch (error) {
     console.warn('[PlanRouting API] 设计确认失败:', error);
     throw error;
@@ -395,12 +396,50 @@ export async function confirmDesign(
 // ==================== Phase 2.2.4 新增API ====================
 
 /**
+ * 代码生成状态枚举
+ */
+export enum CodeGenerationStatus {
+  /** 排队中 */
+  PENDING = 'PENDING',
+  /** 生成中 */
+  GENERATING = 'GENERATING',
+  /** 验证中 */
+  VALIDATING = 'VALIDATING',
+  /** 已完成 */
+  COMPLETED = 'COMPLETED',
+  /** 失败 */
+  FAILED = 'FAILED',
+}
+
+/**
  * 代码生成结果接口
- * Phase 2.2.4: ExecuteAgent V2 返回的代码生成结果
+ * V2.0更新：与后端CodeGenerationResponse保持一致
  */
 export interface CodeGenerationResult {
   /** 是否成功 */
   success: boolean;
+  /** AppSpec ID */
+  appSpecId?: string;
+  /** 新创建的项目ID */
+  projectId?: string;
+  /** 生成任务ID（用于轮询进度） */
+  generationTaskId?: string;
+  /** 预计完成时间（秒） */
+  estimatedCompletionTime?: number;
+  /** 当前状态 */
+  status?: CodeGenerationStatus | string;
+  /** 操作消息 */
+  message?: string;
+  /** 生成进度（0-100） */
+  progress?: number;
+  /** 任务开始时间 (ISO 8601格式) */
+  startedAt?: string;
+  /** 前端预览URL */
+  previewUrl?: string;
+  /** 错误信息 */
+  errorMessage?: string;
+
+  // 以下为Legacy字段，保留向后兼容
   /** 版本标识 */
   version?: string;
   /** 数据库Schema */
@@ -419,7 +458,7 @@ export interface CodeGenerationResult {
     framework: string;
     files: Record<string, string>;
   };
-  /** 错误信息 */
+  /** 错误信息（Legacy） */
   error?: string;
 }
 

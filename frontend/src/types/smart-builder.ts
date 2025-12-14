@@ -1,8 +1,8 @@
-import { Layout, Globe, Building2, Smartphone, ShoppingBag, GraduationCap, Users, Coffee, Briefcase, Landmark, Clapperboard, MonitorPlay, BrainCircuit, ScanText, Mic, Workflow, type LucideIcon } from "lucide-react";
+import { Globe, Building2, Smartphone, ShoppingBag, GraduationCap, Users, Coffee, Briefcase, Landmark, Clapperboard, MonitorPlay, BrainCircuit, ScanText, Mic, Workflow, type LucideIcon } from "lucide-react";
 
 // --- Types ---
 
-export type AppComplexityMode = 'H5' | 'WEB' | 'ENTERPRISE' | 'NATIVE';
+export type AppComplexityMode = 'WEB' | 'ENTERPRISE' | 'NATIVE';
 
 export interface AppModeConfig {
     id: AppComplexityMode;
@@ -12,6 +12,8 @@ export interface AppModeConfig {
     techStack: string;
     tags: string[];
     colorClass: string; // Tailwnd class for icon bg
+    exampleTitle?: string;
+    examplePrompt?: string;
 }
 
 export type IndustryType = 'ECOMMERCE' | 'EDUCATION' | 'SOCIAL' | 'LIFE' | 'ENTERPRISE' | 'FINANCE' | 'MEDIA' | 'MORE';
@@ -38,40 +40,37 @@ export interface AICapabilityConfig {
 
 export const APP_MODES: AppModeConfig[] = [
     {
-        id: 'H5',
-        icon: Layout,
-        title: "多端套壳应用",
-        description: "内容展示、表单、列表类，无原生交互",
-        techStack: "H5 + WebView",
-        tags: ["待办清单", "新闻阅读", "商品展示", "问卷表单"],
-        colorClass: "bg-emerald-500",
-    },
-    {
         id: 'WEB',
         icon: Globe,
-        title: "纯Web应用",
+        title: "简单网页应用",
         description: "仅浏览器运行，SaaS或Dashboard",
         techStack: "React + Supabase",
         tags: ["博客系统", "管理后台", "数据看板", "预约系统"],
         colorClass: "bg-blue-500",
+        exampleTitle: "情绪小帮手",
+        examplePrompt: "设计一个“情绪小帮手”应用，帮助同学记录每天的心情并得到简单安慰。学生需要用自然语言描述一个常见的小烦恼（如考试前紧张、和同学闹别扭），并把它转化成1-3个功能：如“选择今天的心情表情”“输入小烦恼”“得到一句鼓励或小建议”。作品需有清晰的使用入口和结束页面，能在3分钟内教会同学使用，并附一段简短说明文字：这个应用是为谁解决什么问题。"
     },
     {
         id: 'ENTERPRISE',
         icon: Building2,
-        title: "企业级应用",
+        title: "复杂网页应用",
         description: "复杂业务逻辑，多实体关联系统",
         techStack: "React + Spring Boot",
         tags: ["电商平台", "企业ERP", "在线教育", "多租户SaaS"],
         colorClass: "bg-purple-500",
+        exampleTitle: "青少年压力管理智能系统",
+        examplePrompt: "设计一个“青少年压力管理智能系统”，为学生、班主任和心理老师提供一体化支持。需求包括：① 学生端：压力自评、情绪记录、个性化练习推荐；② 老师/管理端：班级整体压力数据看板与预警列表；③ 至少2个协作Agent（如“情绪评估Agent”“建议生成Agent”“风险预警Agent”）及其分工说明；④ 数据流程与隐私方案说明（哪些数据保存、如何匿名展示）。需提交系统架构图和1-2个典型使用场景故事。"
     },
     {
         id: 'NATIVE',
         icon: Smartphone,
         title: "原生跨端应用",
         description: "相机/GPS/蓝牙等原生能力",
-        techStack: "Kuikly",
+        techStack: "Kuikly + SpringBoot",
         tags: ["Android", "iOS", "HarmonyOS", "Web", "运动打卡", "扫码工具"],
         colorClass: "bg-orange-500",
+        exampleTitle: "校园情绪加油站",
+        examplePrompt: "设计一个“校园情绪加油站”系统，围绕“学习压力过大”这一问题进行功能拆解。需求至少包含：① 信息收集模块（如压力自评问卷或情景选择）；② 分析模块（根据回答给出压力等级和可能原因）；③ 建议模块（给出不同等级的应对建议或练习）；④ 记录模块（简单的历史记录或打卡）。需提交一份流程图，说明用户从进入系统到获得建议的完整路径，并在文案中标注哪些环节使用了哪条心理学原理。"
     }
 ];
 

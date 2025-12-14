@@ -1,21 +1,21 @@
 /**
- * 模板库E2E测试
+ * 应用模版E2E测试
  * 测试模板列表、搜索、详情查看、使用模板
  *
  * 已实现：frontend/src/app/templates/page.tsx
  */
 import { test, expect } from "@playwright/test";
 
-test.describe("模板库功能测试", () => {
+test.describe("应用模版功能测试", () => {
   test.beforeEach(async ({ page }) => {
-    // 导航到模板库页面
+    // 导航到应用模版页面
     await page.goto("/templates");
   });
 
   test("应该正确显示模板列表", async ({ page }) => {
     // 验证页面标题
     await expect(
-      page.getByRole("heading", { name: /模板库|模板中心/ })
+      page.getByRole("heading", { name: /应用模版|模板中心/ })
     ).toBeVisible({ timeout: 10000 });
 
     // 等待模板列表加载
@@ -178,15 +178,15 @@ test.describe("模板库功能测试", () => {
   test("页面应该响应式布局", async ({ page }) => {
     // 测试移动端视口
     await page.setViewportSize({ width: 375, height: 667 });
-    await expect(page.getByRole("heading", { name: /模板库/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /应用模版/ })).toBeVisible();
 
     // 测试平板视口
     await page.setViewportSize({ width: 768, height: 1024 });
-    await expect(page.getByRole("heading", { name: /模板库/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /应用模版/ })).toBeVisible();
 
     // 测试桌面视口
     await page.setViewportSize({ width: 1920, height: 1080 });
-    await expect(page.getByRole("heading", { name: /模板库/ })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /应用模版/ })).toBeVisible();
   });
 
   test("应该显示空状态（无搜索结果）", async ({ page }) => {
@@ -202,9 +202,9 @@ test.describe("模板库功能测试", () => {
     await expect(emptyState).toBeVisible();
   });
 
-  test("应该在顶部导航显示模板库链接", async ({ page }) => {
-    // 检查顶部导航有模板库链接
-    const templatesLink = page.locator('nav a:has-text("模板库")');
+  test("应该在顶部导航显示应用模版链接", async ({ page }) => {
+    // 检查顶部导航有应用模版链接
+    const templatesLink = page.locator('nav a:has-text("应用模版")');
     await expect(templatesLink).toBeVisible();
     await expect(templatesLink).toHaveAttribute("href", "/templates");
   });

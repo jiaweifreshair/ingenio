@@ -527,7 +527,7 @@ export default function WizardPage() {
       <ErrorState
         error={wsError}
         onRetry={handleRetry}
-        onBack={() => router.push('/create-v2')}
+        onBack={() => router.push('/')}
       />
     );
   }

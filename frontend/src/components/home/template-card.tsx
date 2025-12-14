@@ -91,7 +91,7 @@ export function TemplateCard(props: TemplateCardProps): React.ReactElement {
 
   // 否则使用导航模式 - V2.0入口
   return (
-    <Link href={`/create-v2?template=${id}`}>
+    <Link href={`/?template=${id}`}>
       <TemplateCardContent
         title={title}
         description={description}

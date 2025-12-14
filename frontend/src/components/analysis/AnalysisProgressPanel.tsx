@@ -19,6 +19,7 @@ import { type AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Typewriter } from '@/components/ui/typewriter';
 
 /**
  * 分析进度展示面板 - 思维链增强版
@@ -34,6 +35,7 @@ export interface AnalysisProgressPanelProps {
   isConnected: boolean;
   isCompleted: boolean;
   error: string | null;
+  finalResult?: unknown;
 }
 
 const STEP_CONFIG = [
@@ -130,8 +132,12 @@ const StepLogItem = ({
                <div className="animate-in fade-in slide-in-from-left-1 duration-300">
                  <div className="text-blue-400">→ Initiating {config.name} process...</div>
                  {message?.detail && (
-                   <div className="text-zinc-100 pl-4 border-l-2 border-zinc-800 my-1 py-1">
-                     {message.detail}
+                   <div className="text-zinc-100 pl-4 border-l-2 border-zinc-800 my-1 py-1 min-h-[1.5em]">
+                     <Typewriter 
+                       text={message.detail} 
+                       speed={10} 
+                       instant={status === 'COMPLETED'}
+                     />
                    </div>
                  )}
                  {status === 'COMPLETED' && (
@@ -162,19 +168,41 @@ const StepLogItem = ({
   );
 };
 
+/**
+ * 判断是否处于"等待原型生成"状态
+ * 条件：SSE分析完成但路由结果还未返回
+ */
+const isWaitingForPrototype = (isCompleted: boolean, finalResult: unknown): boolean => {
+  return isCompleted && !finalResult;
+};
+
 export function AnalysisProgressPanel({
   messages,
   isConnected, // Keep prop but mark as used or ignore
   isCompleted,
-  error
+  error,
+  finalResult
 }: AnalysisProgressPanelProps): React.ReactElement {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expandedStep, setExpandedStep] = useState<number | null>(1);
 
-  // 自动展开正在运行的步骤
+  // 判断当前是否处于等待原型生成状态
+  const waitingForPrototype = isWaitingForPrototype(isCompleted, finalResult);
+
+  // 自动展开正在运行的步骤，等待原型时收起所有步骤
   useEffect(() => {
-    if (isCompleted) {
+    if (waitingForPrototype) {
+      // 等待原型生成时，收起所有步骤，显示简洁的等待UI
       setExpandedStep(null);
+      return;
+    }
+
+    if (isCompleted) {
+      // 完成时，保持最后一步展开，以便用户查看结果
+      if (messages.length > 0) {
+        const lastStep = messages[messages.length - 1].step;
+        setExpandedStep(lastStep);
+      }
       return;
     }
 
@@ -182,7 +210,7 @@ export function AnalysisProgressPanel({
     if (runningStep && runningStep !== expandedStep) {
       setExpandedStep(runningStep);
     }
-  }, [messages, isCompleted, expandedStep]); // Added expandedStep to dependency array
+  }, [messages, isCompleted, expandedStep, waitingForPrototype, finalResult]); // Added dependencies
 
   // 自动滚动到底部
   useEffect(() => {
@@ -211,16 +239,21 @@ export function AnalysisProgressPanel({
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
-              AI 深度思考中
+              {isWaitingForPrototype(isCompleted, finalResult) ? '正在生成原型' : 'AI 深度思考中'}
             </h2>
             <div className="text-sm text-muted-foreground flex items-center gap-2 mt-1">
-              {isCompleted ? (
+              {isWaitingForPrototype(isCompleted, finalResult) ? (
+                <span className="flex items-center text-blue-600">
+                  <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                  AI正在设计您的应用原型，请稍候...
+                </span>
+              ) : isCompleted ? (
                 <span className="flex items-center text-green-600">
                   <CheckCircle2 className="w-4 h-4 mr-1" /> 分析完成
                 </span>
               ) : (
                 <span className="flex items-center">
-                  <Loader2 className="w-3 h-3 mr-1 animate-spin" /> 
+                  <Loader2 className="w-3 h-3 mr-1 animate-spin" />
                   {isConnected ? '正在构建思维链...' : '等待连接...'}
                 </span>
               )}
@@ -255,26 +288,71 @@ export function AnalysisProgressPanel({
         </div>
       )}
 
-      {/* 步骤列表区 */}
+      {/* 步骤列表区 - 等待原型时显示简洁的等待动画 */}
       <ScrollArea className="flex-1 -mx-4 px-4" ref={scrollRef}>
-        <div className="space-y-3 pb-4">
-          {STEP_CONFIG.map((config, index) => {
-            const step = index + 1;
-            const { status, message } = getStepStatus(step);
-            
-            return (
-              <StepLogItem
-                key={step}
-                step={step}
-                config={config}
-                status={status}
-                message={message}
-                isExpanded={expandedStep === step}
-                onToggle={() => setExpandedStep(expandedStep === step ? null : step)}
-              />
-            );
-          })}
-        </div>
+        {waitingForPrototype ? (
+          /* 等待原型生成时的简洁UI */
+          <div className="flex flex-col items-center justify-center py-12 space-y-6 animate-in fade-in duration-500">
+            {/* 分析完成摘要 */}
+            <div className="flex items-center gap-2 text-green-600 dark:text-green-400">
+              <CheckCircle2 className="h-5 w-5" />
+              <span className="font-medium">需求分析完成</span>
+            </div>
+
+            {/* 原型生成动画 */}
+            <div className="relative">
+              <div className="w-20 h-20 rounded-full border-4 border-blue-200 dark:border-blue-800" />
+              <div className="absolute inset-0 w-20 h-20 rounded-full border-4 border-transparent border-t-blue-500 animate-spin" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Layout className="h-8 w-8 text-blue-500" />
+              </div>
+            </div>
+
+            {/* 提示文字 */}
+            <div className="text-center space-y-2">
+              <p className="text-lg font-medium text-foreground">正在生成7种设计风格</p>
+              <p className="text-sm text-muted-foreground">
+                AI正在为您的应用设计多种视觉方案，请稍候...
+              </p>
+              <p className="text-xs text-muted-foreground/70">
+                通常需要60-90秒
+              </p>
+            </div>
+          </div>
+        ) : (
+          /* 正常的分析步骤列表 */
+          <div className="space-y-3 pb-4">
+            {STEP_CONFIG.map((config, index) => {
+              const step = index + 1;
+              const { status, message } = getStepStatus(step);
+
+              return (
+                <StepLogItem
+                  key={step}
+                  step={step}
+                  config={config}
+                  status={status}
+                  message={message}
+                  isExpanded={expandedStep === step}
+                  onToggle={() => setExpandedStep(expandedStep === step ? null : step)}
+                />
+              );
+            })}
+
+            {/* 最终结果展示 */}
+            {isCompleted && !!finalResult && (
+               <div className="border rounded-lg border-green-500/30 bg-green-50/10 p-3 mt-4 animate-in slide-in-from-bottom-2">
+                  <div className="flex items-center gap-2 mb-2">
+                     <CheckCircle2 className="h-5 w-5 text-green-500" />
+                     <h3 className="font-medium text-green-500">分析结论</h3>
+                  </div>
+                  <div className="bg-zinc-950 rounded p-3 text-xs font-mono text-zinc-300 overflow-x-auto border border-zinc-800">
+                     <pre>{JSON.stringify(finalResult, null, 2)}</pre>
+                  </div>
+               </div>
+            )}
+          </div>
+        )}
       </ScrollArea>
     </Card>
   );
