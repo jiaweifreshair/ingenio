@@ -36,13 +36,15 @@
 
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useState } from 'react';
 import { PageTransition } from '@/components/ui/page-transition';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/hooks/use-auth';
 import { TEMPLATE_CONFIGS } from '@/constants/template-configs';
 import { getTemplateRequirement } from '@/constants/templates';
 import { PrototypeConfirmation } from '@/components/prototype/prototype-confirmation';
 import { selectStyleAndGeneratePrototype } from '@/lib/api/plan-routing';
+import { LoginDialog } from '@/components/auth/login-dialog';
 
 // 导入自定义Hooks
 import {
@@ -68,6 +70,8 @@ import {
  */
 export function RequirementForm(): React.ReactElement {
   const { toast } = useToast();
+  const { isAuthenticated } = useAuth();
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
 
   // ==================== 状态管理Hook ====================
   const {
@@ -96,7 +100,7 @@ export function RequirementForm(): React.ReactElement {
     isConnected,
     isCompleted,
     analysisError,
-    handleFormSubmit,
+    handleFormSubmit: triggerGeneration,
     handleStyleCancel,
     handleConfirmDesign,
   } = useGenerationFlow({
@@ -110,6 +114,18 @@ export function RequirementForm(): React.ReactElement {
     setRoutingResult,
   });
 
+  /**
+   * 处理表单提交（包含登录检查）
+   */
+  const handleFormSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!isAuthenticated) {
+      setShowLoginDialog(true);
+      return;
+    }
+    triggerGeneration(e);
+  };
+
   // ==================== 模板初始化Hook ====================
   useTemplateInitializer({
     onRequirementChange: setRequirement,
@@ -118,33 +134,44 @@ export function RequirementForm(): React.ReactElement {
   });
 
   // ==================== 自动流转逻辑 ====================
-  useEffect(() => {
-    const processTransition = async () => {
-      // 触发条件：AnalysisPhase ('style-selection' is repurposed as 'analysis-completed' signal from useGenerationFlow)
-      // 并且有 routingResult
-      if (currentPhase === 'style-selection' && routingResult) {
-        try {
-          console.log('[RequirementForm] 自动流转：选择默认风格并生成原型');
-          // 默认选择 'modern_minimal' 风格 (Style A)
-          const prototypeResult = await selectStyleAndGeneratePrototype(routingResult.appSpecId, 'modern_minimal');
-          
-          setRoutingResult(prototypeResult);
-          setCurrentPhase('prototype-preview');
-          setLoading(false);
-        } catch (err) {
-          console.error('[RequirementForm] 自动生成原型失败:', err);
-          toast({
-            title: '原型生成失败',
-            description: '请重试',
-            variant: 'destructive',
-          });
-          setLoading(false);
-        }
-      }
-    };
+  // V2.1 修改：移除自动流转，改为用户确认技术方案后手动流转
+  // useEffect(() => { ... }) 
 
-    processTransition();
-  }, [currentPhase, routingResult, setRoutingResult, setCurrentPhase, setLoading, toast]);
+  /**
+   * 处理技术方案确认
+   * 用户确认方案后，触发原型生成
+   */
+  const handlePlanConfirm = async () => {
+    if (routingResult) {
+      try {
+        setLoading(true);
+        console.log('[RequirementForm] 用户确认方案，开始生成原型');
+        // 默认选择 'modern_minimal' 风格 (Style A)
+        const prototypeResult = await selectStyleAndGeneratePrototype(routingResult.appSpecId, 'modern_minimal');
+        
+        setRoutingResult(prototypeResult);
+        setCurrentPhase('prototype-preview');
+        setLoading(false);
+      } catch (err) {
+        console.error('[RequirementForm] 原型生成失败:', err);
+        toast({
+          title: '原型生成失败',
+          description: '请重试',
+          variant: 'destructive',
+        });
+        setLoading(false);
+      }
+    }
+  };
+
+  /**
+   * 处理技术方案修改
+   */
+  const handlePlanModify = (newReq: string) => {
+    // 简单实现：更新需求并重新提交（TODO: 实现更平滑的增量修改）
+    setRequirement(newReq + " (Based on previous plan feedback)");
+    handleFormSubmit({ preventDefault: () => {} } as React.FormEvent);
+  };
 
   // ==================== 事件处理 ====================
 
@@ -192,6 +219,15 @@ export function RequirementForm(): React.ReactElement {
   return (
     <PageTransition type="slide-up" duration={0.4}>
       <div className="space-y-10">
+        {/* 登录对话框 */}
+        <LoginDialog
+          open={showLoginDialog}
+          onOpenChange={setShowLoginDialog}
+          onSuccess={() => triggerGeneration({ preventDefault: () => {} } as React.FormEvent)}
+          title="登录以开始生成"
+          description="您需要登录才能使用AI生成功能。生成结果将保存到您的账户中。"
+        />
+
         {/* 成功动画覆盖层 */}
         <SuccessOverlay show={showSuccess} />
 
@@ -214,7 +250,10 @@ export function RequirementForm(): React.ReactElement {
             messages={messages}
             isConnected={isConnected}
             isCompleted={isCompleted}
+            isLoading={loading}
             analysisError={analysisError}
+            onConfirmPlan={handlePlanConfirm}
+            onModifyPlan={handlePlanModify}
           />
         ) : (
           <>
