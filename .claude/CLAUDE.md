@@ -63,16 +63,64 @@ Ingenio是基于**意图识别+双重选择机制**的AI应用全栈生成系统
 
 ---
 
-## 3. API调用规范 ⚠️ **强制遵守**
+## 3. 基础设施规范 ⚠️ **强制遵守**
+
+### 3.0 数据库连接规范 🚫 **禁止本地数据库**
+
+**强制要求**：
+- 🚫 **禁止启动本地PostgreSQL服务**（如 `brew services start postgresql`）
+- 🚫 **禁止连接本地安装的数据库**（非Docker容器内的数据库）
+- ✅ **必须使用Docker容器中的数据库服务**
+
+**原因**：
+1. 本地数据库与Docker数据库端口冲突（都使用5432）
+2. 本地数据库schema可能不完整，导致难以排查的bug
+3. 团队环境一致性要求
+
+**正确做法**：
+```bash
+# 启动Docker服务
+docker-compose up -d postgres redis minio
+
+# 验证Docker数据库运行
+docker ps | grep postgres
+```
+
+**错误做法**：
+```bash
+# 禁止操作
+brew services start postgresql@15
+pg_ctl start
+```
+
+**端口冲突排查**：
+如果遇到数据库连接问题，先检查是否有本地PostgreSQL占用端口：
+```bash
+lsof -i :5432
+# 如果看到非Docker进程，需要停止：
+brew services stop postgresql@15
+```
+
+---
 
 ### 3.1 核心配置
 
 **后端配置**：
 - context-path: `/api`（在application-local.yml中配置）
 - 服务端口: 8080
+- ⚠️ **启动前必须加载环境变量**：`source backend/.env` 或使用 `scripts/start-backend.sh`
 
 **前端环境变量**：
 - `NEXT_PUBLIC_API_BASE_URL=http://localhost:8080/api`（包含 `/api` 前缀）
+
+**后端启动命令**：
+```bash
+# 方式1：使用启动脚本（推荐）
+./scripts/start-backend.sh
+
+# 方式2：手动加载环境变量
+cd backend && source .env && mvn spring-boot:run -Dspring-boot.run.profiles=local
+```
 
 ### 3.2 API路径规则
 

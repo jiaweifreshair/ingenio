@@ -136,7 +136,10 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
    * 启动分析流程
    */
   const startProcess = useCallback(async () => {
-    if (hasStartedRef.current) return;
+    if (hasStartedRef.current) {
+      console.log('[SmartWizard] startProcess skipped: already started');
+      return;
+    }
     hasStartedRef.current = true;
 
     setLoading(true);
@@ -192,6 +195,9 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     if (requirement && !hasStartedRef.current) {
       startProcess();
     }
+    return () => {
+      hasStartedRef.current = false;
+    };
   }, [requirement, startProcess]);
 
 
@@ -254,7 +260,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
         
         setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
         setLoading(false);
-      }, 5000);
+      }, 30000); // 增加到30秒，给AI分析足够时间
       return () => clearTimeout(forceTimer);
     }
   }, [currentStep, routingResult, shouldTransition]);
@@ -310,9 +316,20 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
         throw new Error(confirmResult.message || '确认失败');
       }
 
-      // Step 2: 执行代码生成
+      // Step 2: 提取SSE上下文（V2.0新增 - 聚合所有步骤的分析结果）
+      // 将分散在各step消息中的result合并为一个完整的Context对象
+      const analysisContext = analysisMessages.reduce((acc, msg) => {
+        if (msg.result && typeof msg.result === 'object') {
+            return { ...acc, ...(msg.result as Record<string, unknown>) };
+        }
+        return acc;
+      }, {} as Record<string, unknown>);
+      
+      console.log('[SmartWizard] 提取SSE上下文:', Object.keys(analysisContext));
+
+      // Step 3: 执行代码生成（附带上下文）
       console.log('[SmartWizard] 执行代码生成...');
-      const codeResult = await executeCodeGeneration(routingResult.appSpecId);
+      const codeResult = await executeCodeGeneration(routingResult.appSpecId, analysisContext);
 
       if (codeResult.success) {
         toast({
@@ -330,7 +347,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
       setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
       setLoading(false);
     }
-  }, [routingResult, router, toast]);
+  }, [routingResult, router, toast, analysisMessages]);
 
   // 计算显示进度
   const currentStepIndex = STEP_ORDER.indexOf(currentStep);

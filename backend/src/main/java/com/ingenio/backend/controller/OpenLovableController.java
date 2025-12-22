@@ -116,13 +116,26 @@ public class OpenLovableController {
             // 参数适配：OpenLovable期望的参数格式
             Map<String, Object> adaptedRequest = new java.util.HashMap<>(request);
 
-            // 1. 将userMessage转换为prompt
+            // 1. 将userMessage/userRequirement转换为prompt
+            String originalPrompt = null;
             if (adaptedRequest.containsKey("userMessage")) {
-                adaptedRequest.put("prompt", adaptedRequest.remove("userMessage"));
+                originalPrompt = (String) adaptedRequest.remove("userMessage");
                 log.debug("参数适配: userMessage -> prompt");
+            } else if (adaptedRequest.containsKey("userRequirement")) {
+                originalPrompt = (String) adaptedRequest.remove("userRequirement");
+                log.debug("参数适配: userRequirement -> prompt");
+            } else if (adaptedRequest.containsKey("prompt")) {
+                originalPrompt = (String) adaptedRequest.get("prompt");
             }
 
-            // 2. 将sandboxId包装到context对象中
+            // 2. 【方案A核心】增强提示词 - 添加结构化思维要求
+            if (originalPrompt != null && !originalPrompt.isEmpty()) {
+                String enhancedPrompt = enhancePromptWithStructuredThinking(originalPrompt);
+                adaptedRequest.put("prompt", enhancedPrompt);
+                log.info("提示词增强: 原长度={}, 增强后长度={}", originalPrompt.length(), enhancedPrompt.length());
+            }
+
+            // 3. 将sandboxId包装到context对象中
             if (adaptedRequest.containsKey("sandboxId")) {
                 String sandboxId = (String) adaptedRequest.remove("sandboxId");
                 Map<String, Object> context = new java.util.HashMap<>();
@@ -155,15 +168,31 @@ public class OpenLovableController {
                     connection.getOutputStream().flush();
 
                     // 读取SSE流式响应
+                    // 注意：SSE标准要求事件以空行（\n\n）分隔
+                    // BufferedReader.readLine()会消除换行符，需要正确恢复SSE格式
                     try (InputStream inputStream = connection.getInputStream();
                          BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
 
                         String line;
                         while ((line = reader.readLine()) != null) {
-                            // 转发SSE消息
-                            outputStream.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                            // V2.1优化：在流式转发时检测complete事件，修复空的main.jsx
+                            // 这样在generate阶段就能一次性输出完整代码，无需等到apply阶段
+                            if (line.startsWith("data: ") && line.contains("\"type\":\"complete\"")) {
+                                line = fixMainJsxInCompleteEvent(line);
+                            }
+
+                            // 转发SSE消息，确保正确的SSE格式
+                            if (line.isEmpty()) {
+                                // 空行代表事件结束，写入空行
+                                outputStream.write("\n".getBytes(StandardCharsets.UTF_8));
+                            } else {
+                                // 数据行或注释行，添加换行符
+                                outputStream.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                            }
                             outputStream.flush();
-                            log.debug("转发SSE消息: {}", line.substring(0, Math.min(line.length(), 100)));
+                            if (!line.isEmpty() && !line.startsWith(":")) {
+                                log.debug("转发SSE消息: {}", line.substring(0, Math.min(line.length(), 100)));
+                            }
                         }
                     }
 
@@ -172,8 +201,13 @@ public class OpenLovableController {
                 } catch (Exception e) {
                     log.error("流式响应转发失败", e);
                     String errorMessage = "data: {\"type\":\"error\",\"error\":\"" + e.getMessage() + "\"}\n\n";
-                    outputStream.write(errorMessage.getBytes(StandardCharsets.UTF_8));
-                    outputStream.flush();
+                    try {
+                        outputStream.write(errorMessage.getBytes(StandardCharsets.UTF_8));
+                        outputStream.flush();
+                    } catch (IOException ioException) {
+                        // 典型场景：客户端提前断开连接（刷新/离开页面），此时无需再向客户端写入
+                        log.warn("SSE错误事件写入失败（客户端可能已断开）: {}", ioException.getMessage());
+                    }
                 }
             };
 
@@ -181,6 +215,7 @@ public class OpenLovableController {
                     .contentType(MediaType.TEXT_EVENT_STREAM)
                     .header(HttpHeaders.CACHE_CONTROL, "no-cache")
                     .header(HttpHeaders.CONNECTION, "keep-alive")
+                    .header("X-Accel-Buffering", "no") // 禁用Nginx缓冲，确保SSE实时刷新
                     .body(stream);
 
         } catch (Exception e) {
@@ -308,13 +343,29 @@ public class OpenLovableController {
             // 先从请求体中解析AI响应文本
             String aiResponse = (String) request.get("response");
 
-            // V2.0增强：自动补全 React Hook 导入（避免 useState/useEffect 未定义导致预览崩溃）
+            // V2.0增强-1：自动补全 React Hook 导入（避免 useState/useEffect 未定义导致预览崩溃）
             String fixedResponse = autoFixReactHookImports(aiResponse);
             if (fixedResponse != null && !fixedResponse.equals(aiResponse)) {
-                request.put("response", fixedResponse);
                 log.info("已自动补全React Hook导入: 原长度={} 新长度={}", aiResponse.length(), fixedResponse.length());
                 aiResponse = fixedResponse;
             }
+
+            // V2.0增强-2：自动修复空的main.jsx（截断恢复后可能生成空文件）
+            fixedResponse = autoFixEmptyMainJsx(aiResponse);
+            if (fixedResponse != null && !fixedResponse.equals(aiResponse)) {
+                log.info("已自动修复main.jsx: 原长度={} 新长度={}", aiResponse.length(), fixedResponse.length());
+                aiResponse = fixedResponse;
+            }
+
+            // V2.0增强-3：移除空文件（避免写入无效文件）
+            fixedResponse = removeEmptyFiles(aiResponse);
+            if (fixedResponse != null && !fixedResponse.equals(aiResponse)) {
+                log.info("已移除空文件: 原长度={} 新长度={}", aiResponse.length(), fixedResponse.length());
+                aiResponse = fixedResponse;
+            }
+
+            // 更新请求体
+            request.put("response", aiResponse);
 
             // 从AI响应中解析文件数量（作为备用）
             int parsedFilesCount = countFilesInResponse(aiResponse);
@@ -615,5 +666,296 @@ public class OpenLovableController {
         }
 
         return filePaths.size();
+    }
+
+    /**
+     * 自动修复空文件或缺失的关键入口文件（main.jsx）
+     *
+     * 问题场景：
+     * - AI截断恢复后可能生成空的 main.jsx
+     * - 导致沙箱无法正常渲染应用
+     *
+     * 修复策略：
+     * 1. 检测 main.jsx 是否存在且非空
+     * 2. 如果为空或缺失，自动生成标准入口文件
+     * 3. 确保导入的 App 组件路径正确
+     *
+     * @param response AI 原始输出
+     * @return 修复后的输出
+     */
+    private String autoFixEmptyMainJsx(String response) {
+        if (response == null || response.isEmpty()) {
+            return response;
+        }
+
+        // 检查是否有 App.jsx 文件（确定是否需要修复main.jsx）
+        boolean hasAppJsx = response.contains("path=\"src/App.jsx\"") || response.contains("path='src/App.jsx'");
+        if (!hasAppJsx) {
+            // 没有App.jsx，不需要修复main.jsx
+            return response;
+        }
+
+        // 检查 main.jsx 是否存在且非空
+        Pattern mainJsxPattern = Pattern.compile("<file\\s+path=['\"]src/main\\.jsx['\"][^>]*>([\\s\\S]*?)</file>", Pattern.CASE_INSENSITIVE);
+        Matcher mainJsxMatcher = mainJsxPattern.matcher(response);
+
+        boolean hasMainJsx = false;
+        boolean mainJsxIsEmpty = true;
+
+        if (mainJsxMatcher.find()) {
+            hasMainJsx = true;
+            String content = mainJsxMatcher.group(1);
+            mainJsxIsEmpty = content == null || content.trim().isEmpty();
+        }
+
+        // 如果main.jsx不存在或为空，自动生成
+        if (!hasMainJsx || mainJsxIsEmpty) {
+            String standardMainJsx = generateStandardMainJsx();
+            log.info("自动修复: main.jsx {} -> 生成标准入口文件", hasMainJsx ? "为空" : "缺失");
+
+            if (hasMainJsx && mainJsxIsEmpty) {
+                // 替换空的main.jsx
+                response = mainJsxMatcher.replaceFirst(
+                    Matcher.quoteReplacement("<file path=\"src/main.jsx\">\n" + standardMainJsx + "\n</file>")
+                );
+            } else {
+                // 追加main.jsx
+                // 在最后一个 </file> 后面追加
+                int lastFileEndIndex = response.lastIndexOf("</file>");
+                if (lastFileEndIndex != -1) {
+                    String before = response.substring(0, lastFileEndIndex + 7); // 包含 </file>
+                    String after = response.substring(lastFileEndIndex + 7);
+                    response = before + "\n\n<file path=\"src/main.jsx\">\n" + standardMainJsx + "\n</file>" + after;
+                }
+            }
+        }
+
+        return response;
+    }
+
+    /**
+     * 生成标准的 Vite React 入口文件内容
+     */
+    private String generateStandardMainJsx() {
+        return "import React from 'react'\n" +
+               "import ReactDOM from 'react-dom/client'\n" +
+               "import App from './App'\n" +
+               "import './index.css'\n" +
+               "\n" +
+               "ReactDOM.createRoot(document.getElementById('root')).render(\n" +
+               "  <React.StrictMode>\n" +
+               "    <App />\n" +
+               "  </React.StrictMode>,\n" +
+               ")";
+    }
+
+    /**
+     * 检测并修复空文件（内容为空的file标签）
+     *
+     * @param response AI 原始输出
+     * @return 修复后的输出，移除空文件
+     */
+    private String removeEmptyFiles(String response) {
+        if (response == null || response.isEmpty()) {
+            return response;
+        }
+
+        // 匹配空文件：<file path="..."></file> 或内容只有空白字符
+        Pattern emptyFilePattern = Pattern.compile("<file\\s+path=['\"]([^'\"]+)['\"][^>]*>\\s*</file>", Pattern.CASE_INSENSITIVE);
+        Matcher emptyFileMatcher = emptyFilePattern.matcher(response);
+
+        StringBuffer sb = new StringBuffer();
+        int removedCount = 0;
+
+        while (emptyFileMatcher.find()) {
+            String filePath = emptyFileMatcher.group(1);
+            // 保留main.jsx（由autoFixEmptyMainJsx处理）
+            if (!"src/main.jsx".equals(filePath)) {
+                log.warn("移除空文件: {}", filePath);
+                emptyFileMatcher.appendReplacement(sb, "");
+                removedCount++;
+            }
+        }
+
+        emptyFileMatcher.appendTail(sb);
+
+        if (removedCount > 0) {
+            log.info("移除了 {} 个空文件", removedCount);
+        }
+
+        return sb.toString();
+    }
+
+    // ==================== 方案A: 结构化提示词增强 ====================
+
+    /**
+     * 在流式转发时修复complete事件中的空main.jsx
+     *
+     * V2.1优化：在generate阶段就修复，无需等到apply阶段
+     *
+     * @param sseDataLine SSE数据行（data: {...}格式）
+     * @return 修复后的SSE数据行
+     */
+    private String fixMainJsxInCompleteEvent(String sseDataLine) {
+        try {
+            // 提取JSON部分
+            if (!sseDataLine.startsWith("data: ")) {
+                return sseDataLine;
+            }
+            String jsonStr = sseDataLine.substring(6).trim();
+
+            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            Map<String, Object> eventData = mapper.readValue(jsonStr, Map.class);
+
+            String generatedCode = (String) eventData.get("generatedCode");
+            if (generatedCode == null || generatedCode.isEmpty()) {
+                return sseDataLine;
+            }
+
+            // 检查main.jsx是否为空
+            Pattern mainJsxPattern = Pattern.compile("<file\\s+path=['\"]src/main\\.jsx['\"][^>]*>([\\s\\S]*?)</file>", Pattern.CASE_INSENSITIVE);
+            Matcher mainJsxMatcher = mainJsxPattern.matcher(generatedCode);
+
+            if (mainJsxMatcher.find()) {
+                String content = mainJsxMatcher.group(1);
+                if (content == null || content.trim().isEmpty()) {
+                    // main.jsx为空，替换为完整内容
+                    String standardMainJsx = generateStandardMainJsx();
+                    String fixedCode = mainJsxMatcher.replaceFirst(
+                        Matcher.quoteReplacement("<file path=\"src/main.jsx\">\n" + standardMainJsx + "\n</file>")
+                    );
+                    eventData.put("generatedCode", fixedCode);
+                    log.info("✅ generate阶段修复: main.jsx为空 -> 已注入完整入口文件");
+
+                    // 重新构建SSE数据行
+                    return "data: " + mapper.writeValueAsString(eventData);
+                }
+            } else {
+                // main.jsx不存在，检查是否有App.jsx需要添加入口
+                if (generatedCode.contains("path=\"src/App.jsx\"") || generatedCode.contains("path='src/App.jsx'")) {
+                    String standardMainJsx = generateStandardMainJsx();
+                    // 在最后一个</file>后追加
+                    int lastFileEnd = generatedCode.lastIndexOf("</file>");
+                    if (lastFileEnd != -1) {
+                        String fixedCode = generatedCode.substring(0, lastFileEnd + 7) +
+                                "\n\n<file path=\"src/main.jsx\">\n" + standardMainJsx + "\n</file>" +
+                                generatedCode.substring(lastFileEnd + 7);
+                        eventData.put("generatedCode", fixedCode);
+                        log.info("✅ generate阶段修复: main.jsx缺失 -> 已追加完整入口文件");
+                        return "data: " + mapper.writeValueAsString(eventData);
+                    }
+                }
+            }
+
+            return sseDataLine;
+        } catch (Exception e) {
+            log.warn("修复complete事件失败: {}", e.getMessage());
+            return sseDataLine;
+        }
+    }
+
+    /**
+     * 增强提示词 - 添加结构化思维要求（Chain-of-Thought）
+     *
+     * 核心原理：
+     * 1. 强制AI在生成代码前先进行<thinking>分析
+     * 2. main.jsx作为固定模板**第一个**生成，避免截断
+     * 3. 明确文件规划、依赖关系、生成顺序
+     *
+     * V2.1优化：调整生成顺序，main.jsx放最前面
+     *
+     * @param originalPrompt 用户原始需求
+     * @return 增强后的提示词
+     */
+    private String enhancePromptWithStructuredThinking(String originalPrompt) {
+        return String.format("""
+## 🎯 代码生成任务
+
+### 用户需求
+%s
+
+---
+
+## 📋 强制执行：结构化思维过程
+
+在生成任何代码之前，你**必须**在 `<thinking>` 标签中完成以下分析：
+
+### Step 1: 需求理解
+- 用户要构建什么应用？核心功能有哪些？
+
+### Step 2: 文件规划
+列出需要创建的文件（不含main.jsx，它是固定的）
+
+### Step 3: 依赖分析
+- 需要安装哪些第三方包？（lucide-react等）
+
+---
+
+## ⚠️ 关键要求
+
+1. **main.jsx是固定模板** - 直接使用下方提供的代码，**第一个输出**
+2. **代码必须完整** - 每个文件从第一行写到最后一行，禁止截断或省略
+3. **使用标准Tailwind类** - bg-white, text-gray-900（禁止bg-background等自定义类）
+
+---
+
+## 📤 输出格式（严格按此顺序）
+
+### 第一步：输出思考过程
+```xml
+<thinking>
+[简要分析：需求理解、文件规划、依赖分析]
+</thinking>
+```
+
+### 第二步：**首先输出main.jsx（固定代码，直接复制）**
+```xml
+<file path="src/main.jsx">
+import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)
+</file>
+```
+
+### 第三步：输出index.css
+```xml
+<file path="src/index.css">
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+[其他自定义样式]
+</file>
+```
+
+### 第四步：输出组件文件
+```xml
+<file path="src/components/XXX.jsx">
+[完整组件代码]
+</file>
+```
+
+### 第五步：输出App.jsx
+```xml
+<file path="src/App.jsx">
+[完整主组件代码]
+</file>
+```
+
+---
+
+## 🚨 再次强调
+
+**main.jsx必须第一个输出！** 它是Vite应用入口，代码固定不变，直接复制上方模板即可。
+
+现在请开始：先<thinking>，然后按顺序输出所有文件（main.jsx第一个）。
+""", originalPrompt);
     }
 }

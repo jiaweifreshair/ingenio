@@ -17,6 +17,15 @@ sleep 5
 # 2. 启动后端服务（后台运行）
 echo "🔨 启动后端服务..."
 cd backend
+
+# 加载环境变量
+if [ -f .env ]; then
+    echo "📄 加载环境变量 (.env)..."
+    set -a
+    source .env
+    set +a
+fi
+
 nohup mvn spring-boot:run -Dspring-boot.run.profiles=dev > ../logs/backend.log 2>&1 &
 BACKEND_PID=$!
 echo "后端服务 PID: $BACKEND_PID"
@@ -29,6 +38,8 @@ sleep 10
 # 3. 启动前端服务（后台运行）
 echo "🎨 启动前端服务..."
 cd ../frontend
+# 强制设置端口为 3000
+export PORT=3000
 nohup pnpm dev > ../logs/frontend.log 2>&1 &
 FRONTEND_PID=$!
 echo "前端服务 PID: $FRONTEND_PID"
@@ -40,7 +51,7 @@ sleep 10
 
 echo "✅ 所有服务已启动！"
 echo "📊 后端服务: http://localhost:8080/api"
-echo "🎨 前端服务: http://localhost:3001"
+echo "🎨 前端服务: http://localhost:3000"
 echo "📝 日志文件: ./logs/backend.log 和 ./logs/frontend.log"
 echo ""
 echo "停止服务: ./scripts/stop-all.sh"

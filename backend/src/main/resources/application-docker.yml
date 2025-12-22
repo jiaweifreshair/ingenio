@@ -1,4 +1,12 @@
 # Docker环境专用配置
+# ============================================================================
+# ⚠️ 数据库连接规范 - 禁止使用本地PostgreSQL ⚠️
+# ============================================================================
+# 此配置用于Docker Compose环境，连接容器中的PostgreSQL
+# localhost:5432 = Docker容器暴露的端口，不是本地安装的PostgreSQL
+#
+# 启动服务：docker-compose up -d postgres redis minio
+# ============================================================================
 spring:
   application:
     name: ingenio-backend
@@ -8,6 +16,7 @@ spring:
     allow-circular-references: true
 
   # 数据源配置（Docker环境）
+  # ⚠️ localhost:5432 = Docker容器暴露的端口
   datasource:
     url: jdbc:postgresql://localhost:5432/ingenio
     username: ingenio_user

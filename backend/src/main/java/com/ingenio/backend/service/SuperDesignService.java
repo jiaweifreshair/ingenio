@@ -16,9 +16,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -63,109 +60,35 @@ public class SuperDesignService {
 
     private final AIProviderFactory aiProviderFactory;
     private final StyleTemplateGenerator styleTemplateGenerator;
-    // 线程池大小从3扩展到7，支持7个设计方案并行生成
-    private final ExecutorService executorService = Executors.newFixedThreadPool(7);
 
     /**
      * 并行生成7个设计方案（优化版：包含4种创新风格）
+     * 
+     * @deprecated V2.0已废弃并行生成，改为单风格极速生成。保留此方法仅为了兼容旧接口调用，实际上只生成默认风格。
      *
      * @param request 设计请求
-     * @return 7个不同风格的设计方案（3个传统风格 + 4个创新风格）
+     * @return 单个设计方案的列表
      */
+    @Deprecated
     public List<DesignVariant> generateVariants(DesignRequest request) {
-        log.info("开始生成7个设计方案（3个传统+4个创新）: taskId={}", request.getTaskId());
+        log.info("生成设计方案（兼容模式）: taskId={}", request.getTaskId());
 
-        long startTime = System.currentTimeMillis();
-
-        // 定义7个不同风格的提示词（优化版：增加4种创新风格）
-        List<StylePrompt> stylePrompts = Arrays.asList(
-                // 传统风格（保留）
-                new StylePrompt(
-                        "A",
-                        "现代极简",
-                        "现代极简风格，大留白，卡片式布局，Material Design 3，清爽配色，圆角矩形，微妙阴影，流畅过渡动画",
-                        Arrays.asList("现代", "极简", "卡片式", "留白", "清爽", "流畅动效"),
-                        "#6200EE", "#03DAC6", "#FFFFFF", "#000000", "card"
-                ),
-                new StylePrompt(
-                        "B",
-                        "活力时尚",
-                        "活力时尚风格，多彩渐变背景，网格瀑布流布局，大圆角设计，动感配色，年轻化UI，弹性交互动效",
-                        Arrays.asList("活力", "时尚", "渐变", "圆角", "动感", "弹性动效"),
-                        "#FF6B6B", "#4ECDC4", "#F7FFF7", "#1A535C", "grid"
-                ),
-                new StylePrompt(
-                        "C",
-                        "经典专业",
-                        "经典专业风格，信息密集，列表布局，商务配色，直角矩形，清晰层次，快速响应交互",
-                        Arrays.asList("经典", "专业", "列表式", "商务", "稳重", "高效"),
-                        "#2E4057", "#048A81", "#FFFFFF", "#333333", "list"
-                ),
-
-                // 创新风格（新增）
-                new StylePrompt(
-                        "D",
-                        "未来科技",
-                        "未来科技风格，深色背景+霓虹色强调，赛博朋克美学，半透明毛玻璃卡片，荧光渐变边框，悬浮立体效果，科技感光效动画，矩阵数字雨彩蛋",
-                        Arrays.asList("科技", "赛博朋克", "霓虹", "毛玻璃", "光效", "悬浮", "未来感"),
-                        "#0A0E27", "#00F5FF", "#1A1A2E", "#E94560", "card"
-                ),
-                new StylePrompt(
-                        "E",
-                        "沉浸式3D",
-                        "沉浸式3D风格，卡片3D翻转效果，视差滚动，立体阴影，透视变换，层次空间感，悬浮按钮，重力感应倾斜交互，卡片展开变形动画",
-                        Arrays.asList("3D", "立体", "视差", "翻转", "透视", "悬浮", "空间感"),
-                        "#667EEA", "#764BA2", "#F7F7F7", "#2D3748", "card"
-                ),
-                new StylePrompt(
-                        "F",
-                        "游戏化",
-                        "游戏化风格，进度条和等级系统，成就徽章动画，奖励反馈特效，闯关式导航，积分实时统计，彩色粒子爆破效果，音效触感反馈，趣味加载动画",
-                        Arrays.asList("游戏化", "关卡", "徽章", "积分", "特效", "奖励", "趣味"),
-                        "#FFA500", "#FF1744", "#FFFDE7", "#263238", "grid"
-                ),
-                new StylePrompt(
-                        "G",
-                        "自然流动",
-                        "自然流动风格，有机曲线形状，流体渐变动画，柔和大圆角，自然配色（天空蓝、森林绿），波浪起伏效果，水波纹扩散动画，呼吸灯效果，舒缓过渡",
-                        Arrays.asList("自然", "流体", "有机", "曲线", "渐变", "波浪", "舒缓"),
-                        "#56CCF2", "#2F80ED", "#F8FDFF", "#4F4F4F", "card"
-                )
+        // 默认生成现代极简风格
+        StylePrompt defaultStyle = new StylePrompt(
+                "A",
+                "现代极简",
+                "现代极简风格，大留白，卡片式布局，Material Design 3，清爽配色，圆角矩形，微妙阴影，流畅过渡动画",
+                Arrays.asList("现代", "极简", "卡片式", "留白", "清爽", "流畅动效"),
+                "#6200EE", "#03DAC6", "#FFFFFF", "#000000", "card"
         );
 
-        // 并行调用AI生成设计方案
-        List<CompletableFuture<DesignVariant>> futures = stylePrompts.stream()
-                .map(stylePrompt -> CompletableFuture.supplyAsync(() -> {
-                    long variantStartTime = System.currentTimeMillis();
-                    try {
-                        DesignVariant variant = generateSingleVariant(request, stylePrompt);
-                        variant.setGenerationTimeMs(System.currentTimeMillis() - variantStartTime);
-                        return variant;
-                    } catch (Exception e) {
-                        log.error("生成设计方案{}失败", stylePrompt.variantId, e);
-                        // 返回失败的方案（包含错误信息）
-                        return DesignVariant.builder()
-                                .variantId(stylePrompt.variantId)
-                                .style(stylePrompt.style)
-                                .code("// 生成失败: " + e.getMessage())
-                                .features(List.of("生成失败"))
-                                .generationTimeMs(System.currentTimeMillis() - variantStartTime)
-                                .build();
-                    }
-                }, executorService))
-                .collect(Collectors.toList());
-
-        // 等待所有设计完成
-        List<DesignVariant> variants = futures.stream()
-                .map(CompletableFuture::join)
-                .collect(Collectors.toList());
-
-        long totalTime = System.currentTimeMillis() - startTime;
-        long avgTimePerVariant = totalTime / variants.size();
-        log.info("7个设计方案生成完成: taskId={}, totalTime={}ms, avgTime={}ms/variant",
-                request.getTaskId(), totalTime, avgTimePerVariant);
-
-        return variants;
+        try {
+            DesignVariant variant = generateSingleVariant(request, defaultStyle);
+            return Collections.singletonList(variant);
+        } catch (Exception e) {
+            log.error("生成设计方案失败", e);
+            return Collections.emptyList();
+        }
     }
 
     /**
@@ -413,18 +336,15 @@ public class SuperDesignService {
 
     /**
      * 生成7种风格的HTML预览（V2.0 SuperDesign集成版）
-     *
-     * 核心功能：
-     * 1. 并行生成7种设计风格的HTML预览页面
-     * 2. 使用AI动态生成设计（参考SuperDesign的设计规范）
-     * 3. 每个风格使用专属的设计约束和Prompt
-     * 4. 提取设计规范（colorTheme、layout、components）供后续代码生成使用
+     * 
+     * @deprecated V2.0已废弃并行生成。此方法仅为了兼容旧接口保留，实际上只生成 Modern Minimal 风格。
      *
      * @param request 7风格生成请求
-     * @return 包含7个风格预览的完整响应
+     * @return 包含单风格预览的响应
      */
+    @Deprecated
     public Generate7StylesResponse generate7StyleHTMLPreviews(Generate7StylesRequest request) {
-        log.info("开始生成7种风格HTML预览（AI生成模式）: requirement={}", request.getUserRequirement());
+        log.info("生成风格预览（兼容模式）: requirement={}", request.getUserRequirement());
 
         long startTime = System.currentTimeMillis();
         List<String> warnings = new ArrayList<>();
@@ -435,75 +355,25 @@ public class SuperDesignService {
             String appDescription = request.getUserRequirement();
             List<String> features = extractFeaturesFromRequirement(appDescription);
 
-            // 定义7种设计风格
-            DesignStyle[] styles = DesignStyle.values();
-
-            // 并行调用AI生成7个风格的HTML预览
-            List<CompletableFuture<StylePreviewResponse>> futures = Arrays.stream(styles)
-                    .map(style -> CompletableFuture.supplyAsync(() -> {
-                        long styleStartTime = System.currentTimeMillis();
-                        try {
-                            // ✅ 使用AI生成真实设计（替代模板生成）
-                            return generateSingleStyleWithAI(
-                                    style,
-                                    appName,
-                                    appDescription,
-                                    features
-                            );
-
-                        } catch (Exception e) {
-                            log.error("生成{}风格预览失败", style.getDisplayName(), e);
-                            warnings.add(String.format("%s风格生成失败: %s",
-                                    style.getDisplayName(), e.getMessage()));
-
-                            // 失败时返回模板预览（降级策略）
-                            try {
-                                String fallbackHtml = styleTemplateGenerator.generateStylePreviewHTML(
-                                        style, appName, appDescription, features);
-                                log.warn("{}风格AI生成失败，使用模板降级", style.getDisplayName());
-
-                                return StylePreviewResponse.builder()
-                                        .style(style.getCode())
-                                        .htmlContent(fallbackHtml)
-                                        .cssContent("")
-                                        .generationTime(System.currentTimeMillis() - styleStartTime)
-                                        .aiGenerated(false) // 标记为模板生成
-                                        .build();
-                            } catch (Exception fallbackError) {
-                                log.error("模板降级也失败", fallbackError);
-                                return StylePreviewResponse.builder()
-                                        .style(style.getCode())
-                                        .htmlContent(String.format("<!-- 生成失败: %s -->", e.getMessage()))
-                                        .cssContent("")
-                                        .generationTime(System.currentTimeMillis() - styleStartTime)
-                                        .aiGenerated(false)
-                                        .build();
-                            }
-                        }
-                    }, executorService))
-                    .collect(Collectors.toList());
-
-            // 等待所有风格完成
-            List<StylePreviewResponse> stylePreviews = futures.stream()
-                    .map(CompletableFuture::join)
-                    .collect(Collectors.toList());
-
-            long totalTime = System.currentTimeMillis() - startTime;
-            long avgTimePerStyle = stylePreviews.size() > 0 ? totalTime / stylePreviews.size() : 0;
-            long aiGeneratedCount = stylePreviews.stream().filter(StylePreviewResponse::getAiGenerated).count();
-
-            log.info("7种风格HTML预览生成完成: totalTime={}ms, avgTime={}ms/style, aiGenerated={}/7, warnings={}",
-                    totalTime, avgTimePerStyle, aiGeneratedCount, warnings.size());
+            // 仅生成默认风格
+            DesignStyle defaultStyle = DesignStyle.MODERN_MINIMAL;
+            
+            StylePreviewResponse preview = generateSingleStyleWithAI(
+                    defaultStyle,
+                    appName,
+                    appDescription,
+                    features
+            );
 
             return Generate7StylesResponse.builder()
                     .success(true)
-                    .styles(stylePreviews)
-                    .totalGenerationTime(totalTime)
+                    .styles(Collections.singletonList(preview))
+                    .totalGenerationTime(System.currentTimeMillis() - startTime)
                     .warnings(warnings)
                     .build();
 
         } catch (Exception e) {
-            log.error("7风格生成失败", e);
+            log.error("风格生成失败", e);
             return Generate7StylesResponse.builder()
                     .success(false)
                     .styles(new ArrayList<>())
@@ -512,6 +382,28 @@ public class SuperDesignService {
                     .warnings(warnings)
                     .build();
         }
+    }
+
+    /**
+     * 为OpenLovable构建特定风格的设计Prompt（V2.0单风格极速版支持）
+     *
+     * 该方法将SuperDesign的高质量Prompt构建逻辑暴露给PlanRoutingService，
+     * 以便直接生成单一最佳风格的原型，避免并行生成7种风格导致的超时。
+     *
+     * @param style 目标设计风格
+     * @param appName 应用名称
+     * @param appDescription 应用描述
+     * @param features 功能列表
+     * @return 构建好的完整Prompt
+     */
+    public String buildDesignPromptForOpenLovable(
+            DesignStyle style,
+            String appName,
+            String appDescription,
+            List<String> features) {
+        
+        log.info("构建OpenLovable设计Prompt - style: {}, appName: {}", style.getDisplayName(), appName);
+        return buildSuperDesignPrompt(style, appName, appDescription, features);
     }
 
     /**
@@ -948,12 +840,5 @@ public class SuperDesignService {
 
         // 限制最多6个功能
         return features.size() > 6 ? features.subList(0, 6) : features;
-    }
-
-    /**
-     * 关闭线程池
-     */
-    public void shutdown() {
-        executorService.shutdown();
     }
 }

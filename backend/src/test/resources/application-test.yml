@@ -23,7 +23,8 @@ spring:
   # Spring AI 阿里云DashScope配置（测试环境）
   ai:
     dashscope:
-      api-key: sk-20bc5252fe0f4aa4a437db35d913ac4e
+      # ⚠️ 测试环境禁止硬编码真实密钥，默认使用占位符，必要时通过环境变量注入
+      api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
       base-url: https://dashscope.aliyuncs.com
       chat:
         enabled: true

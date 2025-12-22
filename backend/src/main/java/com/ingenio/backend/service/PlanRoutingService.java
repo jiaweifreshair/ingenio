@@ -6,6 +6,7 @@ import com.ingenio.backend.agent.IntentClassifier;
 import com.ingenio.backend.agent.dto.IntentClassificationResult;
 import com.ingenio.backend.agent.dto.PlanResult;
 import com.ingenio.backend.agent.dto.RequirementIntent;
+import com.ingenio.backend.enums.DesignStyle;
 import com.ingenio.backend.common.exception.BusinessException;
 import com.ingenio.backend.common.exception.ErrorCode;
 import com.ingenio.backend.dto.request.Generate7StylesRequest;
@@ -312,49 +313,185 @@ public class PlanRoutingService {
 
     /**
      * 路由到设计分支：SuperDesign 7风格方案
+     *
+     * V2.0优化（极速版）：不再并行生成7种风格，而是智能识别最佳风格并直接生成原型。
+     * 这避免了长时间等待和超时问题，提供更流畅的用户体验。
      */
     private void routeToDesignBranch(AppSpecEntity appSpec,
                                       String userRequirement,
                                       PlanRoutingResult.PlanRoutingResultBuilder resultBuilder) {
-        log.info("路由到设计分支 - appSpecId: {}", appSpec.getId());
+        log.info("路由到设计分支（单风格极速版） - appSpecId: {}", appSpec.getId());
 
-        // 构建7风格生成请求
-        Generate7StylesRequest request = Generate7StylesRequest.builder()
-                .userRequirement(userRequirement)
-                .targetPlatform("web")
-                .build();
+        // Step 1: 智能识别最佳风格
+        DesignStyle bestStyle = identifyBestStyle(userRequirement);
+        log.info("智能推荐风格: {} ({})", bestStyle.getDisplayName(), bestStyle.getCode());
 
-        // 生成7种风格预览
-        Generate7StylesResponse response = superDesignService.generate7StyleHTMLPreviews(request);
+        // Step 2: 提取应用信息（用于构建Prompt）
+        String appName = extractAppNameFromRequirement(userRequirement);
+        List<String> features = extractFeaturesFromRequirement(userRequirement);
 
-        // 转换响应为Map列表
-        List<Map<String, Object>> styleVariants = new ArrayList<>();
-        for (StylePreviewResponse preview : response.getStyles()) {
-            Map<String, Object> variant = new HashMap<>();
-            variant.put("styleId", preview.getStyle());
-            variant.put("styleName", getStyleDisplayName(preview.getStyle()));
-            variant.put("previewHtml", preview.getHtmlContent());
-            variant.put("generationTime", preview.getGenerationTime());
-            variant.put("aiGenerated", preview.getAiGenerated());
-            variant.put("designSpec", preview.getDesignSpec()); // ⭐ 添加设计规范
-            styleVariants.add(variant);
+        // Step 3: 仅构建Prompt（不立即生成）
+        // 使用SuperDesign的高质量Prompt构建逻辑
+        String designPrompt = superDesignService.buildDesignPromptForOpenLovable(
+                bestStyle, appName, userRequirement, features);
+
+        // 更新specContent中的prompt，供后续Execute使用
+        Map<String, Object> specContent = appSpec.getSpecContent();
+        if (specContent == null) {
+            specContent = new HashMap<>();
         }
+        specContent.put("designPrompt", designPrompt); // 保存Prompt
+        appSpec.setSpecContent(specContent);
 
-        // 保存风格预览到metadata
+        log.info("已智能选择风格: {}, 准备让前端触发SSE流式生成", bestStyle.getDisplayName());
+
+        // Step 4: 构建单风格变体（用于兼容前端数据结构）
+        Map<String, Object> styleVariant = new HashMap<>();
+        styleVariant.put("styleId", bestStyle.getCode());
+        styleVariant.put("styleName", bestStyle.getDisplayName());
+        styleVariant.put("previewHtml", null); 
+        styleVariant.put("aiGenerated", true);
+        styleVariant.put("designSpec", null); 
+
+        List<Map<String, Object>> styleVariants = Collections.singletonList(styleVariant);
+
+        // Step 5: 更新AppSpec
+        // 注意：此时prototypeUrl为空，prototypeGenerated为false
+        appSpec.setSelectedStyle(bestStyle.getCode()); // 自动选中
+        appSpec.setUpdatedAt(Instant.now());
+
+        // 保存元数据
         Map<String, Object> metadata = appSpec.getMetadata() != null
                 ? new HashMap<>(appSpec.getMetadata())
                 : new HashMap<>();
         metadata.put("styleVariants", styleVariants);
         metadata.put("designBranchStartedAt", Instant.now().toString());
+        metadata.put("autoSelectedStyle", bestStyle.getCode());
         appSpec.setMetadata(metadata);
 
+        // Step 6: 返回结果（prototypeGenerated=false 触发前端SSE生成）
         resultBuilder
                 .branch(RoutingBranch.DESIGN)
                 .styleVariants(styleVariants)
-                .prototypeGenerated(false)
-                .nextAction("请从7种设计风格中选择您喜欢的方案")
+                .prototypeGenerated(false) // 关键：标记为未生成
+                .prototypeUrl(null)        // 关键：URL为空
+                .selectedStyleId(bestStyle.getCode()) // 标记为已选择
+                .nextAction("正在启动流式生成...")
                 .requiresUserConfirmation(true);
     }
+
+    /**
+     * 根据用户需求智能识别最佳设计风格
+     */
+    private DesignStyle identifyBestStyle(String requirement) {
+        if (requirement == null) {
+            return DesignStyle.MODERN_MINIMAL;
+        }
+        String req = requirement.toLowerCase();
+
+        // 规则匹配
+        if (containsAny(req, "科技", "ai", "未来", "赛博", "数据", "智能", "tech", "cyber", "future")) {
+            return DesignStyle.FUTURE_TECH;
+        }
+        if (containsAny(req, "时尚", "年轻", "社交", "娱乐", "电商", "潮流", "fashion", "social", "trend")) {
+            return DesignStyle.VIBRANT_FASHION;
+        }
+        if (containsAny(req, "企业", "管理", "后台", "办公", "金融", "专业", "严肃", "admin", "business", "pro")) {
+            return DesignStyle.CLASSIC_PROFESSIONAL;
+        }
+        if (containsAny(req, "游戏", "教育", "儿童", "趣味", "互动", "game", "play", "fun", "kid")) {
+            return DesignStyle.GAMIFIED;
+        }
+        if (containsAny(req, "展示", "创意", "艺术", "画廊", "3d", "立体", "art", "gallery", "creative")) {
+            return DesignStyle.IMMERSIVE_3D;
+        }
+        if (containsAny(req, "健康", "环保", "自然", "生活", "有机", "禅意", "nature", "eco", "life", "green")) {
+            return DesignStyle.NATURAL_FLOW;
+        }
+
+        // 默认风格
+        return DesignStyle.MODERN_MINIMAL;
+    }
+
+    /**
+     * 从用户需求中提取应用名称
+     * 简单实现：取第一句话的主语或使用默认名称
+     */
+    private String extractAppNameFromRequirement(String requirement) {
+        if (requirement == null || requirement.isEmpty()) {
+            return "我的应用";
+        }
+
+        // 尝试提取"创建XXX"、"开发XXX"、"构建XXX"等模式
+        String[] patterns = {"创建", "开发", "构建", "设计", "实现"};
+        for (String pattern : patterns) {
+            int index = requirement.indexOf(pattern);
+            if (index != -1) {
+                String afterPattern = requirement.substring(index + pattern.length()).trim();
+                String[] words = afterPattern.split("[，。、,\\s]");
+                if (words.length > 0 && !words[0].isEmpty() && words[0].length() < 20) {
+                    return words[0];
+                }
+            }
+        }
+
+        // 默认名称
+        return "我的应用";
+    }
+
+    /**
+     * 从用户需求中提取功能列表
+     * 简单实现：提取包含"管理"、"查询"、"展示"等动词的短语
+     */
+    private List<String> extractFeaturesFromRequirement(String requirement) {
+        if (requirement == null || requirement.isEmpty()) {
+            return Collections.singletonList("数据管理");
+        }
+
+        List<String> features = new ArrayList<>();
+
+        // 提取常见功能关键词
+        String[] keywords = {"管理", "查询", "展示", "编辑", "删除", "创建", "浏览",
+                "搜索", "筛选", "统计", "分析", "导出", "导入", "预订", "支付"};
+
+        for (String keyword : keywords) {
+            if (requirement.contains(keyword) && features.size() < 6) {
+                // 提取包含关键词的短语
+                int index = requirement.indexOf(keyword);
+                int start = Math.max(0, index - 3);
+                int end = Math.min(requirement.length(), index + keyword.length() + 3);
+                String phrase = requirement.substring(start, end).trim();
+
+                // 清理短语
+                phrase = phrase.replaceAll("[，。、,\\s]+$", "")
+                        .replaceAll("^[，。、,\\s]+", "");
+
+                if (phrase.length() >= 2 && phrase.length() <= 10) {
+                    features.add(phrase);
+                }
+            }
+        }
+
+        // 如果提取不到功能，使用默认功能
+        if (features.isEmpty()) {
+            features.add("数据管理");
+            features.add("信息展示");
+            features.add("用户交互");
+        }
+
+        // 限制最多6个功能
+        return features.size() > 6 ? features.subList(0, 6) : features;
+    }
+
+    private boolean containsAny(String text, String... keywords) {
+        for (String keyword : keywords) {
+            if (text.contains(keyword)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 
     /**
      * 路由到混合分支：爬取+定制化修改
@@ -624,7 +761,7 @@ public class PlanRoutingService {
      * @param designSpec      设计规范（包含colorTheme、typography、layout、components）
      * @return 详细的设计 prompt
      */
-    private String buildDesignPromptFromSpec(String userRequirement, Map<String, Object> designSpec) {
+    public String buildDesignPromptFromSpec(String userRequirement, Map<String, Object> designSpec) {
         log.info("开始构建设计prompt - userRequirement长度: {}, designSpec包含字段: {}",
                 userRequirement != null ? userRequirement.length() : 0,
                 designSpec != null ? designSpec.keySet() : "null");
@@ -777,14 +914,16 @@ public class PlanRoutingService {
      * Phase 2.2.3架构桥接方法：
      * - 从AppSpec.metadata提取designSpec
      * - 构建PlanResult并填充designSpec
+     * - (新增) 填充analysisContext到PlanResult
      * - 调用ExecuteAgent生成代码
      *
      * @param appSpecId AppSpec ID
+     * @param analysisContext 前端回传的SSE分析上下文（可选）
      * @return 代码生成结果
      */
     @Transactional
-    public Map<String, Object> executeCodeGeneration(UUID appSpecId) {
-        log.info("[PlanRouting] 开始执行代码生成 - appSpecId: {}", appSpecId);
+    public Map<String, Object> executeCodeGeneration(UUID appSpecId, Map<String, Object> analysisContext) {
+        log.info("[PlanRouting] 开始执行代码生成 - appSpecId: {}, hasContext: {}", appSpecId, analysisContext != null);
 
         // Step 1: 查询并验证AppSpec
         AppSpecEntity appSpec = appSpecMapper.selectById(appSpecId);
@@ -811,11 +950,46 @@ public class PlanRoutingService {
         // 关键：填充designSpec到PlanResult
         planResult.setDesignSpec(designSpec);
 
-        log.info("[PlanRouting] PlanResult已填充designSpec，准备调用ExecuteAgent");
+        // V2.0新增：填充frontendPrototype到PlanResult
+        if (appSpec.getFrontendPrototype() != null) {
+            planResult.setFrontendPrototype(appSpec.getFrontendPrototype());
+            log.info("[PlanRouting] 已填充frontendPrototype: sandboxId={}",
+                    appSpec.getFrontendPrototype().get("sandboxId"));
+        }
+
+        // V2.0新增：填充analysisContext到PlanResult
+        if (analysisContext != null && !analysisContext.isEmpty()) {
+            planResult.setAnalysisContext(analysisContext);
+            log.info("[PlanRouting] 已填充analysisContext: keys={}", analysisContext.keySet());
+            
+            // 也保存到AppSpec metadata以备查
+            Map<String, Object> updatedMetadata = appSpec.getMetadata() != null
+                    ? new HashMap<>(appSpec.getMetadata())
+                    : new HashMap<>();
+            updatedMetadata.put("analysisContext", analysisContext);
+            appSpec.setMetadata(updatedMetadata);
+            // 注意：这里暂时不保存update，下面会统一保存
+        }
+
+        log.info("[PlanRouting] PlanResult已填充designSpec和Context，准备调用ExecuteAgent");
 
         // Step 4: 调用ExecuteAgent
         IExecuteAgent executeAgent = executeAgentFactory.getExecuteAgent();
         Map<String, Object> codeResult = executeAgent.execute(planResult);
+
+        // V2.0新增：保存生成代码到metadata，确保持久化
+        if (codeResult != null) {
+            Map<String, Object> updatedMetadata = appSpec.getMetadata() != null
+                    ? new HashMap<>(appSpec.getMetadata())
+                    : new HashMap<>();
+            updatedMetadata.put("generatedCode", codeResult);
+            updatedMetadata.put("codeGeneratedAt", Instant.now().toString());
+            appSpec.setMetadata(updatedMetadata);
+            appSpec.setUpdatedAt(Instant.now());
+            
+            appSpecMapper.updateById(appSpec);
+            log.info("[PlanRouting] 生成代码已保存到metadata - appSpecId: {}", appSpecId);
+        }
 
         log.info("[PlanRouting] ✅ 代码生成完成 - appSpecId: {}, version: {}",
                 appSpecId, executeAgent.getVersion());

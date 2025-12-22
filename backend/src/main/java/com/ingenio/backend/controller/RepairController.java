@@ -32,7 +32,7 @@ import java.util.UUID;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v2/repair")
+@RequestMapping("/v2/repair")
 @RequiredArgsConstructor
 public class RepairController {
 

@@ -44,9 +44,15 @@ import java.util.concurrent.TimeUnit;
 public class QiniuCloudAIProvider implements AIProvider {
 
     /**
-     * 七牛云API端点（OpenAI兼容）
+     * 七牛云OpenAI兼容API默认Base URL（不包含 /v1）
+     *
+     * 说明：
+     * - Spring AI 的 base-url 约定不包含 `/v1`（内部会自动拼接 `/v1/...`）。
+     * - 本类会在构建请求URL时统一拼接 `/v1/chat/completions`，因此两种配置都兼容：
+     *   - https://api.qnaigc.com
+     *   - https://api.qnaigc.com/v1
      */
-    private static final String API_ENDPOINT = "https://api.qnaigc.com/v1/chat/completions";
+    private static final String DEFAULT_BASE_URL = "https://api.qnaigc.com";
 
     /**
      * 默认模型：通义千问3-235B指令微调版本
@@ -83,8 +89,20 @@ public class QiniuCloudAIProvider implements AIProvider {
      * 2. QINIU_CLOUD_API_KEY 环境变量
      * 3. DEEPSEEK_API_KEY 环境变量（兼容旧配置）
      */
-    @Value("${spring.ai.openai.api-key:${QINIU_CLOUD_API_KEY:${DEEPSEEK_API_KEY:}}}")
+    @Value("${spring.ai.openai.api-key:${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:}}}}}")
     private String apiKey;
+
+    /**
+     * OpenAI兼容Base URL（支持通过配置覆盖）
+     *
+     * 优先级：
+     * 1. spring.ai.openai.base-url（Spring AI统一配置）
+     * 2. SPRING_AI_OPENAI_BASE_URL（环境变量）
+     * 3. QINIU_CLOUD_BASE_URL（环境变量）
+     * 4. 默认值：https://api.qnaigc.com
+     */
+    @Value("${spring.ai.openai.base-url:${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:https://api.qnaigc.com}}}")
+    private String baseUrl;
 
     /**
      * JSON序列化工具
@@ -112,12 +130,63 @@ public class QiniuCloudAIProvider implements AIProvider {
 
     @Override
     public boolean isAvailable() {
-        boolean available = apiKey != null && !apiKey.isBlank() && !apiKey.startsWith("sk-placeholder");
+        boolean available = !isPlaceholderApiKey(apiKey);
         if (!available) {
             log.warn("七牛云AI提供商不可用：API Key未配置或为占位符");
-            log.warn("请配置环境变量 QINIU_CLOUD_API_KEY 或 DEEPSEEK_API_KEY");
+            log.warn("请配置环境变量 QINIU_CLOUD_API_KEY（或 SPRING_AI_OPENAI_API_KEY / DEEPSEEK_API_KEY）");
         }
         return available;
+    }
+
+    /**
+     * 判断API Key是否为“未配置/占位符”值
+     *
+     * 说明：
+     * - 为避免把示例值当作真实Key发起请求（导致 401 invalid api key），这里对常见占位符做拦截。
+     * - 真实Key不应该包含 "your-*"、"placeholder" 等明显标识。
+     */
+    private boolean isPlaceholderApiKey(String value) {
+        if (value == null) {
+            return true;
+        }
+
+        String normalized = value.trim();
+        if (normalized.isEmpty()) {
+            return true;
+        }
+
+        String lower = normalized.toLowerCase();
+        return lower.equals("sk-placeholder")
+                || lower.startsWith("sk-placeholder")
+                || lower.equals("your-api-key-here")
+                || lower.contains("your-api-key")
+                || lower.contains("your-deepseek-api-key")
+                || lower.startsWith("sk-your-");
+    }
+
+    /**
+     * 构建Chat Completions完整URL
+     *
+     * 兼容两种配置方式：
+     * - baseUrl = https://api.qnaigc.com（与Spring AI保持一致）
+     * - baseUrl = https://api.qnaigc.com/v1（历史配置也兼容，会自动裁剪 /v1）
+     */
+    private String buildChatCompletionsUrl() {
+        String normalized = baseUrl == null ? "" : baseUrl.trim();
+        if (normalized.isEmpty()) {
+            normalized = DEFAULT_BASE_URL;
+        }
+
+        // 移除末尾斜杠
+        normalized = normalized.replaceAll("/+$", "");
+
+        // 移除已有的 /v1 后缀（避免重复）
+        if (normalized.toLowerCase().endsWith("/v1")) {
+            normalized = normalized.substring(0, normalized.length() - 3);
+        }
+
+        // 统一添加 /v1/chat/completions
+        return normalized + "/v1/chat/completions";
     }
 
     /**
@@ -244,7 +313,7 @@ public class QiniuCloudAIProvider implements AIProvider {
         try {
             // 构建HTTP请求
             Request httpRequest = new Request.Builder()
-                    .url(API_ENDPOINT)
+                    .url(buildChatCompletionsUrl())
                     .header("Authorization", "Bearer " + apiKey)
                     .header("Content-Type", "application/json")
                     .post(RequestBody.create(requestBody, MediaType.parse("application/json")))

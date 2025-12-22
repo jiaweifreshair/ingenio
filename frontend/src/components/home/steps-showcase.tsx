@@ -21,8 +21,8 @@ const steps: ReadonlyArray<Step> = [
   },
   {
     number: 2,
-    title: "智能生成",
-    description: "自动拆解为步骤与草案，随改随看。",
+    title: "需求分析",
+    description: "AI智能拆解业务逻辑，生成思维导图与架构方案。",
   },
   {
     number: 3,

@@ -68,6 +68,20 @@ public class PlanResult {
     private Map<String, Object> designSpec;
 
     /**
+     * V2.0前端原型（OpenLovable生成）
+     * 包含: sandboxId, previewUrl, provider, generatedAt等信息
+     * 用于ExecuteAgent直接使用已生成的原型，避免重复生成
+     */
+    private Map<String, Object> frontendPrototype;
+
+    /**
+     * V2.0详细分析上下文（来自SSE分析流）
+     * 包含: entities, relationships, operations, techStack等结构化数据
+     * 用于提升代码生成的精准度
+     */
+    private Map<String, Object> analysisContext;
+
+    /**
      * 功能模块
      */
     @Data

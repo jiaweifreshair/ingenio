@@ -22,9 +22,11 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 /**
@@ -368,6 +370,32 @@ public class GenerateController {
         // 创建SSE Emitter（超时时间5分钟）
         SseEmitter emitter = new SseEmitter(300_000L);
         log.info("[SSE] 创建SSE连接，超时时间: 300秒");
+        AtomicBoolean connectionClosed = new AtomicBoolean(false);
+
+        // 连接完成/超时/错误统一视为连接已关闭，避免后台线程继续推送导致异常派发
+        emitter.onCompletion(() -> {
+            connectionClosed.set(true);
+            log.info("[SSE] 连接已完成");
+        });
+        emitter.onTimeout(() -> {
+            connectionClosed.set(true);
+            log.warn("[SSE] 连接超时（300秒），自动关闭连接");
+            try {
+                emitter.complete();
+            } catch (Exception ignore) {
+                // ignore
+            }
+        });
+        emitter.onError(throwable -> {
+            connectionClosed.set(true);
+            log.error("[SSE] 连接发生错误，错误类型: {}", throwable.getClass().getSimpleName(), throwable);
+            try {
+                // SSE场景避免 completeWithError 触发异常派发，使用正常complete关闭连接
+                emitter.complete();
+            } catch (Exception ignore) {
+                // ignore
+            }
+        });
 
         // V2.0优化：SSE端点已加入白名单，允许匿名访问
         // 意图分析作为产品核心功能，应该允许未登录用户体验
@@ -397,6 +425,9 @@ public class GenerateController {
                 nlRequirementAnalyzer.analyzeWithProgress(
                         request.getRequirement(),
                         progressMessage -> {
+                            if (connectionClosed.get()) {
+                                return;
+                            }
                             try {
                                 // 将AnalysisProgressMessage转换为JSON并通过SSE发送
                                 String json = objectMapper.writeValueAsString(progressMessage);
@@ -409,43 +440,56 @@ public class GenerateController {
                                         progressMessage.getStatus(),
                                         progressMessage.getProgress());
 
-                            } catch (IOException e) {
-                                log.error("SSE发送进度消息失败", e);
-                                emitter.completeWithError(e);
+                            } catch (Exception e) {
+                                // 常见场景：客户端刷新/离开页面导致连接关闭，此时继续推送会触发IO异常
+                                connectionClosed.set(true);
+                                log.warn("[SSE] SSE推送进度失败，连接已关闭: {}", e.getMessage());
+                                try {
+                                    emitter.complete();
+                                } catch (Exception ignore) {
+                                    // ignore
+                                }
                             }
                         }
                 );
 
-                // 分析完成，发送完成事件
+                if (connectionClosed.get()) {
+                    return;
+                }
+
+                // 分析完成，发送完成事件（使用JSON序列化确保字符安全）
                 emitter.send(SseEmitter.event()
                         .name("complete")
-                        .data("{\"message\":\"分析完成\"}"));
+                        .data(objectMapper.writeValueAsString(Map.of("message", "分析完成"))));
                 emitter.complete();
+                connectionClosed.set(true);
 
                 log.info("[SSE] 流式分析完成，连接正常关闭");
 
             } catch (Exception e) {
                 log.error("流式分析失败", e);
+
+                if (connectionClosed.get()) {
+                    return;
+                }
+
                 try {
                     emitter.send(SseEmitter.event()
                             .name("error")
-                            .data("{\"error\":\"" + e.getMessage() + "\"}"));
-                } catch (IOException ioException) {
+                            .data(objectMapper.writeValueAsString(Map.of(
+                                    "error", e.getMessage() == null ? "分析失败" : e.getMessage()
+                            ))));
+                } catch (Exception ioException) {
                     log.error("SSE发送错误消息失败", ioException);
+                } finally {
+                    connectionClosed.set(true);
+                    try {
+                        emitter.complete();
+                    } catch (Exception ignore) {
+                        // ignore
+                    }
                 }
-                emitter.completeWithError(e);
             }
-        });
-
-        // 设置超时和错误处理
-        emitter.onTimeout(() -> {
-            log.warn("[SSE] 连接超时（300秒），自动关闭连接");
-            emitter.complete();
-        });
-
-        emitter.onError(throwable -> {
-            log.error("[SSE] 连接发生错误，错误类型: {}", throwable.getClass().getSimpleName(), throwable);
-            emitter.completeWithError(throwable);
         });
 
         return emitter;

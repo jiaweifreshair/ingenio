@@ -63,7 +63,7 @@ public class UserEntity {
     /**
      * 权限列表（JSON数组）
      */
-    @TableField(value = "permissions", typeHandler = JacksonTypeHandler.class)
+    @TableField(value = "permissions", exist = false, typeHandler = JacksonTypeHandler.class)
     private List<String> permissions;
 
     /**
@@ -75,7 +75,7 @@ public class UserEntity {
     /**
      * 用户显示名称
      */
-    @TableField("display_name")
+    @TableField(value = "display_name", exist = false)
     private String displayName;
 
     /**
@@ -87,31 +87,31 @@ public class UserEntity {
     /**
      * 手机号码
      */
-    @TableField("phone")
+    @TableField(value = "phone", exist = false)
     private String phone;
 
     /**
      * 个人简介
      */
-    @TableField("bio")
+    @TableField(value = "bio", exist = false)
     private String bio;
 
     /**
      * 邮箱是否已验证
      */
-    @TableField("email_verified")
+    @TableField(value = "email_verified", exist = false)
     private Boolean emailVerified;
 
     /**
      * 手机号是否已验证
      */
-    @TableField("phone_verified")
+    @TableField(value = "phone_verified", exist = false)
     private Boolean phoneVerified;
 
     /**
      * 最后登录时间
      */
-    @TableField("last_login_at")
+    @TableField(value = "last_login_at", exist = false)
     private Instant lastLoginAt;
 
     /**
@@ -129,7 +129,7 @@ public class UserEntity {
     /**
      * 元数据（JSON）
      */
-    @TableField(value = "metadata", typeHandler = JacksonTypeHandler.class)
+    @TableField(value = "metadata", exist = false, typeHandler = JacksonTypeHandler.class)
     private Map<String, Object> metadata;
 
     /**

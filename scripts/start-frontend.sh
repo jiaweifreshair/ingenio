@@ -26,7 +26,7 @@ fi
 
 # 设置环境变量
 export NEXT_PUBLIC_API_BASE_URL=http://localhost:8080/api
-export PORT=3001
+export PORT=3000
 
 # 启动开发服务器
 echo "🔨 启动 Next.js 开发服务器..."

@@ -13,7 +13,8 @@ import { UniaixModel } from '@/lib/api/uniaix';
 export type PhaseType =
   | 'idle'              // 空闲状态，等待用户输入
   | 'analyzing'         // 实时分析阶段（SSE连接）
-  | 'style-selection'   // 风格选择阶段 (Intermediate state for auto-transition)
+  | 'plan-review'       // 技术方案评审阶段 (New V2.1)
+  | 'style-selection'   // 风格选择阶段 (Intermediate state)
   | 'prototype-preview' // 原型预览阶段 (Unified Lite Flow)
   | 'generating'        // 完整生成阶段
   | 'navigating';       // 导航跳转阶段

@@ -137,9 +137,15 @@ MINIO_BUCKET=ingenio-dev
 # JWT 配置
 JWT_SECRET=ingenio-jwt-dev-secret-key-change-in-production
 
-# AI API Keys（请替换为实际值）
-DEEPSEEK_API_KEY=sk-4c11e155dc9cb7c35be13a88996fe5660e0115d318cf69975a34451772158372
-DASHSCOPE_API_KEY=sk-20bc5252fe0f4aa4a437db35d913ac4e
+# AI API Keys（请替换为实际值，禁止提交真实 sk-...）
+# 七牛云 OpenAI 兼容接口（推荐）
+QINIU_CLOUD_API_KEY=sk-placeholder
+# Spring AI 约定：base-url 不要包含 /v1（否则会拼成 /v1/v1/...）
+SPRING_AI_OPENAI_BASE_URL=https://api.qnaigc.com
+
+# 兼容旧变量（按需）
+DEEPSEEK_API_KEY=sk-placeholder
+DASHSCOPE_API_KEY=sk-placeholder
 EOF
         echo -e "${YELLOW}⚠️  请编辑 backend/.env 文件，填入实际的 API Keys${NC}"
     else
@@ -263,4 +269,3 @@ main() {
 
 # 执行主函数
 main
-

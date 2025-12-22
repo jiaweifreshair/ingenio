@@ -22,15 +22,18 @@ public class PrototypeGenerateRequest {
     /**
      * 用户自然语言需求描述
      */
-    @NotBlank(message = "需求描述不能为空")
-    @Size(min = 10, max = 2000, message = "需求描述需在10-2000个字符之间")
+    @Size(max = 2000, message = "需求描述最多2000个字符")
     private String userRequirement;
 
     /**
      * 设计风格代码（对应DesignStyle枚举的code）
      */
-    @NotBlank(message = "设计风格不能为空")
     private String designStyle;
+
+    /**
+     * AppSpec ID (V2.0新增，用于基于已有Spec生成)
+     */
+    private String appSpecId;
 
     /**
      * 已识别的意图类型（可选，若为空则服务端重新识别）

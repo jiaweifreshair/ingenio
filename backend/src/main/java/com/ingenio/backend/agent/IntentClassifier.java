@@ -98,11 +98,17 @@ public class IntentClassifier {
           "confidence": 0.95,
           "reasoning": "判断理由说明（详细说明为什么识别为该意图）",
           "referenceUrls": ["提取的网站URL或网站名称"],
-          "extractedKeywords": ["关键词1", "关键词2"],
+          "extractedKeywords": ["关键词1", "关键词2", "相关的标准行业术语(如将'卖货'转为'电商')"],
           "customizationRequirement": "定制化需求描述（仅hybrid时需要）",
           "suggestedNextAction": "建议的下一步操作",
           "warnings": ["警告信息（如有）"]
         }
+
+        **关键词提取增强规则**：
+        - 除了提取原句中的关键词外，**必须**补充相关的**标准行业术语**和**同义词**。
+        - 例如：用户输入"卖货"，关键词应包含["卖货", "电商", "商城", "在线零售"]
+        - 例如：用户输入"订房"，关键词应包含["订房", "酒店预订", "民宿", "OTA"]
+        - 目的：提高后续模板匹配的命中率。
 
         注意：
         - 必须严格按照JSON格式输出，不要包含任何其他文字
@@ -212,7 +218,8 @@ public class IntentClassifier {
         if (userRequirement == null || userRequirement.trim().isEmpty()) {
             try {
                 emitter.send(SseEmitter.event().name("error").data("用户需求不能为空"));
-                emitter.completeWithError(new IllegalArgumentException("用户需求不能为空"));
+                // SSE场景避免 completeWithError 触发异常派发，使用正常complete关闭连接
+                emitter.complete();
             } catch (IOException e) {
                 log.error("发送错误事件失败", e);
             }
@@ -264,7 +271,7 @@ public class IntentClassifier {
                                 log.error("AI流式生成出错", error);
                                 try {
                                     emitter.send(SseEmitter.event().name("error").data("AI分析过程中断: " + error.getMessage()));
-                                    emitter.completeWithError(error);
+                                    emitter.complete();
                                 } catch (IOException e) {
                                     log.error("发送错误事件失败", e);
                                 }
@@ -300,7 +307,7 @@ public class IntentClassifier {
                                     log.error("处理完整响应失败", e);
                                     try {
                                         emitter.send(SseEmitter.event().name("error").data("结果解析失败: " + e.getMessage()));
-                                        emitter.completeWithError(e);
+                                        emitter.complete();
                                     } catch (IOException ioException) {
                                         log.error("发送错误事件失败", ioException);
                                     }
@@ -312,7 +319,7 @@ public class IntentClassifier {
             log.error("IntentClassifier流式启动失败", e);
             try {
                 emitter.send(SseEmitter.event().name("error").data("系统内部错误: " + e.getMessage()));
-                emitter.completeWithError(e);
+                emitter.complete();
             } catch (IOException ioException) {
                 log.error("发送错误事件失败", ioException);
             }

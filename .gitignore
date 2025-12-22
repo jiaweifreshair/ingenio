@@ -80,5 +80,14 @@ backend/target/
 # pnpm store
 frontend/.pnpm-store/
 
-# Claude projects
+# Claude Code internal files
+.claude/debug/
+.claude/file-history/
+.claude/history.jsonl
+.claude/settings.json
+.claude/settings.local.json
+.claude/settings.local.json.backup
+.claude/shell-snapshots/
+.claude/statsig/
+.claude/todos/
 .claude/projects/

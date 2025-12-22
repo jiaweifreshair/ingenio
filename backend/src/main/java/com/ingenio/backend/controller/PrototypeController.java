@@ -15,6 +15,7 @@ import com.ingenio.backend.entity.AppSpecEntity;
 import com.ingenio.backend.enums.DesignStyle;
 import com.ingenio.backend.mapper.AppSpecMapper;
 import com.ingenio.backend.service.OpenLovableService;
+import com.ingenio.backend.service.PlanRoutingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -29,6 +30,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.*;
@@ -47,6 +49,7 @@ public class PrototypeController {
     private final IntentClassifier intentClassifier;
     private final OpenLovableService openLovableService;
     private final AppSpecMapper appSpecMapper;
+    private final PlanRoutingService planRoutingService;
 
     /**
      * 根据用户需求和设计风格生成OpenLovable沙箱预览
@@ -300,29 +303,75 @@ public class PrototypeController {
     /**
      * 生成原型预览（SSE流式响应，支持实时进度显示）
      *
-     * V2.0优化：直接代理 open-lovable-cn 的 SSE 流，前端可显示打字机效果
+     * V2.0优化：支持基于AppSpec + DesignSpec的流式生成
      */
     @PostMapping(value = "/generate/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "生成原型预览（流式）", description = "SSE流式响应，实时显示生成进度")
     public ResponseEntity<StreamingResponseBody> generatePrototypeStream(
             @Valid @RequestBody PrototypeGenerateRequest request
     ) {
-        log.info("[Prototype SSE] 开始流式生成: requirement={}", request.getUserRequirement());
+        log.info("[Prototype SSE] 开始流式生成: requirement={}, appSpecId={}", request.getUserRequirement(), request.getAppSpecId());
 
         StreamingResponseBody stream = outputStream -> {
             try {
-                // Step 1: 构建参数
-                List<String> warnings = new ArrayList<>();
-                IntentClassificationResult classifierResult = resolveIntentIfNeeded(request, warnings);
-                RequirementIntent intent = determineIntent(request, classifierResult, warnings);
-                List<String> referenceUrls = mergeReferenceUrls(request, classifierResult);
-                boolean needsCrawling = intent != null && intent.needsWebCrawling() || !referenceUrls.isEmpty();
-                String customization = firstNonBlank(
-                        request.getCustomizationRequirement(),
-                        classifierResult != null ? classifierResult.getCustomizationRequirement() : null
-                );
+                String prompt;
+                List<String> referenceUrls = new ArrayList<>();
+                boolean needsCrawling = false;
+                String customization = null;
 
-                String prompt = buildPrompt(request, intent);
+                // V2.0 Logic: Generate from AppSpec + Style
+                if (StringUtils.hasText(request.getAppSpecId()) && StringUtils.hasText(request.getDesignStyle())) {
+                    log.info("[Prototype SSE] 使用AppSpec生成: id={}, style={}", request.getAppSpecId(), request.getDesignStyle());
+                    UUID appSpecId = UUID.fromString(request.getAppSpecId());
+                    AppSpecEntity appSpec = appSpecMapper.selectById(appSpecId);
+
+                    Map<String, Object> designSpec = null;
+                    
+                    if (appSpec != null && appSpec.getMetadata() != null) {
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> styleVariants = (List<Map<String, Object>>) appSpec.getMetadata().get("styleVariants");
+                        
+                        if (styleVariants != null) {
+                            Map<String, Object> selectedVariant = styleVariants.stream()
+                                .filter(v -> request.getDesignStyle().equals(v.get("styleId")))
+                                .findFirst()
+                                .orElse(null);
+                                
+                            if (selectedVariant != null) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> ds = (Map<String, Object>) selectedVariant.get("designSpec");
+                                designSpec = ds;
+                            }
+                        }
+                    }
+
+                    if (designSpec != null) {
+                        // Get requirement from AppSpec if not provided in request
+                        String userReq = request.getUserRequirement();
+                        if (!StringUtils.hasText(userReq) && appSpec.getSpecContent() != null) {
+                            userReq = (String) appSpec.getSpecContent().get("userRequirement");
+                        }
+                        
+                        prompt = planRoutingService.buildDesignPromptFromSpec(userReq, designSpec);
+                        log.info("[Prototype SSE] 已构建DesignSpec Prompt");
+                    } else {
+                        log.warn("[Prototype SSE] 未找到指定风格或AppSpec: id={}, style={}", request.getAppSpecId(), request.getDesignStyle());
+                        prompt = StringUtils.hasText(request.getUserRequirement()) ? request.getUserRequirement() : "Generate a web app"; 
+                    }
+                } else {
+                    // Existing V1 Logic
+                    List<String> warnings = new ArrayList<>();
+                    IntentClassificationResult classifierResult = resolveIntentIfNeeded(request, warnings);
+                    RequirementIntent intent = determineIntent(request, classifierResult, warnings);
+                    referenceUrls.addAll(mergeReferenceUrls(request, classifierResult));
+                    needsCrawling = intent != null && intent.needsWebCrawling() || !referenceUrls.isEmpty();
+                    customization = firstNonBlank(
+                            request.getCustomizationRequirement(),
+                            classifierResult != null ? classifierResult.getCustomizationRequirement() : null
+                    );
+
+                    prompt = buildPrompt(request, intent);
+                }
 
                 // Step 2: 调用 OpenLovableService 的流式方法
                 openLovableService.generatePrototypeStream(
@@ -339,8 +388,12 @@ public class PrototypeController {
             } catch (Exception e) {
                 log.error("[Prototype SSE] 流式生成失败", e);
                 String errorEvent = "data: {\"type\":\"error\",\"error\":\"" + e.getMessage() + "\"}\n\n";
-                outputStream.write(errorEvent.getBytes());
-                outputStream.flush();
+                try {
+                    outputStream.write(errorEvent.getBytes());
+                    outputStream.flush();
+                } catch (IOException ioException) {
+                    log.warn("[Prototype SSE] 错误事件写入失败（客户端可能已断开）: {}", ioException.getMessage());
+                }
             }
         };
 

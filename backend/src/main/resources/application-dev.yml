@@ -1,14 +1,17 @@
-# 开发环境配置
+# 开发环境配置（连接Docker中的服务）
+# ⚠️ 重要：禁止使用本地安装的PostgreSQL，必须连接Docker容器中的数据库
+# 启动Docker服务：docker-compose up -d postgres redis minio
+# 如有端口冲突：brew services stop postgresql@15
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/ingenio_dev
+    # 连接Docker容器中的PostgreSQL (docker-compose.yml暴露的5432端口)
+    url: jdbc:postgresql://localhost:5432/ingenio?stringtype=unspecified
     username: postgres
-    password: postgres
+    password: ingenio_20251122
 
   redis:
     host: localhost
     port: 6379
-    password:
 
   ai:
     alibaba:
@@ -31,6 +34,12 @@ logging:
     root: INFO
     com.ingenio.backend: DEBUG
     com.baomidou.mybatisplus: DEBUG
+
+# Actuator健康检查配置（禁用邮件健康检查）
+management:
+  health:
+    mail:
+      enabled: false
 
 # Ingenio配置
 ingenio:

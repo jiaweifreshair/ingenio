@@ -13,6 +13,7 @@ import {
   Database, 
   Layout, 
   Zap,
+  Brain,
   LucideIcon
 } from 'lucide-react';
 import { type AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
@@ -20,22 +21,19 @@ import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Typewriter } from '@/components/ui/typewriter';
+import type { PhaseType } from '@/types/requirement-form';
+import { PlanDisplay } from './PlanDisplay';
 
-/**
- * 分析进度展示面板 - 思维链增强版
- *
- * 功能：
- * - "Chain of Thought" 可视化展示
- * - 终端/日志风格的详细推理过程
- * - 关键词高亮
- * - 结构化数据预览
- */
 export interface AnalysisProgressPanelProps {
   messages: AnalysisProgressMessage[];
   isConnected: boolean;
   isCompleted: boolean;
+  isLoading?: boolean;
   error: string | null;
   finalResult?: unknown;
+  currentPhase?: PhaseType;
+  onConfirmPlan?: () => void;
+  onModifyPlan?: (requirement: string) => void;
 }
 
 const STEP_CONFIG = [
@@ -43,7 +41,8 @@ const STEP_CONFIG = [
   { name: '实体关系建模', icon: Database, description: '识别核心数据实体与关联...' },
   { name: '功能意图识别', icon: Cpu, description: '分析所需的功能模块与业务逻辑...' },
   { name: '技术架构选型', icon: Layout, description: '匹配最佳技术栈与设计模式...' },
-  { name: '复杂度与风险评估', icon: Zap, description: '计算开发成本与潜在风险...' }
+  { name: '复杂度与风险评估', icon: Zap, description: '计算开发成本与潜在风险...' },
+  { name: 'Ultrathink 深度规划', icon: Brain, description: '构建系统架构、数据流图与实施路径...' }
 ];
 
 /**
@@ -110,7 +109,7 @@ const StepLogItem = ({
             </div>
           </div>
           <p className="text-xs text-muted-foreground truncate pr-4">
-             {message?.detail || config.description}
+             {message?.detail ? (message.detail.length > 50 ? message.detail.substring(0, 50) + '...' : message.detail) : config.description}
           </p>
         </div>
       </div>
@@ -132,11 +131,11 @@ const StepLogItem = ({
                <div className="animate-in fade-in slide-in-from-left-1 duration-300">
                  <div className="text-blue-400">→ Initiating {config.name} process...</div>
                  {message?.detail && (
-                   <div className="text-zinc-100 pl-4 border-l-2 border-zinc-800 my-1 py-1 min-h-[1.5em]">
+                   <div className="text-zinc-100 pl-4 border-l-2 border-zinc-800 my-1 py-1 min-h-[1.5em] whitespace-pre-wrap">
                      <Typewriter 
                        text={message.detail} 
-                       speed={10} 
-                       instant={status === 'COMPLETED'}
+                       speed={step === 6 ? 5 : 10} 
+                       instant={status === 'COMPLETED' && step !== 6}
                      />
                    </div>
                  )}
@@ -147,7 +146,7 @@ const StepLogItem = ({
             )}
 
             {/* 结构化结果预览 */}
-            {status === 'COMPLETED' && !!message?.result && (
+            {status === 'COMPLETED' && !!message?.result && step !== 6 && (
               <div className="mt-2 bg-zinc-900 rounded p-2 border border-zinc-800 overflow-x-auto">
                 <div className="text-zinc-500 mb-1 text-[10px] uppercase tracking-wider">Output Preview</div>
                 <pre className="text-green-300/90 text-[10px] leading-relaxed">
@@ -180,8 +179,12 @@ export function AnalysisProgressPanel({
   messages,
   isConnected, // Keep prop but mark as used or ignore
   isCompleted,
+  isLoading,
   error,
-  finalResult
+  finalResult,
+  currentPhase,
+  onConfirmPlan,
+  onModifyPlan
 }: AnalysisProgressPanelProps): React.ReactElement {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expandedStep, setExpandedStep] = useState<number | null>(1);
@@ -231,6 +234,21 @@ export function AnalysisProgressPanel({
     const latestProgress = messages[messages.length - 1]?.progress || 0;
     return latestProgress;
   };
+
+  // 获取技术蓝图内容
+  const blueprint = messages.find(m => m.step === 6 && m.status === 'COMPLETED')?.result as { blueprint?: string } | undefined;
+  const showPlan = isCompleted && !!blueprint?.blueprint;
+
+  if (showPlan) {
+    return (
+      <PlanDisplay
+        planContent={blueprint!.blueprint!}
+        onConfirm={onConfirmPlan || (() => {})}
+        onModify={onModifyPlan || (() => {})}
+        isGenerating={isLoading || currentPhase === 'style-selection' || currentPhase === 'prototype-preview'}
+      />
+    );
+  }
 
   return (
     <Card className="flex flex-col h-full border-0 shadow-none bg-transparent">
@@ -354,6 +372,25 @@ export function AnalysisProgressPanel({
           </div>
         )}
       </ScrollArea>
+
+      {/* 原型生成中提示 - 当分析完成但仍处于style-selection阶段时显示 */}
+      {isCompleted && currentPhase === 'style-selection' && (
+        <div className="mt-4 p-3 rounded-lg border border-blue-500/30 bg-blue-50/10 animate-in slide-in-from-bottom-4 fade-in duration-700">
+           <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                 <div className="relative">
+                    <div className="absolute inset-0 rounded-full bg-blue-500/20 animate-ping"></div>
+                    <Loader2 className="h-5 w-5 text-blue-500 animate-spin relative z-10" />
+                 </div>
+                 <div>
+                    <h3 className="text-sm font-medium text-blue-600 dark:text-blue-400">正在生成交互原型</h3>
+                    <p className="text-xs text-muted-foreground">AI正在基于技术蓝图构建界面...</p>
+                 </div>
+              </div>
+              <span className="text-xs font-mono text-blue-500">PROTOTYPING...</span>
+           </div>
+        </div>
+      )}
     </Card>
   );
 }

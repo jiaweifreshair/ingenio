@@ -1,0 +1,2 @@
+-- 回滚派生关系表
+DROP TABLE IF EXISTS forks CASCADE;

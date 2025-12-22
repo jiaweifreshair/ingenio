@@ -1,0 +1,32 @@
+# 单阶段Dockerfile - 使用已编译的JAR文件
+# 适用于网络受限环境
+
+FROM eclipse-temurin:17-jre-alpine
+
+# 安装必要工具
+RUN apk add --no-cache curl bash
+
+# 创建非root用户
+RUN addgroup -S ingenio && adduser -S ingenio -G ingenio
+
+# 设置工作目录
+WORKDIR /app
+
+# 复制已编译的JAR文件
+COPY target/*.jar app.jar
+
+# 修改所有权
+RUN chown -R ingenio:ingenio /app
+
+# 切换到非root用户
+USER ingenio
+
+# 暴露端口
+EXPOSE 8080
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
+
+# 启动应用
+ENTRYPOINT ["java", "-Djava.security.egd=file:/dev/./urandom", "-Dspring.profiles.active=docker", "-jar", "app.jar"]

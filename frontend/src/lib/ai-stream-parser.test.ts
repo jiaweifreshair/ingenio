@@ -68,5 +68,25 @@ export const Button = () => <button>Click me</button>;
       expect(files).toHaveLength(1);
       expect(files[0].content).toBe('v2');
     });
+
+    it('should not merge when a <file> block is restarted before it is closed', () => {
+      const input = `
+<file path="src/components/MoodSelector.jsx">
+// PARTIAL (truncated)
+export default function MoodSelector() { return null }
+<file path="src/components/MoodSelector.jsx">
+// FINAL (regenerated)
+export default function MoodSelector() { return <div>OK</div> }
+</file>
+      `;
+      const { files, currentFile } = parseFilesFromResponse(input);
+      expect(currentFile).toBeNull();
+      expect(files).toHaveLength(1);
+      expect(files[0].path).toBe('src/components/MoodSelector.jsx');
+      expect(files[0].content).toContain('FINAL');
+      expect(files[0].content).toContain('<div>OK</div>');
+      expect(files[0].content).not.toContain('PARTIAL');
+      expect(files[0].content).not.toContain('<file path=');
+    });
   });
 });

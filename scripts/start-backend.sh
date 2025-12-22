@@ -6,6 +6,15 @@ cd "$(dirname "$0")/../backend"
 
 echo "🚀 启动秒构AI后端服务..."
 
+# 加载环境变量
+if [ -f .env ]; then
+    echo "📄 加载环境变量 (.env)..."
+    # 使用 set -a 自动导出变量，处理包含空格的值
+    set -a
+    source .env
+    set +a
+fi
+
 # 检查 Java 版本
 if ! command -v java &> /dev/null; then
     echo "❌ 错误: 未找到 Java，请先安装 Java 17+"
@@ -26,6 +35,10 @@ fi
 
 # 检查数据库连接
 echo "📊 检查数据库连接..."
+echo "DB_HOST: ${DB_HOST:-localhost}"
+echo "DB_PORT: ${DB_PORT:-5432}"
+echo "DB_NAME: ${DB_NAME:-ingenio_dev}"
+
 if ! docker ps | grep -q ingenio-postgres; then
     echo "⚠️  警告: PostgreSQL 容器未运行，请先启动: docker-compose up -d postgres"
 fi
@@ -34,7 +47,7 @@ fi
 export SPRING_PROFILES_ACTIVE=dev
 export DB_HOST=localhost
 export DB_PORT=5432
-export DB_NAME=ingenio_dev
+export DB_NAME=ingenio  # 强制使用 ingenio
 export DB_USER=ingenio_user
 export DB_PASSWORD=ingenio_password
 export REDIS_HOST=localhost
@@ -44,10 +57,13 @@ export MINIO_ACCESS_KEY=minioadmin
 export MINIO_SECRET_KEY=minioadmin
 export MINIO_BUCKET_NAME=ingenio-code
 
-# 如果没有设置 API Key，使用占位符
-if [ -z "$DASHSCOPE_API_KEY" ]; then
-    echo "⚠️  警告: DASHSCOPE_API_KEY 未设置，使用占位符"
-    export DASHSCOPE_API_KEY=sk-placeholder
+# 检查 API Key
+if [ -z "$SPRING_AI_OPENAI_API_KEY" ] && [ -z "$QINIU_CLOUD_API_KEY" ] && [ -z "$DEEPSEEK_API_KEY" ]; then
+    echo "⚠️  警告: 未检测到有效的 API Key (SPRING_AI_OPENAI_API_KEY / QINIU_CLOUD_API_KEY)"
+    echo "    系统将使用默认占位符，这可能导致 AI 功能无法使用 (401 Invalid API Key)"
+    export SPRING_AI_OPENAI_API_KEY=sk-placeholder
+else
+    echo "✅ 检测到 API Key 配置"
 fi
 
 # 启动服务

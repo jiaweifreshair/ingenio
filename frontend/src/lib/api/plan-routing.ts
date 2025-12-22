@@ -469,9 +469,11 @@ export interface CodeGenerationResult {
  * 完整V2流程最后一步：
  * 1. 从AppSpec.metadata提取designSpec
  * 2. 构建PlanResult并填充designSpec
- * 3. 调用ExecuteAgent生成完整的全栈代码（PostgreSQL + Spring Boot + React）
+ * 3. (新增) 将前端收集的SSE分析上下文(analysisContext)注入PlanResult
+ * 4. 调用ExecuteAgent生成完整的全栈代码（PostgreSQL + Spring Boot + React）
  *
  * @param appSpecId - AppSpec ID
+ * @param analysisContext - (可选) SSE分析阶段收集的结构化上下文，如entities, techStack等
  * @returns 代码生成结果
  *
  * @example
@@ -479,15 +481,16 @@ export interface CodeGenerationResult {
  * // 在confirmDesign成功后调用
  * const confirmResult = await confirmDesign(appSpecId);
  * if (confirmResult.success) {
- *   const codeResult = await executeCodeGeneration(appSpecId);
+ *   const codeResult = await executeCodeGeneration(appSpecId, analysisContext);
  *   console.log('代码生成完成:', codeResult.version);
  * }
  * ```
  */
 export async function executeCodeGeneration(
-  appSpecId: string
+  appSpecId: string,
+  analysisContext?: Record<string, unknown>
 ): Promise<CodeGenerationResult> {
-  console.log('[PlanRouting API] 执行代码生成:', appSpecId);
+  console.log('[PlanRouting API] 执行代码生成:', appSpecId, analysisContext ? '(with context)' : '');
 
   // 参数验证
   if (!appSpecId) {
@@ -497,7 +500,7 @@ export async function executeCodeGeneration(
   try {
     const response = await post<CodeGenerationResult>(
       `/v2/plan-routing/${appSpecId}/execute-code-generation`,
-      {}
+      analysisContext || {} // 传递上下文作为Body
     );
 
     console.log('[PlanRouting API] 代码生成响应:', response);

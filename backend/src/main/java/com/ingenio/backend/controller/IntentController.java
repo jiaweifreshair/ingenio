@@ -204,7 +204,8 @@ public class IntentController {
             log.error("启动流式识别失败", e);
             try {
                 emitter.send(SseEmitter.event().name("error").data("启动失败: " + e.getMessage()));
-                emitter.completeWithError(e);
+                // SSE场景避免 completeWithError 触发异常派发，使用正常complete关闭连接
+                emitter.complete();
             } catch (Exception ex) {
                 // ignore
             }

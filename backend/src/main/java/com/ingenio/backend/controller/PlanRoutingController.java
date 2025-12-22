@@ -13,7 +13,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
 import java.util.UUID;
+import com.ingenio.backend.dto.response.DesignConfirmResponse;
+import com.ingenio.backend.dto.response.CodeGenerationResponse;
 
 /**
  * Plan阶段路由控制器
@@ -53,7 +56,9 @@ public class PlanRoutingController {
         // 获取userId：优先使用请求中的值，否则从Sa-Token会话获取
         UUID userId = request.getUserId();
         if (userId == null) {
-            String loginId = StpUtil.getLoginIdAsString();
+            // V2.0修复：使用getLoginIdDefaultNull()安全获取登录ID，避免未登录时抛出异常
+            Object loginIdObj = StpUtil.getLoginIdDefaultNull();
+            String loginId = loginIdObj != null ? loginIdObj.toString() : null;
             if (loginId != null && !loginId.isEmpty()) {
                 userId = UUID.fromString(loginId);
             } else {
@@ -65,12 +70,14 @@ public class PlanRoutingController {
         // 获取tenantId：优先使用请求中的值，否则使用默认租户
         UUID tenantId = request.getTenantId();
         if (tenantId == null) {
-            // 从Session获取tenantId，如果没有则使用默认租户
-            Object sessionTenantId = StpUtil.getSession().get("tenantId");
+            // V2.0修复：使用getSession(false)安全获取session，避免未登录时抛出异常
+            // getSession(false)：如果用户未登录，返回null而不是抛出NotLoginException
+            var session = StpUtil.getSession(false);
+            Object sessionTenantId = session != null ? session.get("tenantId") : null;
             if (sessionTenantId != null) {
                 tenantId = UUID.fromString(sessionTenantId.toString());
             } else {
-                // 默认租户ID
+                // 默认租户ID（用于未登录场景）
                 tenantId = UUID.fromString("00000000-0000-0000-0000-000000000001");
             }
         }
@@ -120,20 +127,30 @@ public class PlanRoutingController {
      * 更新AppSpec的designConfirmed标志
      *
      * @param appSpecId 应用规格ID
-     * @return 确认结果
+     * @return 确认结果，包含是否可进入Execute阶段的标志
      */
     @PostMapping("/{appSpecId}/confirm-design")
     @Operation(summary = "确认设计方案", description = "用户确认设计，标记为可执行状态")
-    public Result<String> confirmDesign(
+    public Result<DesignConfirmResponse> confirmDesign(
             @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId
     ) {
         log.info("收到设计确认请求 - appSpecId: {}", appSpecId);
 
         planRoutingService.confirmDesign(appSpecId);
 
-        log.info("设计确认完成 - appSpecId: {}, designConfirmed: true", appSpecId);
+        Instant confirmedAt = Instant.now();
+        log.info("设计确认完成 - appSpecId: {}, designConfirmed: true, confirmedAt: {}", appSpecId, confirmedAt);
 
-        return Result.success("设计确认成功，可以进入Execute阶段");
+        DesignConfirmResponse response = DesignConfirmResponse.builder()
+                .success(true)
+                .appSpecId(appSpecId)
+                .canProceedToExecute(true)
+                .designConfirmedAt(confirmedAt)
+                .message("设计确认成功")
+                .nextAction("调用 /execute-code-generation 开始生成代码")
+                .build();
+
+        return Result.success(response);
     }
 
     /**
@@ -143,24 +160,68 @@ public class PlanRoutingController {
      * V2.0完整流程：
      * 1. 从AppSpec.metadata提取designSpec
      * 2. 构建PlanResult并填充designSpec
-     * 3. 调用ExecuteAgent生成完整的全栈代码
+     * 3. (新增) 接收前端回传的analysisContext（来自SSE分析结果）并注入PlanResult
+     * 4. 调用ExecuteAgent生成完整的全栈代码
      *
      * @param appSpecId 应用规格ID
-     * @return 代码生成结果
+     * @param analysisContext 前端回传的SSE分析上下文（可选）
+     * @return 代码生成结果，包含任务ID和预计完成时间
      */
     @PostMapping("/{appSpecId}/execute-code-generation")
     @Operation(summary = "执行代码生成", description = "用户确认设计后，触发ExecuteAgent生成完整代码")
-    public Result<java.util.Map<String, Object>> executeCodeGeneration(
-            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId
+    public Result<CodeGenerationResponse> executeCodeGeneration(
+            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId,
+            @RequestBody(required = false) java.util.Map<String, Object> analysisContext
     ) {
-        log.info("收到代码生成请求 - appSpecId: {}", appSpecId);
+        log.info("收到代码生成请求 - appSpecId: {}, hasContext: {}", appSpecId, analysisContext != null);
 
-        java.util.Map<String, Object> codeResult = planRoutingService.executeCodeGeneration(appSpecId);
+        Instant startedAt = Instant.now();
+        java.util.Map<String, Object> codeResult = planRoutingService.executeCodeGeneration(appSpecId, analysisContext);
 
-        log.info("代码生成完成 - appSpecId: {}, success: {}",
-                appSpecId, codeResult.get("success"));
+        // 从结果中提取关键信息
+        boolean success = codeResult.getOrDefault("success", false).equals(true);
+        UUID projectId = codeResult.get("projectId") != null
+                ? UUID.fromString(codeResult.get("projectId").toString()) : null;
+        UUID generationTaskId = codeResult.get("generationTaskId") != null
+                ? UUID.fromString(codeResult.get("generationTaskId").toString()) : UUID.randomUUID();
+        String status = codeResult.getOrDefault("status", "GENERATING").toString();
+        
+        // 提取previewUrl（支持从顶层或嵌套结构中提取）
+        String previewUrl = null;
+        if (codeResult.get("previewUrl") != null) {
+            previewUrl = codeResult.get("previewUrl").toString();
+        } else if (codeResult.get("frontend") instanceof java.util.Map) {
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> frontend = (java.util.Map<String, Object>) codeResult.get("frontend");
+            if (frontend.get("web") instanceof java.util.Map) {
+                @SuppressWarnings("unchecked")
+                java.util.Map<String, Object> web = (java.util.Map<String, Object>) frontend.get("web");
+                if (web.get("previewUrl") != null) {
+                    previewUrl = web.get("previewUrl").toString();
+                }
+            }
+        }
 
-        return Result.success(codeResult);
+        String errorMessage = codeResult.get("errorMessage") != null
+                ? codeResult.get("errorMessage").toString() : null;
+
+        log.info("代码生成完成 - appSpecId: {}, success: {}, status: {}", appSpecId, success, status);
+
+        CodeGenerationResponse response = CodeGenerationResponse.builder()
+                .success(success)
+                .appSpecId(appSpecId)
+                .projectId(projectId)
+                .generationTaskId(generationTaskId)
+                .estimatedCompletionTime(120) // 预计120秒
+                .status(status)
+                .message(success ? "代码生成已启动" : "代码生成失败")
+                .progress(success ? 10 : 0)
+                .startedAt(startedAt)
+                .previewUrl(previewUrl)
+                .errorMessage(errorMessage)
+                .build();
+
+        return Result.success(response);
     }
 
     /**

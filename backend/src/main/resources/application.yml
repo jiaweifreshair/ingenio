@@ -1,13 +1,25 @@
 # Ingenio Backend - Spring Boot配置
+# ============================================================================
+# ⚠️ 数据库连接规范 - 禁止使用本地PostgreSQL ⚠️
+# ============================================================================
+# 所有环境（dev/local/docker）必须连接Docker容器中的PostgreSQL
+#
+# 启动服务：docker-compose up -d postgres redis minio
+# 端口冲突排查：lsof -i :5432
+# 停止本地数据库：brew services stop postgresql@15
+#
+# 如果遇到数据库连接问题，首先检查是否有本地PostgreSQL占用5432端口
+# ============================================================================
 spring:
   application:
     name: ingenio-backend
 
   # 数据源配置（PostgreSQL）
+  # ⚠️ 注意：localhost:5432 连接的是Docker容器暴露的端口，不是本地安装的PostgreSQL
   datasource:
     # stringtype=unspecified: 让PostgreSQL JDBC驱动自动处理UUID类型转换
     # 解决: operator does not exist: uuid = character varying 错误
-    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ingenio_dev}?stringtype=unspecified
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ingenio}?stringtype=unspecified
     username: ${DB_USER:postgres}
     password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
@@ -23,8 +35,14 @@ spring:
   # Spring AI OpenAI配置（UniAix，替代原DashScope）
   ai:
     openai:
-      api-key: ${QINIU_AI_API_KEY:your-api-key-here}
-      base-url: https://api.qnaigc.com
+      # ⚠️ 请通过环境变量注入密钥，禁止在代码/配置中硬编码真实 sk-... 值
+      # 推荐：QINIU_CLOUD_API_KEY（七牛云 OpenAI 兼容接口）
+      # 兼容：SPRING_AI_OPENAI_API_KEY / QINIU_AI_API_KEY / DEEPSEEK_API_KEY
+      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-placeholder}}}}
+      # 七牛云 OpenAI 兼容 baseUrl（Spring AI 约定：不要包含 /v1）
+      # 说明：Spring AI 内部会自动拼接 `/v1/...`，若此处配置为 `.../v1` 会导致请求变成 `/v1/v1/...`（404）。
+      # 兼容：SPRING_AI_OPENAI_BASE_URL / QINIU_CLOUD_BASE_URL
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:https://api.qnaigc.com}}
       chat:
         enabled: true
         options:
@@ -215,7 +233,7 @@ ingenio:
     # Agent版本切换（Feature Flag模式）
     # V1: ExecuteAgentV1KuiklyImpl (Kuikly平台AppSpec生成器，生产环境默认)
     # V2: ExecuteAgentV2FullStackImpl (全栈多端代码生成器，Phase 2-8开发中)
-    version: V1
+    version: V2
     plan:
       model: deepseek-r1
       temperature: 0.7

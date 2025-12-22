@@ -1,5 +1,7 @@
 package com.ingenio.backend.service;
 
+import java.util.UUID;
+
 /**
  * 通知服务接口
  * 负责处理系统通知、消息提醒等
@@ -8,8 +10,8 @@ public interface NotificationService {
 
     /**
      * 获取指定用户的未读通知数量
-     * @param userId 用户ID
+     * @param userId 用户ID（UUID格式）
      * @return 未读数量
      */
-    long getUnreadCount(Long userId);
+    long getUnreadCount(UUID userId);
 }

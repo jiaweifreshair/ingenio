@@ -19,6 +19,12 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { getToken } from '@/lib/auth/token';
+import { parseFilesFromResponse, type GeneratedFile as ParsedGeneratedFile } from '@/lib/ai-stream-parser';
+import {
+  applyOpenLovableSseMessage,
+  getInitialOpenLovableAccumulationState,
+  getOpenLovableCodeForApply,
+} from '@/lib/openlovable-stream-accumulator';
 
 // ==================== 类型定义 ====================
 
@@ -37,22 +43,35 @@ export interface SandboxInfo {
  * AI代码生成消息类型
  */
 interface AIMessage {
-  type: 'content' | 'tool_call' | 'error' | 'complete';
+  type:
+    | 'content'
+    | 'tool_call'
+    | 'error'
+    | 'complete'
+    | 'stream'
+    | 'status'
+    | 'conversation'
+    | 'warning'
+    | 'thinking'
+    | 'component';
   content?: string;
   text?: string;
+  generatedCode?: string;
   name?: string;
   args?: unknown;
   error?: string;
+  message?: string;
 }
 
 /**
  * 生成的文件信息
  */
-export interface GeneratedFile {
-  path: string;
-  content: string;
-  type: string;
-  completed: boolean;
+/**
+ * 生成的文件信息（在解析结果基础上增加“是否被编辑”标记）
+ */
+export interface GeneratedFile extends ParsedGeneratedFile {
+  /** 是否在前端被手动编辑过 */
+  edited: boolean;
 }
 
 /**
@@ -120,96 +139,6 @@ function isValidUrl(urlString: string | null | undefined): boolean {
   }
 }
 
-/**
- * 从文件路径推断文件类型
- */
-function getFileType(path: string): string {
-  const ext = path.split('.').pop()?.toLowerCase() || '';
-  const typeMap: Record<string, string> = {
-    'js': 'javascript',
-    'jsx': 'javascript',
-    'ts': 'typescript',
-    'tsx': 'typescript',
-    'css': 'css',
-    'scss': 'scss',
-    'html': 'html',
-    'json': 'json',
-    'md': 'markdown',
-  };
-  return typeMap[ext] || 'text';
-}
-
-/**
- * 从AI响应中解析文件
- * 支持两种格式：
- * 1. <file path="...">...</file>
- * 2. ```filename:path\n...\n```
- */
-function parseFilesFromResponse(text: string): { files: GeneratedFile[]; currentFile: GeneratedFile | null } {
-  const fileMap = new Map<string, GeneratedFile>();
-  let currentFile: GeneratedFile | null = null;
-
-  // 正则匹配 <file path="...">...</file> 格式
-  const fileRegex = /<file path="([^"]+)">([\s\S]*?)<\/file>/g;
-  let match;
-
-  while ((match = fileRegex.exec(text)) !== null) {
-    const [, path, content] = match;
-    fileMap.set(path, {
-      path,
-      content: content.trim(),
-      type: getFileType(path),
-      completed: true,
-    });
-  }
-
-  // 检查是否有正在生成的文件（未闭合的<file>标签）
-  const openFileMatch = text.match(/<file path="([^"]+)">([\s\S]*)$/);
-  if (openFileMatch) {
-    const [, path, content] = openFileMatch;
-    if (!fileMap.has(path)) {
-      currentFile = {
-        path,
-        content: content.trim(),
-        type: getFileType(path),
-        completed: false,
-      };
-    }
-  }
-
-  // 如果没有找到<file>格式，尝试解析markdown代码块格式
-  if (fileMap.size === 0 && !currentFile) {
-    const codeBlockRegex = /```(?:(\w+):)?([^\n]+)\n([\s\S]*?)```/g;
-    while ((match = codeBlockRegex.exec(text)) !== null) {
-      const [, lang, path, content] = match;
-      const filePath = path.trim();
-      fileMap.set(filePath, {
-        path: filePath,
-        content: content.trim(),
-        type: lang || getFileType(filePath),
-        completed: true,
-      });
-    }
-
-    // 检查未闭合的代码块
-    const openCodeBlockMatch = text.match(/```(?:(\w+):)?([^\n]+)\n([\s\S]*)$/);
-    if (openCodeBlockMatch && !text.endsWith('```')) {
-      const [, lang, path, content] = openCodeBlockMatch;
-      const filePath = path.trim();
-      if (!fileMap.has(filePath)) {
-        currentFile = {
-          path: filePath,
-          content: content.trim(),
-          type: lang || getFileType(filePath),
-          completed: false,
-        };
-      }
-    }
-  }
-
-  return { files: Array.from(fileMap.values()), currentFile };
-}
-
 // ==================== Hook实现 ====================
 
 /**
@@ -250,16 +179,14 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
    */
   const updateFilesFromStream = useCallback((text: string) => {
     const { files, currentFile: current } = parseFilesFromResponse(text);
+    const nextFiles: GeneratedFile[] = files.map(file => ({ ...file, edited: false }));
+    const nextCurrentFile: GeneratedFile | null = current ? { ...current, edited: false } : null;
 
-    if (files.length > 0) {
-      setGeneratedFiles(files);
+    if (nextFiles.length > 0) {
+      setGeneratedFiles(nextFiles);
     }
 
-    if (current) {
-      setCurrentFile(current);
-    } else {
-      setCurrentFile(null);
-    }
+    setCurrentFile(nextCurrentFile);
   }, []);
 
   /**
@@ -295,7 +222,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
       const apiUrl = `${API_BASE_URL}/v1/openlovable/generate/stream`;
       const token = getToken();
 
-      let fullAIResponse = '';
+      let accumulationState = getInitialOpenLovableAccumulationState();
 
       fetch(apiUrl, {
         method: 'POST',
@@ -318,22 +245,39 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
           const decoder = new TextDecoder();
           let buffer = '';
 
+          const applyAndUpdateState = (data: AIMessage) => {
+            const nextState = applyOpenLovableSseMessage(accumulationState, data);
+            if (
+              nextState.streamedText !== accumulationState.streamedText ||
+              nextState.finalCode !== accumulationState.finalCode
+            ) {
+              accumulationState = nextState;
+              setStreamedCode(accumulationState.streamedText);
+              updateFilesFromStream(accumulationState.streamedText);
+            }
+          };
+
           const readStream = (): void => {
             reader.read().then(async ({ done, value }) => {
               if (done) {
-                // If there is residual data in the buffer, process it as a final line
-                if (buffer.trim() && buffer.startsWith('data:')) {
-                  try {
-                    const jsonStr = buffer.replace(/^data:\s*/, '').trim();
-                    const data: AIMessage = JSON.parse(jsonStr);
-
-                    if (data.text) {
-                      fullAIResponse += data.text;
-                      setStreamedCode(fullAIResponse);
-                      // Don't call updateFilesFromStream here, wait for the final complete call
+                // 处理剩余buffer，避免末尾没有\n\n导致最后一个事件丢失
+                if (buffer.trim()) {
+                  const remainingEvents = buffer.split(/\n\n|\r\n\r\n/);
+                  for (const event of remainingEvents) {
+                    if (!event.trim()) continue;
+                    const lines = event.split(/\n|\r\n/);
+                    for (const line of lines) {
+                      if (!line.trim() || line.startsWith(':')) continue;
+                      if (!line.startsWith('data:')) continue;
+                      try {
+                        const jsonStr = line.replace(/^data:\s*/, '').trim();
+                        if (!jsonStr) continue;
+                        const data: AIMessage = JSON.parse(jsonStr);
+                        applyAndUpdateState(data);
+                      } catch (parseError) {
+                        console.warn('解析SSE剩余Buffer失败:', line, parseError);
+                      }
                     }
-                  } catch (parseError) {
-                    console.warn('解析SSE剩余Buffer失败:', buffer, parseError);
                   }
                 }
 
@@ -341,7 +285,8 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
 
                 // 调用apply API将代码写入sandbox
                 try {
-                  addLog(`📝 正在将代码应用到Sandbox... (响应长度: ${fullAIResponse.length} 字符)`);
+                  const responseToApply = getOpenLovableCodeForApply(accumulationState);
+                  addLog(`📝 正在将代码应用到Sandbox... (响应长度: ${responseToApply.length} 字符)`);
 
                   const applyResponse = await fetch(`${API_BASE_URL}/v1/openlovable/apply`, {
                     method: 'POST',
@@ -351,7 +296,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
                     },
                     body: JSON.stringify({
                       sandboxId: payload.sandboxId,
-                      response: fullAIResponse
+                      response: responseToApply
                     })
                   });
 
@@ -383,7 +328,7 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
                     addLog('⚠️ Vite重启超时，请手动点击刷新按钮');
                   }
 
-                  updateFilesFromStream(fullAIResponse);
+                  updateFilesFromStream(responseToApply);
                   setCurrentFile(null);
 
                   resolve();
@@ -399,33 +344,47 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
               const chunk = decoder.decode(value, { stream: true });
               buffer += chunk;
 
-              const lines = buffer.split('\n\n');
-              buffer = lines.pop() || '';
+              // SSE标准：事件由空行分隔（\n\n），但也要兼容单换行情况
+              // 首先尝试按 \n\n 分割，如果没有则按 \n 处理每个data行
+              const events = buffer.split(/\n\n|\r\n\r\n/);
+              buffer = events.pop() || '';
 
-              for (const line of lines) {
-                if (!line.trim() || !line.startsWith('data:')) continue;
+              for (const event of events) {
+                if (!event.trim()) continue;
 
-                try {
-                  const jsonStr = line.replace(/^data:\s*/, '').trim();
-                  const data: AIMessage = JSON.parse(jsonStr);
+                // 处理每个事件块中的所有行
+                const lines = event.split(/\n|\r\n/);
+                for (const line of lines) {
+                  // 跳过注释行（以:开头）和空行
+                  if (!line.trim() || line.startsWith(':')) continue;
+                  if (!line.startsWith('data:')) continue;
 
-                  if (data.text) {
-                    fullAIResponse += data.text;
-                    setStreamedCode(fullAIResponse);
-                    updateFilesFromStream(fullAIResponse);
+                  try {
+                    const jsonStr = line.replace(/^data:\s*/, '').trim();
+                    if (!jsonStr) continue;
+                    const data: AIMessage = JSON.parse(jsonStr);
+
+                    // 只拼接 stream 的增量，并在 complete 时用 generatedCode 覆盖，避免 conversation 事件导致重复污染
+                    applyAndUpdateState(data);
+
+                    if (data.type === 'tool_call') {
+                      addLog(`🔧 工具调用: ${data.name}`);
+                    } else if (data.type === 'stream') {
+                      // stream类型的消息，text已经在上面处理了
+                      // 这里可以添加额外的日志或处理
+                    } else if (data.type === 'status') {
+                      // 状态消息
+                      addLog(`📋 ${data.message || '状态更新'}`);
+                    } else if (data.type === 'error') {
+                      addLog(`❌ 错误: ${data.error}`);
+                      reject(new Error(data.error));
+                      return;
+                    } else if (data.type === 'complete') {
+                      addLog('🎯 AI生成完成');
+                    }
+                  } catch (parseError) {
+                    console.warn('解析SSE消息失败:', line, parseError);
                   }
-
-                  if (data.type === 'tool_call') {
-                    addLog(`🔧 工具调用: ${data.name}`);
-                  } else if (data.type === 'error') {
-                    addLog(`❌ 错误: ${data.error}`);
-                    reject(new Error(data.error));
-                    return;
-                  } else if (data.type === 'complete') {
-                    addLog('🎯 AI生成完成');
-                  }
-                } catch (parseError) {
-                  console.warn('解析SSE消息失败:', line, parseError);
                 }
               }
 
@@ -525,8 +484,8 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
 
     } catch (err) {
       console.error('[useOpenLovablePreview] 生成失败:', err);
-      const errorMessage = err instanceof Error ? err.message : '未知错误';
-      setError(errorMessage);
+      const errorMessage = err instanceof Error ? err.message : JSON.stringify(err);
+      setError(errorMessage || '发生未知错误');
       setStage('error');
       addLog(`❌ 生成失败: ${errorMessage}`);
     } finally {

@@ -9,6 +9,66 @@ export interface GeneratedFile {
 }
 
 /**
+ * 解析 `<file path="...">...</file>` 风格的XML片段（更鲁棒）
+ *
+ * 典型问题：
+ * - 流式/续写时，模型可能在未输出 `</file>` 的情况下再次输出新的 `<file ...>`，导致出现嵌套/重叠标签
+ * - 直接用正则 `<file ...>...?</file>` 会把两个文件块“吞”成一个，最终在前端看到“代码拼接/重复”
+ *
+ * 处理策略：
+ * - 按文本顺序扫描 `<file ...>`，遇到新的 `<file ...>` 但前一个还没闭合时，将前一个视为无效片段并丢弃
+ * - 只有遇到 `</file>` 的块才认为 completed=true
+ * - 如果最后一个 `<file ...>` 到文本结尾都没闭合，则作为 currentFile 候选
+ */
+function parseFileXmlBlocks(text: string): {
+  blocks: Array<{ path: string; content: string }>;
+  current: { path: string; content: string } | null;
+} {
+  const blocks: Array<{ path: string; content: string }> = [];
+  let current: { path: string; content: string } | null = null;
+
+  const openTagRe = /^<file\s+path=(?:"([^"]+)"|'([^']+)')[^>]*>/i;
+  let cursor = 0;
+
+  while (cursor < text.length) {
+    const openIndex = text.indexOf('<file', cursor);
+    if (openIndex === -1) break;
+
+    const openSlice = text.slice(openIndex);
+    const openMatch = openSlice.match(openTagRe);
+    if (!openMatch) {
+      cursor = openIndex + 5;
+      continue;
+    }
+
+    const openTag = openMatch[0];
+    const path = openMatch[1] || openMatch[2] || '';
+    const contentStart = openIndex + openTag.length;
+
+    const nextOpenIndex = text.indexOf('<file', contentStart);
+    const closeIndex = text.indexOf('</file>', contentStart);
+
+    if (closeIndex !== -1 && (nextOpenIndex === -1 || closeIndex < nextOpenIndex)) {
+      blocks.push({ path, content: text.slice(contentStart, closeIndex) });
+      cursor = closeIndex + '</file>'.length;
+      continue;
+    }
+
+    if (nextOpenIndex !== -1) {
+      // 被新的 <file ...> 打断，视为上一个文件块无效（避免正则吞并导致的拼接）
+      cursor = nextOpenIndex;
+      continue;
+    }
+
+    // 走到末尾仍未闭合，作为 currentFile 候选
+    current = { path, content: text.slice(contentStart) };
+    break;
+  }
+
+  return { blocks, current };
+}
+
+/**
  * 从文件路径推断文件类型
  */
 export function getFileType(path: string): string {
@@ -43,16 +103,15 @@ export function parseFilesFromResponse(text: string): { files: GeneratedFile[]; 
   const fileMap = new Map<string, GeneratedFile>();
   let currentFile: GeneratedFile | null = null;
 
-  // 1. 匹配 <file path="...">...</file> 格式
-  // 使用 [\s\S]*? 非贪婪匹配内容
-  const fileRegex = /<file\s+path="([^"]+)">([\s\S]*?)<\/file>/g;
-  let match;
-  while ((match = fileRegex.exec(text)) !== null) {
-    const [, path, content] = match;
-    fileMap.set(path, {
-      path,
-      content: content.trim(),
-      type: getFileType(path),
+  let match: RegExpExecArray | null;
+
+  // 1. 解析 <file path="...">...</file>（增强鲁棒性，避免嵌套/重叠导致拼接）
+  const { blocks: fileBlocks, current: openFile } = parseFileXmlBlocks(text);
+  for (const block of fileBlocks) {
+    fileMap.set(block.path, {
+      path: block.path,
+      content: block.content.trim(),
+      type: getFileType(block.path),
       completed: true,
     });
   }
@@ -70,21 +129,30 @@ export function parseFilesFromResponse(text: string): { files: GeneratedFile[]; 
   }
 
   // 3. 检查是否有正在生成的 XML 标签（<file> 或 <boltAction>）
-  // 匹配未闭合的标签
-  const openTagMatch = text.match(/(?:<file\s+path="([^"]+)">|<boltAction\s+type="file"\s+filePath="([^"]+)">)([\s\S]*)$/);
-  if (openTagMatch) {
-    // path 可能在 index 1 或 2
-    const path = openTagMatch[1] || openTagMatch[2];
-    const content = openTagMatch[3];
-    
-    // 只有当该文件尚未被完整解析时，才作为 currentFile
-    if (!fileMap.has(path)) {
-      currentFile = {
-        path,
-        content: content.trim(),
-        type: getFileType(path),
-        completed: false,
-      };
+  // 3.1 优先使用 parseFileXmlBlocks 识别到的“末尾未闭合 <file>”
+  if (openFile && openFile.path && !fileMap.has(openFile.path)) {
+    currentFile = {
+      path: openFile.path,
+      content: openFile.content.trim(),
+      type: getFileType(openFile.path),
+      completed: false,
+    };
+  }
+
+  // 3.2 兼容未闭合的 <boltAction ...>
+  if (!currentFile) {
+    const openBoltMatch = text.match(/<boltAction\s+type="file"\s+filePath="([^"]+)">([\s\S]*)$/);
+    if (openBoltMatch) {
+      const path = openBoltMatch[1];
+      const content = openBoltMatch[2];
+      if (path && !fileMap.has(path)) {
+        currentFile = {
+          path,
+          content: content.trim(),
+          type: getFileType(path),
+          completed: false,
+        };
+      }
     }
   }
 

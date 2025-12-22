@@ -9,15 +9,14 @@ import com.ingenio.backend.entity.AppSpecEntity;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import reactor.core.publisher.Flux;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 代码生成流式服务
@@ -52,40 +51,67 @@ public class CodeGenerationStreamService {
         log.info("开始流式代码生成: appSpecId={}", request.getAppSpecId());
 
         try {
+            // 立即发送初始状态，确保连接建立后客户端收到数据
+            sendEvent(emitter, SseEvent.builder()
+                .type("thinking")
+                .message("正在连接AI服务，准备生成代码...")
+                .build());
+
             // 1. 获取AppSpec
             AppSpecEntity appSpec = appSpecService.getById(request.getAppSpecId());
             if (appSpec == null) {
                 throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
             }
 
-            // 2. 发送"思考中"事件
-            sendEvent(emitter, SseEvent.builder()
-                .type("thinking")
-                .message("分析需求：" + extractRequirement(appSpec))
-                .duration(2000)
-                .build());
-
-            // 3. 构建AI提示词
+            // 2. 构建AI提示词
             String prompt = buildPrompt(appSpec);
             log.debug("AI提示词长度: {} 字符", prompt.length());
 
-            // 4. 调用AI生成代码 (非流式版本,后续优化为流式)
-            String response = chatClient.prompt(prompt).call().content();
-            log.info("AI响应长度: {} 字符", response.length());
+            // 3. 调用AI生成代码 (流式)
+            Flux<String> stream = chatClient.prompt(prompt).stream().content();
 
-            // 5. 解析AI响应中的文件
-            List<SseEvent.GeneratedFile> generatedFiles = parseGeneratedFiles(response, emitter);
-
-            // 6. 发送完成事件
-            sendEvent(emitter, SseEvent.builder()
-                .type("complete")
-                .files(generatedFiles)
-                .message("代码生成完成")
-                .build());
-
-            // 7. 完成SSE流
-            emitter.complete();
-            log.info("流式代码生成完成: appSpecId={}, 文件数={}", request.getAppSpecId(), generatedFiles.size());
+            // 4. 处理流式响应
+            StreamContext context = new StreamContext(emitter);
+            
+            stream.subscribe(
+                content -> {
+                    try {
+                        context.processChunk(content);
+                    } catch (IOException e) {
+                        log.error("SSE发送失败", e);
+                        emitter.completeWithError(e);
+                    }
+                },
+                error -> {
+                    log.error("AI流式生成出错", error);
+                    try {
+                        sendEvent(emitter, SseEvent.builder()
+                            .type("error")
+                            .message("AI生成出错: " + error.getMessage())
+                            .build());
+                        emitter.complete();
+                    } catch (IOException e) {
+                        emitter.completeWithError(e);
+                    }
+                },
+                () -> {
+                    try {
+                        // 处理剩余缓冲区
+                        context.flush();
+                        
+                        // 发送完成事件
+                        sendEvent(emitter, SseEvent.builder()
+                            .type("complete")
+                            .message("代码生成完成")
+                            .build());
+                        
+                        emitter.complete();
+                        log.info("流式代码生成完成: appSpecId={}", request.getAppSpecId());
+                    } catch (IOException e) {
+                        emitter.completeWithError(e);
+                    }
+                }
+            );
 
         } catch (Exception e) {
             log.error("流式代码生成失败: appSpecId={}", request.getAppSpecId(), e);
@@ -96,70 +122,157 @@ public class CodeGenerationStreamService {
                     .build());
                 emitter.complete();
             } catch (IOException ex) {
-                emitter.completeWithError(ex);
+                emitter.complete();
             }
         }
     }
 
     /**
-     * 解析AI生成的文件
-     * 格式: <file path="src/App.tsx">...content...</file>
-     *
-     * @param aiResponse AI响应内容
-     * @param emitter SSE发射器,用于实时发送事件
-     * @return 生成的文件列表
+     * 流处理上下文，用于维护解析状态
      */
-    private List<SseEvent.GeneratedFile> parseGeneratedFiles(String aiResponse, SseEmitter emitter) throws IOException {
-        List<SseEvent.GeneratedFile> files = new ArrayList<>();
+    private class StreamContext {
+        private final SseEmitter emitter;
+        private final StringBuilder buffer = new StringBuilder();
+        private State state = State.IDLE;
+        private String currentFilePath = null;
+        private final Pattern FILE_START_PATTERN = Pattern.compile("<file path=\"([^\"]+)\">");
 
-        // 简化解析：使用正则表达式提取<file>标签
-        // 实际生产环境可以使用更强大的XML解析器
-        String[] parts = aiResponse.split("<file path=\"");
-
-        for (int i = 1; i < parts.length; i++) {
-            String part = parts[i];
-            int pathEnd = part.indexOf("\">");
-            if (pathEnd == -1) continue;
-
-            String filePath = part.substring(0, pathEnd);
-            int contentEnd = part.indexOf("</file>");
-            if (contentEnd == -1) continue;
-
-            String fileContent = part.substring(pathEnd + 2, contentEnd).trim();
-
-            // 发送文件开始事件
-            sendEvent(emitter, SseEvent.builder()
-                .type("file-start")
-                .path(filePath)
-                .fileType(getFileType(filePath))
-                .build());
-
-            // 发送文件内容事件
-            sendEvent(emitter, SseEvent.builder()
-                .type("file-content")
-                .path(filePath)
-                .content(fileContent)
-                .build());
-
-            // 发送文件完成事件
-            sendEvent(emitter, SseEvent.builder()
-                .type("file-complete")
-                .path(filePath)
-                .build());
-
-            // 添加到文件列表
-            files.add(SseEvent.GeneratedFile.builder()
-                .path(filePath)
-                .content(fileContent)
-                .type(getFileType(filePath))
-                .completed(true)
-                .edited(false)
-                .build());
-
-            log.debug("解析文件: path={}, contentLength={}", filePath, fileContent.length());
+        private enum State {
+            IDLE,       // 空闲/普通文本
+            THINKING,   // 思考中
+            CODE_FILE   // 代码文件生成中
         }
 
-        return files;
+        public StreamContext(SseEmitter emitter) {
+            this.emitter = emitter;
+        }
+
+        public void processChunk(String chunk) throws IOException {
+            if (chunk == null || chunk.isEmpty()) return;
+            
+            buffer.append(chunk);
+            parseBuffer();
+        }
+        
+        public void flush() throws IOException {
+            // 如果缓冲区还有内容，并且处于THINKING状态，作为思考内容发送
+            if (!buffer.isEmpty() && state == State.THINKING) {
+                sendEvent(emitter, SseEvent.builder()
+                    .type("thinking")
+                    .message(buffer.toString())
+                    .build());
+                buffer.setLength(0);
+            }
+        }
+
+        private void parseBuffer() throws IOException {
+            boolean bufferChanged = true;
+            while (bufferChanged) {
+                bufferChanged = false;
+                String currentBuffer = buffer.toString();
+
+                switch (state) {
+                    case IDLE:
+                        // 检查是否开始思考
+                        int thinkingStart = currentBuffer.indexOf("<thinking>");
+                        if (thinkingStart != -1) {
+                            // 发送之前的普通文本（如果有）
+                            if (thinkingStart > 0) {
+                                // 忽略非特定标签外的普通文本，或者是作为普通的说明
+                            }
+                            
+                            state = State.THINKING;
+                            buffer.delete(0, thinkingStart + 10); // 移除 <thinking>
+                            bufferChanged = true;
+                        } else {
+                            // 检查是否开始文件
+                            Matcher matcher = FILE_START_PATTERN.matcher(currentBuffer);
+                            if (matcher.find()) {
+                                currentFilePath = matcher.group(1);
+                                state = State.CODE_FILE;
+                                
+                                // 发送文件开始事件
+                                sendEvent(emitter, SseEvent.builder()
+                                    .type("file-start")
+                                    .path(currentFilePath)
+                                    .fileType(getFileType(currentFilePath))
+                                    .build());
+                                
+                                buffer.delete(0, matcher.end());
+                                bufferChanged = true;
+                            }
+                        }
+                        break;
+
+                    case THINKING:
+                        int thinkingEnd = currentBuffer.indexOf("</thinking>");
+                        if (thinkingEnd != -1) {
+                            // 发送这一段思考内容
+                            String thinkingContent = currentBuffer.substring(0, thinkingEnd);
+                            if (!thinkingContent.isEmpty()) {
+                                sendEvent(emitter, SseEvent.builder()
+                                    .type("thinking")
+                                    .message(thinkingContent)
+                                    .build());
+                            }
+                            
+                            state = State.IDLE;
+                            buffer.delete(0, thinkingEnd + 11); // 移除 </thinking>
+                            bufferChanged = true;
+                        } else {
+                            // 实时推送思考内容，保留最后一部分以防止截断标签
+                            // 例如: "thinking... </thi" -> 只发送 "thinking... "
+                            // 简单的策略：如果缓冲区太长，或者不包含潜在的标签开头，就发送出去
+                            if (currentBuffer.length() > 20 && !currentBuffer.contains("</")) {
+                                sendEvent(emitter, SseEvent.builder()
+                                    .type("thinking")
+                                    .message(currentBuffer)
+                                    .build());
+                                buffer.setLength(0);
+                                // buffer为空，不需要设置bufferChanged，等待新数据
+                            }
+                        }
+                        break;
+
+                    case CODE_FILE:
+                        int fileEnd = currentBuffer.indexOf("</file>");
+                        if (fileEnd != -1) {
+                            // 发送这一段代码内容
+                            String fileContent = currentBuffer.substring(0, fileEnd);
+                            if (!fileContent.isEmpty()) {
+                                sendEvent(emitter, SseEvent.builder()
+                                    .type("file-content")
+                                    .path(currentFilePath)
+                                    .content(fileContent)
+                                    .build());
+                            }
+                            
+                            // 发送文件完成事件
+                            sendEvent(emitter, SseEvent.builder()
+                                .type("file-complete")
+                                .path(currentFilePath)
+                                .build());
+                                
+                            state = State.IDLE;
+                            currentFilePath = null;
+                            buffer.delete(0, fileEnd + 7); // 移除 </file>
+                            bufferChanged = true;
+                        } else {
+                            // 实时推送代码内容
+                            // 同样防止截断标签
+                            if (currentBuffer.length() > 20 && !currentBuffer.contains("</")) {
+                                sendEvent(emitter, SseEvent.builder()
+                                    .type("file-content")
+                                    .path(currentFilePath)
+                                    .content(currentBuffer)
+                                    .build());
+                                buffer.setLength(0);
+                            }
+                        }
+                        break;
+                }
+            }
+        }
     }
 
     /**
@@ -184,7 +297,6 @@ public class CodeGenerationStreamService {
      * @return AI提示词
      */
     private String buildPrompt(AppSpecEntity appSpec) {
-        Map<String, Object> specContent = appSpec.getSpecContent();
         String requirement = extractRequirement(appSpec);
 
         return String.format("""
@@ -194,16 +306,32 @@ public class CodeGenerationStreamService {
             %s
 
             要求：
-            1. 使用React 19 + TypeScript + Tailwind CSS
-            2. 代码必须使用<file path="文件路径">代码内容</file>格式输出
-            3. 至少生成以下文件：
-               - src/App.tsx (主应用组件)
-               - src/index.tsx (入口文件)
-               - src/styles.css (样式文件)
-            4. 代码要简洁、可读、符合最佳实践
-            5. 确保所有import语句正确
+            1. 思考过程：在生成代码前，请先进行详细的思考分析，包括组件设计、状态管理、样式策略等。
+               请务必将思考过程包裹在 <thinking>...</thinking> 标签中。
+               
+            2. 代码生成：
+               - 使用React 19 + TypeScript + Tailwind CSS
+               - 代码必须使用 <file path="文件路径">代码内容</file> 格式输出
+               - 至少生成以下文件：
+                 - src/App.tsx (主应用组件)
+                 - src/components/ui/button.tsx (示例组件)
+                 - src/lib/utils.ts (工具函数)
+                 
+            3. 格式规范：
+               - 确保所有import语句正确
+               - 不要使用Markdown代码块(```)，直接输出XML格式标签
+            
+            输出示例：
+            <thinking>
+            用户需要一个待办事项应用...
+            我需要设计一个TodoList组件...
+            </thinking>
+            <file path="src/App.tsx">
+            import React from 'react';
+            ...
+            </file>
 
-            现在开始生成代码：
+            现在开始：
             """, requirement);
     }
 

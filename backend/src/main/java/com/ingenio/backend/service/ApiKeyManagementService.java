@@ -55,6 +55,12 @@ public class ApiKeyManagementService {
     public ApiKeyResponse generateApiKey(CreateApiKeyRequest request) {
         String userId = StpUtil.getLoginIdAsString();
 
+        // 检查用户是否已登录
+        if (userId == null || userId.trim().isEmpty()) {
+            log.warn("生成API密钥失败：用户未登录");
+            throw new RuntimeException("用户未登录，无法生成API密钥");
+        }
+
         // 1. 生成原始密钥
         String rawKey = generateRawApiKey();
         String fullKey = API_KEY_PREFIX + rawKey;
@@ -115,6 +121,13 @@ public class ApiKeyManagementService {
      */
     public List<ApiKeyResponse> listApiKeys() {
         String userId = StpUtil.getLoginIdAsString();
+
+        // 检查用户是否已登录
+        if (userId == null || userId.trim().isEmpty()) {
+            log.warn("获取API密钥列表失败：用户未登录");
+            throw new RuntimeException("用户未登录，无法获取API密钥列表");
+        }
+
         List<ApiKeyEntity> apiKeys = apiKeyMapper.findByUserId(UUID.fromString(userId));
 
         return apiKeys.stream()
@@ -131,6 +144,12 @@ public class ApiKeyManagementService {
     @Transactional(rollbackFor = Exception.class)
     public void deleteApiKey(String keyId) {
         String userId = StpUtil.getLoginIdAsString();
+
+        // 检查用户是否已登录
+        if (userId == null || userId.trim().isEmpty()) {
+            log.warn("删除API密钥失败：用户未登录");
+            throw new RuntimeException("用户未登录，无法删除API密钥");
+        }
 
         int deleted = apiKeyMapper.deleteByIdAndUserId(UUID.fromString(keyId), UUID.fromString(userId));
         if (deleted == 0) {

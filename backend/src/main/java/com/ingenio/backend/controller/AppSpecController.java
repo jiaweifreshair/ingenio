@@ -28,7 +28,7 @@ import java.util.UUID;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/appspecs")
+@RequestMapping("/v1/appspecs")
 @RequiredArgsConstructor
 public class AppSpecController {
 

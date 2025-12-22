@@ -2,8 +2,11 @@ package com.ingenio.backend.config;
 
 import cn.dev33.satoken.interceptor.SaInterceptor;
 import cn.dev33.satoken.context.SaHolder;
+import cn.dev33.satoken.router.SaRouter;
 import cn.dev33.satoken.stp.StpUtil;
+import cn.dev33.satoken.filter.SaServletFilter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -109,5 +112,73 @@ public class SaTokenConfig implements WebMvcConfigurer {
         log.info("  - Token验证: Authorization header (Bearer token)");
         log.info("  - Token格式: JWT (token-style: jwt)");
         log.info("  - Token有效期: 7天 (配置在application.yml)");
+    }
+
+    /**
+     * 注册SaToken Servlet过滤器
+     *
+     * 重要：sa-token-spring-boot3-starter会自动注册SaPathCheckFilterForJakartaServlet，
+     * 该过滤器在Spring MVC拦截器之前执行，需要单独配置白名单。
+     * 此Bean覆盖自动配置，确保白名单与拦截器一致。
+     *
+     * @return SaServletFilter 配置好的过滤器
+     */
+    @Bean
+    public SaServletFilter getSaServletFilter() {
+        log.info("注册SaToken Servlet过滤器: 配置路径白名单");
+
+        return new SaServletFilter()
+            // 指定拦截路由
+            .addInclude("/**")
+            // 指定排除路由（与拦截器白名单保持一致）
+            .addExclude(
+                // 认证相关公开接口
+                "/v1/auth/login",
+                "/v1/auth/register",
+                "/v1/auth/reset-password/**",
+                "/v1/auth/wechat/**",
+                "/v1/auth/oauth/**",
+                "/v1/auth/health",
+
+                // 后台服务接口（Agent调用）
+                "/v1/openlovable/**",
+                "/v1/generate/**",
+                "/v1/intent/**",
+                "/v2/**",
+                "/v1/prototype/generate/stream",
+                "/v1/prototype/create-app-spec",
+                "/v1/notifications/unread-count",
+                "/v1/generate/analyze-stream",
+
+                // API文档和监控
+                "/swagger-ui/**",
+                "/swagger-ui.html",
+                "/v3/api-docs/**",
+                "/api-docs/**",
+                "/swagger-resources/**",
+                "/webjars/**",
+                "/actuator/**",
+
+                // 静态资源
+                "/static/**",
+                "/public/**",
+                "/favicon.ico",
+                "/error"
+            )
+            // 认证函数：每次请求执行
+            .setAuth(obj -> {
+                // CORS预检请求放行
+                String method = SaHolder.getRequest().getMethod();
+                if ("OPTIONS".equalsIgnoreCase(method)) {
+                    return;
+                }
+                // 校验登录
+                SaRouter.match("/**", r -> StpUtil.checkLogin());
+            })
+            // 异常处理
+            .setError(e -> {
+                log.warn("SaToken过滤器拦截: {}", e.getMessage());
+                return "{\"code\":\"401\",\"message\":\"" + e.getMessage() + "\",\"success\":false}";
+            });
     }
 }

@@ -40,13 +40,6 @@ public class ExecuteAgentFactory {
     private String agentVersion;
 
     /**
-     * V1.0 ExecuteAgent实现（Kuikly平台）
-     */
-    @Autowired
-    @org.springframework.beans.factory.annotation.Qualifier("executeAgentV1")
-    private IExecuteAgent executeAgentV1;
-
-    /**
      * V2.0 ExecuteAgent实现（全栈多端生成）
      * 注意：在V2实现类未注入前，此字段可能为null
      */
@@ -63,27 +56,24 @@ public class ExecuteAgentFactory {
     public IExecuteAgent getExecuteAgent() {
         log.info("[ExecuteAgentFactory] 当前配置的Agent版本: {}", agentVersion);
 
-        if ("V2".equalsIgnoreCase(agentVersion)) {
+        if ("V2".equalsIgnoreCase(agentVersion) || "V1".equalsIgnoreCase(agentVersion)) { // 即使配置了V1也强制检查V2，因为V1已删除
             if (executeAgentV2 == null) {
-                log.error("[ExecuteAgentFactory] V2.0 ExecuteAgent未实现，但配置为V2模式");
+                log.error("[ExecuteAgentFactory] V2.0 ExecuteAgent未实现");
                 throw new IllegalStateException(
                     "V2.0 ExecuteAgent未实现。" +
-                    "请检查ExecuteAgentV2FullStackImpl是否已创建并正确注入。" +
-                    "或者将配置改为 ingenio.agent.version=V1"
+                    "请检查ExecuteAgentV2FullStackImpl是否已创建并正确注入。"
                 );
             }
             log.info("[ExecuteAgentFactory] 使用V2.0实现: {}", executeAgentV2.getDescription());
             return executeAgentV2;
         }
 
-        // 默认使用V1
-        if (executeAgentV1 == null) {
-            log.error("[ExecuteAgentFactory] V1.0 ExecuteAgent未注入");
-            throw new IllegalStateException("V1.0 ExecuteAgent未注入，系统无法正常运行");
+        // 默认也尝试返回V2
+        if (executeAgentV2 != null) {
+             return executeAgentV2;
         }
 
-        log.info("[ExecuteAgentFactory] 使用V1.0实现: {}", executeAgentV1.getDescription());
-        return executeAgentV1;
+        throw new IllegalStateException("无任何可用的ExecuteAgent实现");
     }
 
     /**
@@ -113,14 +103,7 @@ public class ExecuteAgentFactory {
         StringBuilder sb = new StringBuilder();
         sb.append("可用版本：");
 
-        if (executeAgentV1 != null) {
-            sb.append("V1(").append(executeAgentV1.getDescription()).append(")");
-        }
-
         if (executeAgentV2 != null) {
-            if (executeAgentV1 != null) {
-                sb.append(", ");
-            }
             sb.append("V2(").append(executeAgentV2.getDescription()).append(")");
         }
 

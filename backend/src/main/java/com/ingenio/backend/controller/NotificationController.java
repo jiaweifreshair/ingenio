@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.UUID;
+
 /**
  * 通知中心控制器
  */
@@ -35,7 +37,7 @@ public class NotificationController {
             return Result.success(0L);
         }
 
-        Long userId = StpUtil.getLoginIdAsLong();
+        UUID userId = UUID.fromString(StpUtil.getLoginIdAsString());
         return Result.success(notificationService.getUnreadCount(userId));
     }
 }

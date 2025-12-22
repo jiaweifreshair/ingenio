@@ -1,11 +1,21 @@
 # 本地开发环境配置
-# 用于前后端联调
+# ============================================================================
+# ⚠️ 数据库连接规范 - 禁止使用本地PostgreSQL ⚠️
+# ============================================================================
+# 必须连接Docker容器中的PostgreSQL，禁止启动本地数据库服务
+#
+# 启动Docker服务：docker-compose up -d postgres redis minio
+# 验证Docker数据库：docker ps | grep postgres
+# 端口冲突排查：lsof -i :5432
+# 停止本地数据库：brew services stop postgresql@15
+# ============================================================================
 spring:
-  # 数据源配置（连接本地PostgreSQL）
+  # 数据源配置（连接Docker中的PostgreSQL）
+  # ⚠️ localhost:5432 = Docker容器暴露的端口，不是本地PostgreSQL
   datasource:
-    url: jdbc:postgresql://localhost:5432/ingenio_dev?stringtype=unspecified
-    username: ${DB_USER:postgresql}
-    password: ${DB_PASSWORD:your-password-here}
+    url: jdbc:postgresql://localhost:5432/ingenio?stringtype=unspecified
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:ingenio_20251122}
     driver-class-name: org.postgresql.Driver
 
   # Redis配置（连接Docker中的Redis - 无密码）
@@ -16,11 +26,13 @@ spring:
       database: 0
 
   # Spring AI OpenAI配置（七牛云AI服务 - OpenAI兼容接口）
-  # 注意：base-url不要包含/v1，Spring AI会自动追加/v1/chat/completions
+  # 注意：Spring AI 的 base-url 不要包含 /v1（例如 https://api.qnaigc.com）
+  # 说明：Spring AI 会在 base-url 后自动拼接 `/v1/...`，若配置成 `.../v1` 会产生 `/v1/v1/...`（404）。
   ai:
     openai:
-      api-key: ${QINIU_AI_API_KEY:your-api-key-here}
-      base-url: https://api.qnaigc.com
+      # ⚠️ 请通过环境变量注入密钥，禁止在代码/配置中硬编码真实 sk-... 值
+      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-placeholder}}}}
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:https://api.qnaigc.com}}
       chat:
         enabled: true
         options:
@@ -59,6 +71,29 @@ sa-token:
   token-style: jwt               # 使用JWT风格Token
   is-log: true                   # 开启日志输出
   jwt-secret-key: ${JWT_SECRET_KEY:please-change-this-secret-key-min-32-characters}
+  # 路由鉴权配置（Servlet Filter层 - 在Spring MVC拦截器之前执行）
+  # 注意：这是SaToken的路由检查过滤器配置，需要与拦截器白名单保持一致
+  check:
+    # 排除的路径列表（无需认证）
+    exclude-list:
+      - /v1/auth/**
+      - /v1/openlovable/**
+      - /v1/generate/**
+      - /v1/intent/**
+      - /v2/**
+      - /v1/prototype/**
+      - /v1/notifications/unread-count
+      - /swagger-ui/**
+      - /swagger-ui.html
+      - /v3/api-docs/**
+      - /api-docs/**
+      - /swagger-resources/**
+      - /webjars/**
+      - /actuator/**
+      - /static/**
+      - /public/**
+      - /favicon.ico
+      - /error
 
 # 服务器配置
 server:

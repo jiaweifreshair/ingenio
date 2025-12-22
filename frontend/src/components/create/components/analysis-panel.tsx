@@ -18,7 +18,6 @@
 
 import React from 'react';
 import { AnalysisProgressPanel } from '@/components/analysis/AnalysisProgressPanel';
-import { Loader2 } from 'lucide-react';
 import { MODEL_CONFIGS, type UniaixModel } from '@/lib/api/uniaix';
 import type { AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
 import type { PhaseType } from '@/types/requirement-form';
@@ -42,8 +41,14 @@ export interface AnalysisPanelProps {
   isConnected: boolean;
   /** 分析是否完成 */
   isCompleted: boolean;
+  /** 是否正在加载 (用于按钮状态) */
+  isLoading?: boolean;
   /** 分析错误信息 */
   analysisError: string | null;
+  /** 确认技术方案 */
+  onConfirmPlan?: () => void;
+  /** 修改技术方案 */
+  onModifyPlan?: (req: string) => void;
 
   /** 自定义类名 */
   className?: string;
@@ -61,7 +66,10 @@ export function AnalysisPanel({
   messages,
   isConnected,
   isCompleted,
+  isLoading,
   analysisError,
+  onConfirmPlan,
+  onModifyPlan,
   className,
 }: AnalysisPanelProps): React.ReactElement {
   // 获取AI模型名称
@@ -90,27 +98,17 @@ export function AnalysisPanel({
         </div>
 
         {/* ==================== 右侧：根据阶段显示不同内容 ==================== */}
-        <div className="rounded-2xl border border-border/50 bg-card/30 p-6 backdrop-blur-xl">
-          {currentPhase === 'style-selection' ? (
-            // style-selection阶段：显示原型生成中的加载状态
-            <div className="flex flex-col items-center justify-center h-full min-h-[300px] space-y-4">
-              <Loader2 className="h-12 w-12 animate-spin text-primary" />
-              <div className="text-center space-y-2">
-                <h3 className="text-lg font-semibold">正在生成原型...</h3>
-                <p className="text-sm text-muted-foreground">
-                  AI正在根据您的需求生成可交互原型，请稍候
-                </p>
-              </div>
-            </div>
-          ) : (
-            // 分析阶段：显示分析进度面板
-            <AnalysisProgressPanel
-              messages={messages}
-              isConnected={isConnected}
-              isCompleted={isCompleted}
-              error={analysisError}
-            />
-          )}
+        <div className="rounded-2xl border border-border/50 bg-card/30 p-6 backdrop-blur-xl h-[600px]">
+          <AnalysisProgressPanel
+            messages={messages}
+            isConnected={isConnected}
+            isCompleted={isCompleted}
+            isLoading={isLoading}
+            error={analysisError}
+            currentPhase={currentPhase}
+            onConfirmPlan={onConfirmPlan}
+            onModifyPlan={onModifyPlan}
+          />
         </div>
       </div>
     </div>

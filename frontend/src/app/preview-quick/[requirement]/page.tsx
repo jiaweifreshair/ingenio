@@ -40,6 +40,11 @@ import { getToken } from '@/lib/auth/token';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { parseFilesFromResponse, type GeneratedFile } from '@/lib/ai-stream-parser';
+import {
+  applyOpenLovableSseMessage,
+  getInitialOpenLovableAccumulationState,
+  getOpenLovableCodeForApply,
+} from '@/lib/openlovable-stream-accumulator';
 import LivePreviewIframe from '@/components/code-generation/live-preview-iframe';
 import type { SandboxStatus } from '@/lib/sandbox/sandbox-manager';
 
@@ -80,12 +85,24 @@ interface SandboxInfo {
  * AI代码生成消息类型
  */
 interface AIMessage {
-  type: 'content' | 'tool_call' | 'error' | 'complete';
+  type:
+    | 'content'
+    | 'tool_call'
+    | 'error'
+    | 'complete'
+    | 'status'
+    | 'thinking'
+    | 'stream'
+    | 'conversation'
+    | 'warning'
+    | 'component';
   content?: string;
   text?: string;
+  generatedCode?: string;
   name?: string;
   args?: unknown;
   error?: string;
+  message?: string;
 }
 
 /**
@@ -116,6 +133,7 @@ function getSyntaxLanguage(type: string): string {
 }
 
 export default function QuickPreviewPage() {
+  console.log('DEBUG: QuickPreviewPage mounted');
   const params = useParams();
   const router = useRouter();
   const requirement = decodeURIComponent(params.requirement as string);
@@ -125,6 +143,8 @@ export default function QuickPreviewPage() {
   const [currentMessage, setCurrentMessage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [generationLog, setGenerationLog] = useState<string[]>([]);
+
+  const [statusMessage, setStatusMessage] = useState('');
 
   // 🆕 代码显示相关状态
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
@@ -357,7 +377,7 @@ export default function QuickPreviewPage() {
       const apiUrl = `${API_BASE_URL}/v1/openlovable/generate/stream`;
       const token = getToken();
 
-      let fullAIResponse = '';
+      let accumulationState = getInitialOpenLovableAccumulationState();
 
       fetch(apiUrl, {
         method: 'POST',
@@ -383,17 +403,51 @@ export default function QuickPreviewPage() {
           const decoder = new TextDecoder();
           let buffer = '';
 
+          const applyAndUpdateState = (data: AIMessage) => {
+            const nextState = applyOpenLovableSseMessage(accumulationState, data);
+            if (
+              nextState.streamedText !== accumulationState.streamedText ||
+              nextState.finalCode !== accumulationState.finalCode
+            ) {
+              accumulationState = nextState;
+              setStreamedCode(accumulationState.streamedText);
+              updateFilesFromStream(accumulationState.streamedText);
+            }
+          };
+
           const readStream = (): void => {
             reader.read().then(async ({ done, value }) => {
               if (done) {
+                // 处理剩余buffer，避免末尾没有\n\n导致最后一个事件丢失
+                if (buffer.trim()) {
+                  const remainingEvents = buffer.split(/\n\n|\r\n\r\n/);
+                  for (const event of remainingEvents) {
+                    if (!event.trim()) continue;
+                    const lines = event.split(/\n|\r\n/);
+                    for (const line of lines) {
+                      if (!line.trim() || line.startsWith(':')) continue;
+                      if (!line.startsWith('data:')) continue;
+                      try {
+                        const jsonStr = line.replace(/^data:\s*/, '').trim();
+                        if (!jsonStr) continue;
+                        const data: AIMessage = JSON.parse(jsonStr);
+                        applyAndUpdateState(data);
+                      } catch (parseError) {
+                        console.warn('解析SSE剩余Buffer失败:', line, parseError);
+                      }
+                    }
+                  }
+                }
+
                 addLog('✅ AI代码生成流式响应完成');
 
                 // 调用apply API将代码写入sandbox
                 try {
+                  const responseToApply = getOpenLovableCodeForApply(accumulationState);
                   // 🔍 调试日志：记录发送到apply API的内容长度
-                  console.log('[preview-quick] fullAIResponse length:', fullAIResponse.length);
-                  console.log('[preview-quick] fullAIResponse preview:', fullAIResponse.substring(0, 500));
-                  addLog(`📝 正在将代码应用到Sandbox... (响应长度: ${fullAIResponse.length} 字符)`);
+                  console.log('[preview-quick] responseToApply length:', responseToApply.length);
+                  console.log('[preview-quick] responseToApply preview:', responseToApply.substring(0, 500));
+                  addLog(`📝 正在将代码应用到Sandbox... (响应长度: ${responseToApply.length} 字符)`);
 
                   const applyResponse = await fetch(`${API_BASE_URL}/v1/openlovable/apply`, {
                     method: 'POST',
@@ -403,7 +457,7 @@ export default function QuickPreviewPage() {
                     },
                     body: JSON.stringify({
                       sandboxId,
-                      response: fullAIResponse
+                      response: responseToApply
                     })
                   });
 
@@ -415,7 +469,7 @@ export default function QuickPreviewPage() {
                   addLog(`✅ 代码已成功写入Sandbox: ${applyResult.data?.filesWritten || 0} 个文件`);
 
                   // 最终解析文件
-                  updateFilesFromStream(fullAIResponse);
+                  updateFilesFromStream(responseToApply);
                   setCurrentFile(null);
 
                   resolve();
@@ -441,13 +495,15 @@ export default function QuickPreviewPage() {
                   const jsonStr = line.replace(/^data:\s*/, '').trim();
                   const data: AIMessage = JSON.parse(jsonStr);
 
-                  // 从SSE中提取text字段并累加
-                  if (data.text) {
-                    fullAIResponse += data.text;
-                    setStreamedCode(fullAIResponse);
+                  // 只拼接 stream 的增量，并在 complete 时用 generatedCode 覆盖，避免 conversation 事件导致重复污染
+                  applyAndUpdateState(data);
 
-                    // 🆕 实时解析文件
-                    updateFilesFromStream(fullAIResponse);
+                  // 处理状态消息
+                  if (data.type === 'status' && data.message) {
+                    setStatusMessage(data.message);
+                    addLog(`ℹ️ 状态: ${data.message}`);
+                  } else if (data.type === 'thinking' && data.message) {
+                    setStatusMessage(`思考中: ${data.message}`);
                   }
 
                   // 处理消息并记录日志
@@ -604,7 +660,7 @@ export default function QuickPreviewPage() {
               {stage === 'error' && <AlertCircle className="w-3 h-3" />}
               {stage === 'init' && '初始化'}
               {stage === 'sandbox' && `创建沙箱 ${elapsedTime}s`}
-              {stage === 'generating' && `生成中 ${elapsedTime}s`}
+              {stage === 'generating' && (statusMessage || `生成中 ${elapsedTime}s`)}
               {stage === 'complete' && `已完成 ${totalTime}s`}
               {stage === 'error' && '失败'}
             </div>

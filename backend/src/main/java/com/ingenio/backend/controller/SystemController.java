@@ -28,7 +28,7 @@ import java.util.Optional;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v1/system")
+@RequestMapping("/v1/system")
 public class SystemController {
 
     private static final DateTimeFormatter FORMATTER =

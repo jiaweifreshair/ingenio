@@ -766,12 +766,42 @@ public class NLRequirementAnalyzer {
                     .description("评估完成")
                     .detail(String.format("复杂度: %s，预计 %d 天，约 %d 行代码",
                             complexity.getLevel(), complexity.getEstimatedDays(), complexity.getEstimatedLines()))
-                    .progress(100)
+                    .progress(90)
                     .result(Map.of(
                             "complexityLevel", complexity.getLevel().name(),
                             "estimatedDays", complexity.getEstimatedDays(),
                             "estimatedLines", complexity.getEstimatedLines(),
                             "confidenceScore", confidenceScore
+                    ))
+                    .timestamp(Instant.now())
+                    .build());
+
+            // ============ 步骤6：Ultrathink 深度规划 ============
+            progressCallback.accept(AnalysisProgressMessage.builder()
+                    .step(6)
+                    .stepName("Ultrathink 深度规划")
+                    .status(AnalysisProgressMessage.StepStatus.RUNNING)
+                    .description("正在生成技术实施蓝图...")
+                    .detail("构建系统架构、数据流图与实施路径")
+                    .progress(95)
+                    .timestamp(Instant.now())
+                    .build());
+
+            String technicalBlueprint = generateTechnicalBlueprint(analysisResult, techStack, complexity);
+            
+            // 模拟打字机效果的延迟，让前端展示更自然
+            Thread.sleep(800);
+
+            progressCallback.accept(AnalysisProgressMessage.builder()
+                    .step(6)
+                    .stepName("Ultrathink 深度规划")
+                    .status(AnalysisProgressMessage.StepStatus.COMPLETED)
+                    .description("技术蓝图构建完成")
+                    .detail(technicalBlueprint)
+                    .progress(100)
+                    .result(Map.of(
+                            "blueprint", technicalBlueprint,
+                            "sections", 4
                     ))
                     .timestamp(Instant.now())
                     .build());
@@ -801,5 +831,55 @@ public class NLRequirementAnalyzer {
             log.error("流式需求分析失败", e);
             throw new RuntimeException("Analysis failed: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 生成技术蓝图 Markdown
+     */
+    private String generateTechnicalBlueprint(Map<String, Object> analysisResult, TechStackRecommendation techStack, ComplexityAssessment complexity) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("# 🚀 Technical Implementation Blueprint\n\n");
+        
+        sb.append("## 1. System Architecture\n");
+        sb.append("- **Platform**: ").append(techStack.getPlatform()).append("\n");
+        sb.append("- **Frontend**: ").append(techStack.getUiFramework()).append("\n");
+        sb.append("- **Backend**: ").append(techStack.getBackend()).append("\n");
+        sb.append("- **Database**: ").append(techStack.getDatabase()).append("\n\n");
+        
+        sb.append("## 2. Data Domain Model\n");
+        Map<String, Object> entities = extractMap(analysisResult, "entities");
+        if (!entities.isEmpty()) {
+            entities.forEach((k, v) -> {
+                String desc = getDescription(v);
+                sb.append("- **").append(k).append("**: ").append(desc).append("\n");
+            });
+        } else {
+            sb.append("- No complex entities detected.\n");
+        }
+        sb.append("\n");
+
+        sb.append("## 3. API & Logic Layer\n");
+        Map<String, Object> operations = extractMap(analysisResult, "operations");
+        if (!operations.isEmpty()) {
+            operations.forEach((k, v) -> {
+                String desc = getDescription(v);
+                sb.append("- `").append(k).append("`: ").append(desc).append("\n");
+            });
+        }
+        sb.append("\n");
+        
+        sb.append("## 4. Execution Strategy\n");
+        sb.append("- **Complexity**: ").append(complexity.getLevel()).append("\n");
+        sb.append("- **Est. Timeline**: ").append(complexity.getEstimatedDays()).append(" days\n");
+        sb.append("- **Code Volume**: ~").append(complexity.getEstimatedLines()).append(" lines\n");
+        
+        return sb.toString();
+    }
+
+    private String getDescription(Object obj) {
+        if (obj instanceof Map) {
+            return getStringValue((Map<String, Object>) obj, "description", "Standard Entity");
+        }
+        return "Standard Entity";
     }
 }

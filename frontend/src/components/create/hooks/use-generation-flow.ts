@@ -99,10 +99,9 @@ export function useGenerationFlow({
     requirement,
     autoConnect: false,
     onComplete: () => {
-      // SSE分析完成，切换到style-selection阶段
-      // 实际的原型生成逻辑在RequirementForm的useEffect中处理
-      console.log('[useGenerationFlow] SSE分析完成，准备生成原型');
-      setCurrentPhase('style-selection');
+      // SSE分析完成，切换到方案评审阶段 (V2.1)
+      console.log('[useGenerationFlow] SSE分析完成，进入方案评审');
+      setCurrentPhase('plan-review');
     },
     onError: (error) => {
       console.error('[useGenerationFlow] SSE分析失败:', error);

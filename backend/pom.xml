@@ -65,6 +65,12 @@
             <artifactId>spring-boot-starter-websocket</artifactId>
         </dependency>
 
+        <!-- WebFlux支持（Spring AI流式调用需要） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
+        </dependency>
+
         <!-- Spring AI OpenAI（通用OpenAI兼容客户端，支持UniAix等） -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

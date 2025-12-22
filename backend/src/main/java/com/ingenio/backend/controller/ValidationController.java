@@ -32,7 +32,7 @@ import java.util.UUID;
  */
 @Slf4j
 @RestController
-@RequestMapping("/api/v2/validate")
+@RequestMapping("/v2/validate")
 @RequiredArgsConstructor
 public class ValidationController {
 

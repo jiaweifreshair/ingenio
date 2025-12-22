@@ -1,0 +1,26 @@
+# Maven
+target/
+.mvn/
+mvnw
+mvnw.cmd
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# 日志
+logs/
+*.log
+
+# 测试
+.pnpm-store/
+
+# 其他
+.git/
+.gitignore
+README.md
+*.md

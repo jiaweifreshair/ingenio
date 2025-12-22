@@ -119,11 +119,11 @@ public class ExecuteAgentV2FullStackImpl implements IExecuteAgent {
     /**
      * 从PlanResult提取用户需求描述
      *
-     * <p>V2.0增强：支持提取设计规范（designSpec）</p>
-     * <p>拼接模块信息和设计约束生成完整需求描述</p>
+     * <p>V2.0增强：支持提取设计规范（designSpec）和分析上下文（analysisContext）</p>
+     * <p>拼接模块信息、设计约束和结构化蓝图生成完整需求描述</p>
      *
-     * @param planResult Plan阶段结果（可能包含designSpec）
-     * @return 用户需求描述文本（包含设计约束）
+     * @param planResult Plan阶段结果（可能包含designSpec和analysisContext）
+     * @return 用户需求描述文本（包含设计约束和架构蓝图）
      */
     private String extractUserRequirement(PlanResult planResult) {
         StringBuilder requirement = new StringBuilder();
@@ -155,6 +155,62 @@ public class ExecuteAgentV2FullStackImpl implements IExecuteAgent {
         // 如果没有提取到任何内容，使用默认描述
         if (requirement.toString().trim().isEmpty()) {
             requirement.append("基础应用系统，需要用户管理、基础CRUD功能");
+        }
+        
+        // V2.0新增：提取并添加结构化分析上下文（analysisContext）
+        // 这是来自SSE流式分析的详细结果，包含了实体、操作和技术栈信息
+        if (planResult.getAnalysisContext() != null && !planResult.getAnalysisContext().isEmpty()) {
+            Map<String, Object> context = planResult.getAnalysisContext();
+            log.info("[ExecuteAgentV2] ✅ 检测到分析上下文(analysisContext)，开始提取架构蓝图...");
+            
+            requirement.append("\n\n========== 架构蓝图 (Architectural Blueprint) ==========\n");
+            requirement.append("请严格遵循以下架构定义生成数据库和代码：\n\n");
+            
+            // 提取实体定义
+            if (context.containsKey("entities")) {
+                Object entities = context.get("entities");
+                requirement.append("## 数据实体 (Entities)\n");
+                if (entities instanceof Collection) {
+                    requirement.append("包含实体: ").append(String.join(", ", (Collection) entities)).append("\n");
+                } else if (entities instanceof Map) {
+                    // 如果是Map，可能包含字段详情
+                    requirement.append("包含实体: ").append(String.join(", ", ((Map) entities).keySet())).append("\n");
+                } else {
+                    requirement.append("实体定义: ").append(entities).append("\n");
+                }
+                
+                if (context.containsKey("entitiesCount")) {
+                     requirement.append("实体数量: ").append(context.get("entitiesCount")).append("\n");
+                }
+            }
+            
+            // 提取业务操作
+            if (context.containsKey("operations")) {
+                Object operations = context.get("operations");
+                requirement.append("\n## 核心业务操作 (Key Operations)\n");
+                if (operations instanceof Collection) {
+                    for (Object op : (Collection) operations) {
+                        requirement.append("- ").append(op).append("\n");
+                    }
+                } else if (operations instanceof Map) {
+                    for (Object key : ((Map) operations).keySet()) {
+                        requirement.append("- ").append(key).append("\n");
+                    }
+                }
+            }
+            
+            // 提取技术栈（作为约束）
+            if (context.containsKey("techStack")) {
+                requirement.append("\n## 技术栈约束 (Tech Stack)\n");
+                Object techStack = context.get("techStack");
+                if (techStack instanceof Map) {
+                    Map ts = (Map) techStack;
+                    if (ts.get("backend") != null) requirement.append("- 后端: ").append(ts.get("backend")).append("\n");
+                    if (ts.get("database") != null) requirement.append("- 数据库: ").append(ts.get("database")).append("\n");
+                }
+            }
+            
+            requirement.append("====================================================\n");
         }
 
         // V2.0新增：提取并添加设计规范（designSpec）
@@ -353,12 +409,21 @@ public class ExecuteAgentV2FullStackImpl implements IExecuteAgent {
         // 后端层
         result.put("backend", backendCode);
 
-        // 前端层（占位，后续扩展）
+        // 前端层
         Map<String, Object> frontend = new LinkedHashMap<>();
-        frontend.put("web", Map.of(
-            "status", "pending",
-            "message", "前端代码将在后续阶段生成"
-        ));
+        if (planResult.getFrontendPrototype() != null) {
+            Map<String, Object> webResult = new LinkedHashMap<>(planResult.getFrontendPrototype());
+            webResult.put("status", "generated");
+            webResult.put("message", "基于OpenLovable-CN生成的交互式原型");
+            frontend.put("web", webResult);
+            log.info("[ExecuteAgentV2] ✅ 已集成前端原型: sandboxId={}", webResult.get("sandboxId"));
+        } else {
+            frontend.put("web", Map.of(
+                "status", "pending",
+                "message", "前端代码将在后续阶段生成"
+            ));
+            log.info("[ExecuteAgentV2] ℹ️ 未检测到前端原型，使用占位符");
+        }
         result.put("frontend", frontend);
 
         // 元数据

@@ -87,19 +87,26 @@ public class CodeGenerationStreamController {
 
         emitter.onError((ex) -> {
             log.error("SSE流错误: appSpecId={}", request.getAppSpecId(), ex);
-            emitter.completeWithError(ex);
+            // SSE场景避免 completeWithError 触发异常派发，使用正常complete关闭连接
+            emitter.complete();
         });
 
         // 异步执行代码生成，避免阻塞HTTP线程
         CompletableFuture.runAsync(() -> {
             try {
                 codeGenerationStreamService.generateCodeStream(request, emitter);
-            } catch (IOException e) {
+            } catch (Exception e) {
                 log.error("代码生成流式处理失败: appSpecId={}", request.getAppSpecId(), e);
                 try {
-                    emitter.completeWithError(e);
-                } catch (Exception ex) {
+                    // 尝试发送错误事件给前端
+                    emitter.send(SseEmitter.event()
+                        .name("error")
+                        .data("{\"type\":\"error\",\"message\":\"系统处理异常: " + e.getMessage() + "\"}"));
+                } catch (IOException ex) {
                     log.error("发送错误事件失败", ex);
+                } finally {
+                    // 无论如何都要关闭连接
+                    emitter.complete();
                 }
             }
         });

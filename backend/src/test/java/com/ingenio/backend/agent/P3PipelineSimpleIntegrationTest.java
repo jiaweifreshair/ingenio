@@ -50,8 +50,8 @@ import static org.mockito.Mockito.when;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @DisplayName("P3 Pipeline简化集成测试")
 @SpringBootTest(properties = {
-    "spring.ai.openai.api-key=sk-UJEaOXPIxjRVEOQZpqlIj0MaOKGUaC5AClk6TrzuOuBwaj6f",
-    "spring.ai.openai.base-url=https://www.uniaix.com/v1",
+    "spring.ai.openai.api-key=sk-placeholder",
+    "spring.ai.openai.base-url=https://api.qnaigc.com",
     "spring.ai.openai.chat.enabled=true",
     "spring.ai.openai.embedding.enabled=false"
 })
