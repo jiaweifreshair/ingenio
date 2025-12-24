@@ -611,3 +611,80 @@ export function requiresStyleSelection(result: PlanRoutingResult): boolean {
 export function canConfirmDesign(result: PlanRoutingResult): boolean {
   return result.prototypeGenerated && result.requiresUserConfirmation;
 }
+
+// ==================== V2.0 新增API ====================
+
+/**
+ * 更新原型状态请求
+ */
+export interface UpdatePrototypeRequest {
+  /** 沙箱ID */
+  sandboxId: string;
+  /** 预览URL */
+  previewUrl: string;
+  /** 提供商（默认e2b） */
+  provider?: string;
+}
+
+/**
+ * 更新原型状态
+ * V2.0新增：前端通过OpenLovable SSE生成预览后，调用此API同步更新后端AppSpec
+ *
+ * 解决问题：前端生成预览后，需要更新后端的frontendPrototype字段，
+ * 否则confirmDesign会检查失败返回"原型尚未生成"
+ *
+ * @param appSpecId - AppSpec ID
+ * @param prototypeInfo - 原型信息（sandboxId, previewUrl等）
+ * @returns 更新结果
+ *
+ * @example
+ * ```typescript
+ * // 在OpenLovable生成完成后调用
+ * if (stage === 'complete' && sandboxInfo) {
+ *   await updatePrototypeStatus(appSpecId, {
+ *     sandboxId: sandboxInfo.sandboxId,
+ *     previewUrl: sandboxInfo.url,
+ *   });
+ * }
+ * ```
+ */
+export async function updatePrototypeStatus(
+  appSpecId: string,
+  prototypeInfo: UpdatePrototypeRequest
+): Promise<{ success: boolean; message: string }> {
+  console.log('[PlanRouting API] 更新原型状态:', { appSpecId, ...prototypeInfo });
+
+  // 参数验证
+  if (!appSpecId) {
+    throw new Error('AppSpec ID 不能为空');
+  }
+
+  if (!prototypeInfo.sandboxId || !prototypeInfo.previewUrl) {
+    throw new Error('sandboxId 和 previewUrl 不能为空');
+  }
+
+  try {
+    const response = await post<{ success: boolean; message: string; updatedAt: string }>(
+      `/v2/plan-routing/${appSpecId}/update-prototype`,
+      {
+        sandboxId: prototypeInfo.sandboxId,
+        previewUrl: prototypeInfo.previewUrl,
+        provider: prototypeInfo.provider || 'e2b',
+      }
+    );
+
+    console.log('[PlanRouting API] 原型状态更新响应:', response);
+
+    if (!response.success) {
+      throw new Error(response.error || response.message || '原型状态更新失败');
+    }
+
+    return {
+      success: true,
+      message: response.data?.message || '原型状态更新成功',
+    };
+  } catch (error) {
+    console.error('[PlanRouting API] 原型状态更新失败:', error);
+    throw error;
+  }
+}

@@ -46,10 +46,12 @@ public class MyBatisPlusMetaObjectHandler implements MetaObjectHandler {
             this.strictInsertFill(metaObject, "id", UUID.class, generatedId);
         }
 
-        // 自动生成租户ID（如果为空）
+        // 自动填充租户ID（如果为空），从TenantContextHolder获取
         if (metaObject.hasGetter("tenantId") && metaObject.getValue("tenantId") == null) {
-            // 这里可以从上下文获取租户ID，暂时使用0表示公共租户
-            this.strictInsertFill(metaObject, "tenantId", String.class, UUIDv8Generator.generate(IngenioBusinessType.TENANT, 0).toString());
+            String tenantId = com.ingenio.backend.common.context.TenantContextHolder.getTenantId();
+            if (org.springframework.util.StringUtils.hasText(tenantId)) {
+                this.strictInsertFill(metaObject, "tenantId", String.class, tenantId);
+            }
         }
 
         // 自动填充created_at

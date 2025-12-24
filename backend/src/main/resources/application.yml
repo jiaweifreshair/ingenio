@@ -46,8 +46,8 @@ spring:
       chat:
         enabled: true
         options:
-          # 使用UniAix支持的模型，例如 gpt-4o 或 deepseek-r1
-          model: deepseek-r1
+          # 使用七牛云AI可用模型：deepseek/deepseek-v3.2-251201, qwen3-max-preview
+          model: deepseek/deepseek-v3.2-251201
           temperature: 0.3
           max-tokens: 4096
       embedding:
@@ -135,7 +135,7 @@ sa-token:
   # 在多人登录同一账号时，是否共用一个token
   is-share: false
   # Token风格（默认可取值：uuid、simple-uuid、random-32、random-64、random-128、tik）
-  token-style: jwt
+  token-style: simple-uuid
   # 是否输出操作日志
   is-log: false
   # JWT秘钥
@@ -220,7 +220,7 @@ logging:
     com.baomidou.mybatisplus: DEBUG
     org.springframework.ai: DEBUG
   pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] [%X{traceId}] %-5level %logger{36} - %msg%n"
   file:
     name: logs/ingenio-backend.log
     max-size: 100MB
@@ -235,15 +235,15 @@ ingenio:
     # V2: ExecuteAgentV2FullStackImpl (全栈多端代码生成器，Phase 2-8开发中)
     version: V2
     plan:
-      model: deepseek-r1
+      model: deepseek/deepseek-v3.2-251201
       temperature: 0.7
       max-tokens: 4000
     execute:
-      model: deepseek-r1
+      model: deepseek/deepseek-v3.2-251201
       temperature: 0.3
       max-tokens: 8000
     validate:
-      model: deepseek-r1
+      model: deepseek/deepseek-v3.2-251201
       temperature: 0.5
       max-tokens: 2000
 

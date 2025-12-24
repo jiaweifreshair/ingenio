@@ -4,14 +4,16 @@ AI驱动的自然语言编程平台 - 后端服务
 
 ## 技术栈
 
-- **Java 21** - 使用虚拟线程（Project Loom）
-- **Spring Boot 3.2.0** - Web框架
-- **Spring AI Alibaba 1.0.0-M1** - DeepSeek AI集成
-- **MyBatis-Plus 3.5.5** - ORM框架
+- **Java 17+** - 运行时最低要求（以 `pom.xml` 为准）
+- **Spring Boot 3.4.0** - Web框架（以 `pom.xml` 为准）
+- **Spring AI 1.0.0-M5** - AI集成（以 `pom.xml` 为准）
+- **MyBatis-Plus 3.5.8** - ORM框架（以 `pom.xml` 为准）
 - **SaToken 1.37.0** - JWT认证
 - **PostgreSQL 15.x** - 主数据库
 - **Redis 7.x** - 缓存和会话
 - **MinIO 8.5.7** - 对象存储
+
+> 目录说明：`backend/` 同时包含 **Java Spring Boot**（`pom.xml` + `src/main/java`）与 **NestJS（TypeScript）**（`package.json` + `src/*.ts`）两套实现；当前默认脚本（`start-services.sh`）启动的是 Spring Boot。
 
 ## 项目结构
 

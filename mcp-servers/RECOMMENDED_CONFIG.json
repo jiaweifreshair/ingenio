@@ -1,0 +1,38 @@
+{
+  "// 说明": "这是推荐的MCP配置 - 无需Docker，使用npx方式",
+  "// 使用方法": "将此配置添加到 ~/.claude.json 或 .claude/settings.json 的 mcpServers 字段",
+
+  "mcpServers": {
+    "figma": {
+      "type": "http",
+      "url": "https://mcp.figma.com/mcp",
+      "description": "Figma设计工具集成 - 无需本地安装"
+    },
+    "calicat": {
+      "type": "http",
+      "url": "https://www.calicat.cn/mcp",
+      "description": "Calicat服务集成 - 无需本地安装"
+    },
+    "chrome-devtools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["chrome-devtools-mcp@latest"],
+      "env": {},
+      "description": "Chrome浏览器控制 - 使用npx自动运行，无需Docker"
+    }
+  },
+
+  "// 注意事项": [
+    "1. Figma和Calicat是远程HTTP服务，Claude启动时自动连接",
+    "2. Chrome DevTools使用npx运行，Claude启动时自动执行",
+    "3. 完全不需要手动启动任何服务",
+    "4. 完全不需要Docker",
+    "5. 重启Claude Code后生效"
+  ],
+
+  "// 验证方法": [
+    "1. 启动Claude Code: claude",
+    "2. 查看MCP服务器: /mcp",
+    "3. 使用示例: @figma 或 @chrome-devtools"
+  ]
+}

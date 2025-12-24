@@ -13,7 +13,12 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { getApiBaseUrl } from '@/lib/api/base-url';
+
+/**
+ * 后端服务基准URL
+ * 说明：该API属于服务端代理层，必须使用服务端环境变量，避免出现同源递归或错误拼接。
+ */
+const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8080/api';
 
 /**
  * 清理请求体
@@ -44,8 +49,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 调用后端OpenLovable服务
-    const apiBaseUrl = getApiBaseUrl();
-    const backendUrl = `${apiBaseUrl}/v1/openlovable/cleanup`;
+    const backendUrl = `${BACKEND_API_URL}/v1/openlovable/cleanup`;
 
     console.log(`[清理API] 转发清理请求到后端: ${sandboxId}`);
 
@@ -55,6 +59,7 @@ export async function POST(request: NextRequest) {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ sandboxId }),
+      cache: 'no-store',
     });
 
     if (!backendResponse.ok) {

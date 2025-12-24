@@ -40,17 +40,17 @@ public class OpenLovableGenerateRequest {
     private String customizationRequirement;
 
     /**
-     * AI模型选择（可选，默认使用deepseek-v3.2）
-     * 支持的模型（七牛云API）：
-     * - deepseek-v3.2（推荐，最新版本）
-     * - deepseek-v3.1
+     * AI模型选择（可选，默认使用deepseek-r1推理模型）
+     * 支持的模型（open-lovable-cn 支持自动 fallback）：
+     * - deepseek-r1（推理模型，代码质量更高）← 默认
      * - deepseek-v3
-     * - deepseek-r1（推理模型）
+     * - deepseek-v3.1
      * - qwen3-max
-     * - qwen-turbo
+     * - kimi-k2
+     * - gemini-3-pro-preview（备用）
      */
     @Builder.Default
-    private String aiModel = "deepseek-v3.2";
+    private String aiModel = "deepseek-r1";
 
     /**
      * 是否需要爬取网站（可选，默认根据referenceUrls自动判断）

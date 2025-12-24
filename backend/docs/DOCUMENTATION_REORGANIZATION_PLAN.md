@@ -95,9 +95,10 @@ docs/
 ├── migration/
 │   └── supabase-migration-guide.md # Supabase迁移（保留）
 └── legacy/
-    ├── FRONTEND_DESIGN_ANALYSIS.md # 旧文档（归档）
-    ├── KuiklyUI集成测试报告.md      # 旧文档（归档）
-    └── KuiklyUI集成验证计划.md      # 旧文档（归档）
+    └── 20251224/
+        ├── 05-FRONTEND_DESIGN_ANALYSIS.md # 旧文档（归档）
+        ├── 06-KuiklyUI集成测试报告.md      # 旧文档（归档）
+        └── 07-KuiklyUI集成验证计划.md      # 旧文档（归档）
 ```
 
 ### 2.3 backend/docs/目录结构

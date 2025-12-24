@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
 import java.io.BufferedReader;
@@ -237,10 +238,15 @@ public class OpenLovableController {
      * }
      */
     @GetMapping("/sandbox/status")
-    public ResponseEntity<?> getSandboxStatus() {
+    public ResponseEntity<?> getSandboxStatus(@RequestParam(required = false) String sandboxId) {
         try {
-            String url = openLovableBaseUrl + "/api/sandbox-status";
-            log.info("查询沙箱状态: {}", url);
+            UriComponentsBuilder builder = UriComponentsBuilder
+                    .fromHttpUrl(openLovableBaseUrl + "/api/sandbox-status");
+            if (sandboxId != null && !sandboxId.isBlank()) {
+                builder.queryParam("sandboxId", sandboxId);
+            }
+            String url = builder.toUriString();
+            log.info("查询沙箱状态: {} (sandboxId={})", url, sandboxId);
 
             ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
 
@@ -278,6 +284,90 @@ public class OpenLovableController {
             log.error("终止沙箱失败", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Result.error("终止沙箱失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Sandbox心跳（保活）
+     *
+     * POST /v1/openlovable/heartbeat
+     *
+     * 请求体：
+     * {
+     *   "sandboxId": "sb_xxxxx"
+     * }
+     *
+     * 说明：
+     * - Open-Lovable 上游不一定提供专门的 heartbeat 接口
+     * - 这里通过查询指定 sandbox 的状态来实现“保活/可用性探测”双重目的
+     */
+    @PostMapping("/heartbeat")
+    public ResponseEntity<?> heartbeat(@RequestBody Map<String, Object> request) {
+        try {
+            Object sandboxIdObj = request.get("sandboxId");
+            if (!(sandboxIdObj instanceof String sandboxId) || sandboxId.isBlank()) {
+                return ResponseEntity.badRequest().body(Result.error(400, "缺少必需参数: sandboxId"));
+            }
+
+            UriComponentsBuilder builder = UriComponentsBuilder
+                    .fromHttpUrl(openLovableBaseUrl + "/api/sandbox-status")
+                    .queryParam("sandboxId", sandboxId);
+            String url = builder.toUriString();
+
+            log.info("Sandbox心跳: sandboxId={}, url={}", sandboxId, url);
+
+            ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
+            return ResponseEntity.ok(Result.success(response.getBody()));
+        } catch (Exception e) {
+            log.error("Sandbox心跳失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Result.error("Sandbox心跳失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * Sandbox清理（释放资源）
+     *
+     * POST /v1/openlovable/cleanup
+     *
+     * 请求体：
+     * {
+     *   "sandboxId": "sb_xxxxx"
+     * }
+     *
+     * 说明：
+     * - 优先按 sandboxId 精准清理（多实例场景）
+     * - 若上游忽略 sandboxId，则等价于清理“当前沙箱”（由Open-Lovable实现决定）
+     */
+    @PostMapping("/cleanup")
+    public ResponseEntity<?> cleanup(@RequestBody Map<String, Object> request) {
+        try {
+            Object sandboxIdObj = request.get("sandboxId");
+            if (!(sandboxIdObj instanceof String sandboxId) || sandboxId.isBlank()) {
+                return ResponseEntity.badRequest().body(Result.error(400, "缺少必需参数: sandboxId"));
+            }
+
+            UriComponentsBuilder builder = UriComponentsBuilder
+                    .fromHttpUrl(openLovableBaseUrl + "/api/kill-sandbox")
+                    .queryParam("sandboxId", sandboxId);
+            String url = builder.toUriString();
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(
+                    Map.of("sandboxId", sandboxId),
+                    headers
+            );
+
+            log.info("清理Sandbox: sandboxId={}, url={}", sandboxId, url);
+
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, requestEntity, Map.class);
+            return ResponseEntity.ok(Result.success(response.getBody()));
+        } catch (Exception e) {
+            log.error("清理Sandbox失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Result.error("清理Sandbox失败: " + e.getMessage()));
         }
     }
 
@@ -855,14 +945,15 @@ public class OpenLovableController {
     }
 
     /**
-     * 增强提示词 - 添加结构化思维要求（Chain-of-Thought）
+     * 增强提示词 - 添加结构化思维要求（Chain-of-Thought）+ UI设计规范
      *
      * 核心原理：
      * 1. 强制AI在生成代码前先进行<thinking>分析
      * 2. main.jsx作为固定模板**第一个**生成，避免截断
      * 3. 明确文件规划、依赖关系、生成顺序
+     * 4. V2.2新增：UI设计规范，让生成的页面更美观
      *
-     * V2.1优化：调整生成顺序，main.jsx放最前面
+     * V2.2优化：添加UI设计规范，生成更专业的界面
      *
      * @param originalPrompt 用户原始需求
      * @return 增强后的提示词
@@ -876,6 +967,62 @@ public class OpenLovableController {
 
 ---
 
+## 🎨 UI设计规范（强制遵守）
+
+### 1. 视觉风格
+- **现代简约设计**：干净、留白充足、视觉层次清晰
+- **配色方案**：使用专业的渐变色（如 from-indigo-500 to-purple-600），禁止使用单调的纯色背景
+- **卡片设计**：使用 rounded-xl shadow-lg 圆角阴影，hover时添加 hover:shadow-xl transition-all
+- **背景**：主背景使用 bg-gradient-to-br from-slate-50 to-slate-100，深色模式用 dark:from-slate-900 dark:to-slate-800
+
+### 2. 排版规范
+- **标题**：使用 text-2xl md:text-4xl font-bold，搭配渐变色 bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent
+- **正文**：text-gray-600 dark:text-gray-300，行高 leading-relaxed
+- **间距**：组件之间使用 space-y-6 或 gap-6，页面边距 px-4 md:px-8 py-8
+
+### 3. 交互动效
+- **按钮**：主按钮使用渐变色 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white rounded-lg shadow-md hover:shadow-lg transition-all
+- **卡片悬停**：hover:scale-[1.02] hover:shadow-xl transition-all duration-300
+- **输入框**：focus:ring-2 focus:ring-indigo-500 focus:border-transparent rounded-lg border-gray-300
+
+### 4. 图标使用
+- **图标库**：优先使用 lucide-react（安装后导入）
+- **图标样式**：w-5 h-5 或 w-6 h-6，与文字配合时使用 inline-flex items-center gap-2
+
+### 5. 响应式设计
+- **移动优先**：基础样式为移动端，md: 前缀用于平板，lg: 前缀用于桌面
+- **网格布局**：grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6
+- **最大宽度**：max-w-7xl mx-auto 居中容器
+
+### 6. 组件示例样式
+
+#### 英雄区(Hero Section)
+```jsx
+<section className="relative overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white py-20 md:py-32">
+  <div className="absolute inset-0 bg-black/10"></div>
+  <div className="relative max-w-7xl mx-auto px-4 text-center">
+    <h1 className="text-4xl md:text-6xl font-bold mb-6">标题文字</h1>
+    <p className="text-xl md:text-2xl text-white/80 mb-8 max-w-2xl mx-auto">描述文字</p>
+    <button className="bg-white text-indigo-600 px-8 py-3 rounded-full font-semibold hover:bg-gray-100 transition-all shadow-lg hover:shadow-xl">
+      开始使用
+    </button>
+  </div>
+</section>
+```
+
+#### 功能卡片
+```jsx
+<div className="group bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border border-gray-100">
+  <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center mb-4">
+    <Icon className="w-6 h-6 text-white" />
+  </div>
+  <h3 className="text-xl font-semibold text-gray-900 mb-2">功能标题</h3>
+  <p className="text-gray-600">功能描述文字</p>
+</div>
+```
+
+---
+
 ## 📋 强制执行：结构化思维过程
 
 在生成任何代码之前，你**必须**在 `<thinking>` 标签中完成以下分析：
@@ -883,10 +1030,15 @@ public class OpenLovableController {
 ### Step 1: 需求理解
 - 用户要构建什么应用？核心功能有哪些？
 
-### Step 2: 文件规划
+### Step 2: UI设计规划
+- 页面布局结构（Hero、Features、Footer等）
+- 配色方案和视觉风格
+- 关键交互效果
+
+### Step 3: 文件规划
 列出需要创建的文件（不含main.jsx，它是固定的）
 
-### Step 3: 依赖分析
+### Step 4: 依赖分析
 - 需要安装哪些第三方包？（lucide-react等）
 
 ---
@@ -895,7 +1047,8 @@ public class OpenLovableController {
 
 1. **main.jsx是固定模板** - 直接使用下方提供的代码，**第一个输出**
 2. **代码必须完整** - 每个文件从第一行写到最后一行，禁止截断或省略
-3. **使用标准Tailwind类** - bg-white, text-gray-900（禁止bg-background等自定义类）
+3. **使用标准Tailwind类** - 遵循上方UI设计规范（禁止bg-background等自定义类）
+4. **视觉效果优先** - 必须使用渐变色、阴影、圆角、动画，让页面看起来专业美观
 
 ---
 
@@ -904,7 +1057,7 @@ public class OpenLovableController {
 ### 第一步：输出思考过程
 ```xml
 <thinking>
-[简要分析：需求理解、文件规划、依赖分析]
+[简要分析：需求理解、UI设计规划、文件规划、依赖分析]
 </thinking>
 ```
 
@@ -924,28 +1077,50 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 </file>
 ```
 
-### 第三步：输出index.css
+### 第三步：输出index.css（包含自定义动画）
 ```xml
 <file path="src/index.css">
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-[其他自定义样式]
+/* 自定义动画 */
+@keyframes float {
+  0%%, 100%% { transform: translateY(0); }
+  50%% { transform: translateY(-10px); }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-float { animation: float 3s ease-in-out infinite; }
+.animate-fade-in-up { animation: fadeInUp 0.6s ease-out forwards; }
+
+/* 渐变文字 */
+.gradient-text {
+  @apply bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent;
+}
+
+/* 玻璃态效果 */
+.glass {
+  @apply bg-white/80 backdrop-blur-lg border border-white/20;
+}
 </file>
 ```
 
 ### 第四步：输出组件文件
 ```xml
 <file path="src/components/XXX.jsx">
-[完整组件代码]
+[完整组件代码 - 必须遵循UI设计规范]
 </file>
 ```
 
 ### 第五步：输出App.jsx
 ```xml
 <file path="src/App.jsx">
-[完整主组件代码]
+[完整主组件代码 - 整合所有组件，页面布局美观]
 </file>
 ```
 
@@ -953,7 +1128,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 ## 🚨 再次强调
 
-**main.jsx必须第一个输出！** 它是Vite应用入口，代码固定不变，直接复制上方模板即可。
+1. **main.jsx必须第一个输出！** 它是Vite应用入口，代码固定不变
+2. **UI必须美观！** 严格遵循上方UI设计规范，使用渐变色、阴影、动画等现代设计元素
+3. **禁止使用丑陋的纯白背景！** 至少使用 bg-gradient-to-br from-slate-50 to-slate-100
 
 现在请开始：先<thinking>，然后按顺序输出所有文件（main.jsx第一个）。
 """, originalPrompt);

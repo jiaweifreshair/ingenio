@@ -79,4 +79,11 @@ public class GenerateFullRequest {
      * 可选，用于传递额外的生成参数
      */
     private Map<String, Object> options;
+
+    /**
+     * 目标平台
+     * 可选，默认WEB
+     * 支持: WEB, ANDROID, IOS
+     */
+    private String platform;
 }

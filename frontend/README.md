@@ -27,7 +27,7 @@ pnpm install
 pnpm dev
 ```
 
-访问 [http://localhost:3001](http://localhost:3001) 查看应用。
+访问 [http://localhost:3000](http://localhost:3000) 查看应用。
 
 ### 构建生产版本
 

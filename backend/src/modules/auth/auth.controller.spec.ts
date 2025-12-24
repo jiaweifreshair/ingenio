@@ -8,7 +8,6 @@ import { UnauthorizedException } from '@nestjs/common';
 
 describe('AuthController', () => {
   let controller: AuthController;
-  let authService: AuthService;
 
   // Mock AuthService
   const mockAuthService = {
@@ -30,7 +29,6 @@ describe('AuthController', () => {
     }).compile();
 
     controller = module.get<AuthController>(AuthController);
-    authService = module.get<AuthService>(AuthService);
 
     // 清除所有mock
     jest.clearAllMocks();

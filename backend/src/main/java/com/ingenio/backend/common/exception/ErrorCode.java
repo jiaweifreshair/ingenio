@@ -30,11 +30,13 @@ public enum ErrorCode {
     APPSPEC_INVALID("3001", "AppSpec格式错误"),
     APPSPEC_VERSION_NOT_FOUND("3002", "AppSpec版本不存在"),
     APPSPEC_QUALITY_TOO_LOW("3003", "AppSpec质量评分过低"),
+    VALIDATION_ERROR("3004", "验证失败"),
 
     // 代码生成相关错误码（4000-4999）
     CODEGEN_FAILED("4000", "代码生成失败"),
     CODEGEN_BUILD_FAILED("4001", "代码构建失败"),
     CODEGEN_PREVIEW_FAILED("4002", "预览生成失败"),
+    CODE_GENERATION_ERROR("4003", "代码生成错误"),
 
     // 项目相关错误码（5000-5999）
     PROJECT_NOT_FOUND("5000", "项目不存在"),

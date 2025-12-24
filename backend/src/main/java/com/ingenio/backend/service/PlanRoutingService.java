@@ -124,6 +124,17 @@ public class PlanRoutingService {
             AppSpecEntity appSpec = createAppSpec(tenantId, userId, intentResult, userRequirement);
             log.info("AppSpec创建完成 - appSpecId: {}", appSpec.getId());
 
+            // V2.0新增：保存techStackHint到metadata（供executeCodeGeneration使用）
+            if (techStackHint != null && !techStackHint.isEmpty()) {
+                Map<String, Object> metadata = appSpec.getMetadata() != null
+                        ? new HashMap<>(appSpec.getMetadata())
+                        : new HashMap<>();
+                metadata.put("techStackHint", techStackHint);
+                metadata.put("complexityHint", complexityHint);
+                appSpec.setMetadata(metadata);
+                log.info("已保存techStackHint到metadata: {}", techStackHint);
+            }
+
             // Step 3: 匹配行业模板
             List<IndustryTemplateMatchingService.TemplateMatchResult> matchedTemplates = matchTemplates(
                     intentResult.getExtractedKeywords(),
@@ -652,7 +663,7 @@ public class PlanRoutingService {
                 .referenceUrls(Collections.emptyList())
                 .needsCrawling(false)
                 .streaming(false)
-                .aiModel("deepseek-v3")
+                .aiModel("deepseek-r1")  // 推理模型，支持自动 fallback
                 .timeoutSeconds(90) // 设计分支需要更长时间
                 .build();
 
@@ -749,6 +760,55 @@ public class PlanRoutingService {
 
         log.info("设计确认完成 - appSpecId: {}, confirmedAt: {}",
                 appSpecId, appSpec.getDesignConfirmedAt());
+    }
+
+    /**
+     * 更新原型状态
+     * V2.0新增：前端使用OpenLovable生成预览后，调用此方法更新AppSpec的原型信息
+     *
+     * @param appSpecId AppSpec ID
+     * @param prototypeInfo 原型信息（包含sandboxId、previewUrl等）
+     */
+    @Transactional
+    public void updatePrototypeStatus(UUID appSpecId, Map<String, Object> prototypeInfo) {
+        log.info("更新原型状态 - appSpecId: {}", appSpecId);
+
+        AppSpecEntity appSpec = appSpecMapper.selectById(appSpecId);
+        if (appSpec == null) {
+            throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
+        }
+
+        // 构建frontendPrototype对象
+        Map<String, Object> frontendPrototype = new HashMap<>();
+        frontendPrototype.put("sandboxId", prototypeInfo.get("sandboxId"));
+        frontendPrototype.put("previewUrl", prototypeInfo.get("previewUrl"));
+        frontendPrototype.put("provider", prototypeInfo.getOrDefault("provider", "e2b"));
+        frontendPrototype.put("generatedAt", Instant.now().toString());
+        frontendPrototype.put("source", "openlovable-sse"); // 标记来源为前端SSE生成
+
+        // 更新AppSpec
+        appSpec.setFrontendPrototype(frontendPrototype);
+
+        // 同时更新prototypeUrl字段（便于查询）
+        if (prototypeInfo.get("previewUrl") != null) {
+            appSpec.setFrontendPrototypeUrl(prototypeInfo.get("previewUrl").toString());
+        }
+
+        appSpec.setPrototypeGeneratedAt(Instant.now());
+        appSpec.setUpdatedAt(Instant.now());
+
+        // 更新metadata
+        Map<String, Object> metadata = appSpec.getMetadata() != null
+                ? new HashMap<>(appSpec.getMetadata())
+                : new HashMap<>();
+        metadata.put("sandboxId", prototypeInfo.get("sandboxId"));
+        metadata.put("prototypeUpdatedAt", Instant.now().toString());
+        appSpec.setMetadata(metadata);
+
+        appSpecMapper.updateById(appSpec);
+
+        log.info("原型状态更新完成 - appSpecId: {}, sandboxId: {}, previewUrl: {}",
+                appSpecId, prototypeInfo.get("sandboxId"), prototypeInfo.get("previewUrl"));
     }
 
     /**
@@ -977,6 +1037,18 @@ public class PlanRoutingService {
         IExecuteAgent executeAgent = executeAgentFactory.getExecuteAgent();
         Map<String, Object> codeResult = executeAgent.execute(planResult);
 
+        // V2.0新增：根据techStackHint生成特定技术栈的代码
+        String techStackHint = (metadata != null) ? (String) metadata.get("techStackHint") : null;
+        if ("React+Supabase".equalsIgnoreCase(techStackHint) || "React + Supabase".equalsIgnoreCase(techStackHint)) {
+            log.info("[PlanRouting] 检测到React+Supabase技术栈，生成Supabase客户端代码...");
+            Map<String, Object> supabaseCode = generateSupabaseClientCode(appSpec, planResult);
+            if (codeResult == null) {
+                codeResult = new HashMap<>();
+            }
+            codeResult.put("supabaseIntegration", supabaseCode);
+            log.info("[PlanRouting] ✅ Supabase客户端代码已生成");
+        }
+
         // V2.0新增：保存生成代码到metadata，确保持久化
         if (codeResult != null) {
             Map<String, Object> updatedMetadata = appSpec.getMetadata() != null
@@ -1148,6 +1220,621 @@ public class PlanRoutingService {
         log.debug("需求增强完成 - 原始长度: {}, 增强后长度: {}", userRequirement.length(), result.length());
 
         return result;
+    }
+
+    /**
+     * 生成Supabase客户端集成代码
+     *
+     * V2.0新增：当techStackHint为React+Supabase时调用
+     * 生成内容包括：
+     * 1. Supabase客户端初始化代码
+     * 2. 数据库Schema（DDL）
+     * 3. TypeScript类型定义
+     * 4. React Hooks（数据获取）
+     * 5. API服务层代码
+     *
+     * @param appSpec AppSpec实体
+     * @param planResult 计划结果
+     * @return Supabase集成代码Map
+     */
+    private Map<String, Object> generateSupabaseClientCode(AppSpecEntity appSpec, PlanResult planResult) {
+        log.info("[Supabase] 开始生成Supabase客户端代码 - appSpecId: {}", appSpec.getId());
+
+        Map<String, Object> result = new HashMap<>();
+
+        // 从specContent提取用户需求
+        Map<String, Object> specContent = appSpec.getSpecContent();
+        String userRequirement = (specContent != null && specContent.get("userRequirement") != null)
+                ? specContent.get("userRequirement").toString()
+                : "应用";
+
+        // 提取应用名称（简单实现）
+        String appName = extractAppNameFromRequirement(userRequirement);
+
+        // 1. Supabase客户端初始化代码
+        String clientInitCode = generateSupabaseClientInit();
+        result.put("clientInit", clientInitCode);
+
+        // 2. 环境变量模板
+        String envTemplate = generateSupabaseEnvTemplate();
+        result.put("envTemplate", envTemplate);
+
+        // 3. TypeScript类型定义（基于需求推断）
+        String typeDefinitions = generateSupabaseTypes(userRequirement, appName);
+        result.put("types", typeDefinitions);
+
+        // 4. React Hooks代码
+        String hooksCode = generateSupabaseHooks(appName);
+        result.put("hooks", hooksCode);
+
+        // 5. API服务层代码
+        String serviceCode = generateSupabaseService(appName);
+        result.put("service", serviceCode);
+
+        // 6. 数据库Schema提示（用于Supabase Dashboard）
+        String schemaHint = generateSupabaseSchemaHint(userRequirement, appName);
+        result.put("schemaHint", schemaHint);
+
+        // 7. 使用说明
+        String usageGuide = generateSupabaseUsageGuide();
+        result.put("usageGuide", usageGuide);
+
+        log.info("[Supabase] Supabase客户端代码生成完成 - appName: {}", appName);
+
+        return result;
+    }
+
+    /**
+     * 生成Supabase客户端初始化代码
+     */
+    private String generateSupabaseClientInit() {
+        return """
+            // src/lib/supabase.ts
+            import { createClient } from '@supabase/supabase-js'
+            import type { Database } from './database.types'
+
+            const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+            const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+
+            if (!supabaseUrl || !supabaseAnonKey) {
+              throw new Error('Missing Supabase environment variables')
+            }
+
+            export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+              auth: {
+                autoRefreshToken: true,
+                persistSession: true,
+                detectSessionInUrl: true
+              }
+            })
+
+            // 辅助函数：处理Supabase错误
+            export function handleSupabaseError(error: unknown): string {
+              if (error && typeof error === 'object' && 'message' in error) {
+                return (error as { message: string }).message
+              }
+              return '操作失败，请重试'
+            }
+            """;
+    }
+
+    /**
+     * 生成环境变量模板
+     */
+    private String generateSupabaseEnvTemplate() {
+        return """
+            # .env.local (请替换为您的Supabase项目信息)
+            VITE_SUPABASE_URL=https://your-project.supabase.co
+            VITE_SUPABASE_ANON_KEY=your-anon-key
+
+            # 获取方式：
+            # 1. 登录 https://supabase.com
+            # 2. 进入项目 Settings > API
+            # 3. 复制 Project URL 和 anon/public key
+            """;
+    }
+
+    /**
+     * 生成TypeScript类型定义
+     */
+    private String generateSupabaseTypes(String userRequirement, String appName) {
+        // 根据需求推断可能的数据模型
+        String tableName = appName.toLowerCase().replaceAll("[^a-z0-9]", "_") + "s";
+
+        return String.format("""
+            // src/lib/database.types.ts
+            // 注意：建议使用 Supabase CLI 生成准确的类型定义
+            // npx supabase gen types typescript --project-id your-project-id > src/lib/database.types.ts
+
+            export type Json =
+              | string
+              | number
+              | boolean
+              | null
+              | { [key: string]: Json | undefined }
+              | Json[]
+
+            export interface Database {
+              public: {
+                Tables: {
+                  %s: {
+                    Row: {
+                      id: string
+                      created_at: string
+                      updated_at: string
+                      title: string
+                      description: string | null
+                      status: string
+                      user_id: string
+                      metadata: Json | null
+                    }
+                    Insert: {
+                      id?: string
+                      created_at?: string
+                      updated_at?: string
+                      title: string
+                      description?: string | null
+                      status?: string
+                      user_id: string
+                      metadata?: Json | null
+                    }
+                    Update: {
+                      id?: string
+                      created_at?: string
+                      updated_at?: string
+                      title?: string
+                      description?: string | null
+                      status?: string
+                      user_id?: string
+                      metadata?: Json | null
+                    }
+                  }
+                  users: {
+                    Row: {
+                      id: string
+                      email: string
+                      full_name: string | null
+                      avatar_url: string | null
+                      created_at: string
+                    }
+                    Insert: {
+                      id?: string
+                      email: string
+                      full_name?: string | null
+                      avatar_url?: string | null
+                      created_at?: string
+                    }
+                    Update: {
+                      id?: string
+                      email?: string
+                      full_name?: string | null
+                      avatar_url?: string | null
+                      created_at?: string
+                    }
+                  }
+                }
+                Views: {
+                  [_ in never]: never
+                }
+                Functions: {
+                  [_ in never]: never
+                }
+                Enums: {
+                  [_ in never]: never
+                }
+              }
+            }
+
+            // 便捷类型别名
+            export type %sRow = Database['public']['Tables']['%s']['Row']
+            export type %sInsert = Database['public']['Tables']['%s']['Insert']
+            export type %sUpdate = Database['public']['Tables']['%s']['Update']
+            export type UserRow = Database['public']['Tables']['users']['Row']
+            """, tableName,
+                capitalize(appName), tableName,
+                capitalize(appName), tableName,
+                capitalize(appName), tableName);
+    }
+
+    /**
+     * 生成React Hooks代码
+     */
+    private String generateSupabaseHooks(String appName) {
+        String tableName = appName.toLowerCase().replaceAll("[^a-z0-9]", "_") + "s";
+        String capitalName = capitalize(appName);
+
+        return String.format("""
+            // src/hooks/use%s.ts
+            import { useState, useEffect, useCallback } from 'react'
+            import { supabase, handleSupabaseError } from '@/lib/supabase'
+            import type { %sRow, %sInsert, %sUpdate } from '@/lib/database.types'
+
+            interface Use%sReturn {
+              items: %sRow[]
+              loading: boolean
+              error: string | null
+              fetchAll: () => Promise<void>
+              create: (data: %sInsert) => Promise<%sRow | null>
+              update: (id: string, data: %sUpdate) => Promise<%sRow | null>
+              remove: (id: string) => Promise<boolean>
+            }
+
+            export function use%s(): Use%sReturn {
+              const [items, setItems] = useState<%sRow[]>([])
+              const [loading, setLoading] = useState(true)
+              const [error, setError] = useState<string | null>(null)
+
+              // 获取所有数据
+              const fetchAll = useCallback(async () => {
+                setLoading(true)
+                setError(null)
+                try {
+                  const { data, error: fetchError } = await supabase
+                    .from('%s')
+                    .select('*')
+                    .order('created_at', { ascending: false })
+
+                  if (fetchError) throw fetchError
+                  setItems(data || [])
+                } catch (e) {
+                  setError(handleSupabaseError(e))
+                } finally {
+                  setLoading(false)
+                }
+              }, [])
+
+              // 创建数据
+              const create = useCallback(async (insertData: %sInsert): Promise<%sRow | null> => {
+                setError(null)
+                try {
+                  const { data, error: insertError } = await supabase
+                    .from('%s')
+                    .insert(insertData)
+                    .select()
+                    .single()
+
+                  if (insertError) throw insertError
+                  setItems(prev => [data, ...prev])
+                  return data
+                } catch (e) {
+                  setError(handleSupabaseError(e))
+                  return null
+                }
+              }, [])
+
+              // 更新数据
+              const update = useCallback(async (id: string, updateData: %sUpdate): Promise<%sRow | null> => {
+                setError(null)
+                try {
+                  const { data, error: updateError } = await supabase
+                    .from('%s')
+                    .update(updateData)
+                    .eq('id', id)
+                    .select()
+                    .single()
+
+                  if (updateError) throw updateError
+                  setItems(prev => prev.map(item => item.id === id ? data : item))
+                  return data
+                } catch (e) {
+                  setError(handleSupabaseError(e))
+                  return null
+                }
+              }, [])
+
+              // 删除数据
+              const remove = useCallback(async (id: string): Promise<boolean> => {
+                setError(null)
+                try {
+                  const { error: deleteError } = await supabase
+                    .from('%s')
+                    .delete()
+                    .eq('id', id)
+
+                  if (deleteError) throw deleteError
+                  setItems(prev => prev.filter(item => item.id !== id))
+                  return true
+                } catch (e) {
+                  setError(handleSupabaseError(e))
+                  return false
+                }
+              }, [])
+
+              // 初始加载
+              useEffect(() => {
+                fetchAll()
+              }, [fetchAll])
+
+              return { items, loading, error, fetchAll, create, update, remove }
+            }
+            """,
+                capitalName,
+                capitalName, capitalName, capitalName,
+                capitalName, capitalName,
+                capitalName, capitalName,
+                capitalName, capitalName,
+                capitalName, capitalName,
+                capitalName,
+                tableName,
+                capitalName, capitalName,
+                tableName,
+                capitalName, capitalName,
+                tableName,
+                tableName);
+    }
+
+    /**
+     * 生成API服务层代码
+     */
+    private String generateSupabaseService(String appName) {
+        String tableName = appName.toLowerCase().replaceAll("[^a-z0-9]", "_") + "s";
+
+        return String.format("""
+            // src/services/%sService.ts
+            import { supabase } from '@/lib/supabase'
+            import type { %sRow, %sInsert, %sUpdate } from '@/lib/database.types'
+
+            const TABLE_NAME = '%s'
+
+            export const %sService = {
+              // 获取列表（支持分页和筛选）
+              async getList(options?: {
+                page?: number
+                pageSize?: number
+                status?: string
+                userId?: string
+              }) {
+                const { page = 1, pageSize = 20, status, userId } = options || {}
+                const from = (page - 1) * pageSize
+                const to = from + pageSize - 1
+
+                let query = supabase
+                  .from(TABLE_NAME)
+                  .select('*', { count: 'exact' })
+                  .range(from, to)
+                  .order('created_at', { ascending: false })
+
+                if (status) query = query.eq('status', status)
+                if (userId) query = query.eq('user_id', userId)
+
+                const { data, error, count } = await query
+                if (error) throw error
+                return { data, total: count || 0, page, pageSize }
+              },
+
+              // 获取单条记录
+              async getById(id: string): Promise<%sRow | null> {
+                const { data, error } = await supabase
+                  .from(TABLE_NAME)
+                  .select('*')
+                  .eq('id', id)
+                  .single()
+
+                if (error) throw error
+                return data
+              },
+
+              // 创建
+              async create(data: %sInsert): Promise<%sRow> {
+                const { data: result, error } = await supabase
+                  .from(TABLE_NAME)
+                  .insert(data)
+                  .select()
+                  .single()
+
+                if (error) throw error
+                return result
+              },
+
+              // 更新
+              async update(id: string, data: %sUpdate): Promise<%sRow> {
+                const { data: result, error } = await supabase
+                  .from(TABLE_NAME)
+                  .update({ ...data, updated_at: new Date().toISOString() })
+                  .eq('id', id)
+                  .select()
+                  .single()
+
+                if (error) throw error
+                return result
+              },
+
+              // 删除
+              async delete(id: string): Promise<void> {
+                const { error } = await supabase
+                  .from(TABLE_NAME)
+                  .delete()
+                  .eq('id', id)
+
+                if (error) throw error
+              },
+
+              // 实时订阅
+              subscribeToChanges(callback: (payload: any) => void) {
+                return supabase
+                  .channel('%s_changes')
+                  .on(
+                    'postgres_changes',
+                    { event: '*', schema: 'public', table: TABLE_NAME },
+                    callback
+                  )
+                  .subscribe()
+              }
+            }
+            """,
+                appName,
+                capitalize(appName), capitalize(appName), capitalize(appName),
+                tableName,
+                appName,
+                capitalize(appName),
+                capitalize(appName), capitalize(appName),
+                capitalize(appName), capitalize(appName),
+                tableName);
+    }
+
+    /**
+     * 生成数据库Schema提示
+     */
+    private String generateSupabaseSchemaHint(String userRequirement, String appName) {
+        String tableName = appName.toLowerCase().replaceAll("[^a-z0-9]", "_") + "s";
+
+        return String.format("""
+            -- Supabase数据库Schema建议
+            -- 请在Supabase Dashboard的SQL Editor中执行
+
+            -- 启用UUID扩展
+            CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
+            -- 创建主表：%s
+            CREATE TABLE IF NOT EXISTS %s (
+              id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+              created_at TIMESTAMPTZ DEFAULT NOW(),
+              updated_at TIMESTAMPTZ DEFAULT NOW(),
+              title VARCHAR(255) NOT NULL,
+              description TEXT,
+              status VARCHAR(50) DEFAULT 'draft',
+              user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+              metadata JSONB DEFAULT '{}'::jsonb
+            );
+
+            -- 创建索引
+            CREATE INDEX IF NOT EXISTS %s_user_id_idx ON %s(user_id);
+            CREATE INDEX IF NOT EXISTS %s_status_idx ON %s(status);
+            CREATE INDEX IF NOT EXISTS %s_created_at_idx ON %s(created_at DESC);
+
+            -- 启用RLS（行级安全策略）
+            ALTER TABLE %s ENABLE ROW LEVEL SECURITY;
+
+            -- RLS策略：用户只能访问自己的数据
+            CREATE POLICY "Users can view own %s"
+              ON %s FOR SELECT
+              USING (auth.uid() = user_id);
+
+            CREATE POLICY "Users can insert own %s"
+              ON %s FOR INSERT
+              WITH CHECK (auth.uid() = user_id);
+
+            CREATE POLICY "Users can update own %s"
+              ON %s FOR UPDATE
+              USING (auth.uid() = user_id)
+              WITH CHECK (auth.uid() = user_id);
+
+            CREATE POLICY "Users can delete own %s"
+              ON %s FOR DELETE
+              USING (auth.uid() = user_id);
+
+            -- 自动更新updated_at触发器
+            CREATE OR REPLACE FUNCTION update_updated_at_column()
+            RETURNS TRIGGER AS $$
+            BEGIN
+              NEW.updated_at = NOW();
+              RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+
+            CREATE TRIGGER update_%s_updated_at
+              BEFORE UPDATE ON %s
+              FOR EACH ROW
+              EXECUTE FUNCTION update_updated_at_column();
+
+            -- 原始需求参考：
+            -- %s
+            """,
+                appName,
+                tableName,
+                tableName, tableName,
+                tableName, tableName,
+                tableName, tableName,
+                tableName,
+                tableName, tableName,
+                tableName, tableName,
+                tableName, tableName,
+                tableName, tableName,
+                tableName, tableName,
+                userRequirement.replace("*/", "* /"));
+    }
+
+    /**
+     * 生成使用指南
+     */
+    private String generateSupabaseUsageGuide() {
+        return """
+            # Supabase集成使用指南
+
+            ## 1. 配置Supabase项目
+            1. 访问 https://supabase.com 创建新项目
+            2. 进入 Settings > API 获取 Project URL 和 anon key
+            3. 将配置填入 .env.local 文件
+
+            ## 2. 执行数据库Schema
+            1. 进入 Supabase Dashboard > SQL Editor
+            2. 复制 schemaHint 中的SQL语句
+            3. 执行创建表和RLS策略
+
+            ## 3. 安装依赖
+            ```bash
+            npm install @supabase/supabase-js
+            # 或
+            pnpm add @supabase/supabase-js
+            ```
+
+            ## 4. 生成类型定义（推荐）
+            ```bash
+            npx supabase gen types typescript --project-id your-project-id > src/lib/database.types.ts
+            ```
+
+            ## 5. 在组件中使用
+            ```tsx
+            import { useItems } from '@/hooks/useItems'
+
+            function MyComponent() {
+              const { items, loading, error, create, update, remove } = useItems()
+
+              if (loading) return <div>加载中...</div>
+              if (error) return <div>错误: {error}</div>
+
+              return (
+                <ul>
+                  {items.map(item => (
+                    <li key={item.id}>{item.title}</li>
+                  ))}
+                </ul>
+              )
+            }
+            ```
+
+            ## 6. 实时订阅示例
+            ```tsx
+            import { useEffect } from 'react'
+            import { itemsService } from '@/services/itemsService'
+
+            useEffect(() => {
+              const subscription = itemsService.subscribeToChanges((payload) => {
+                console.log('数据变化:', payload)
+                // 刷新数据
+              })
+
+              return () => {
+                subscription.unsubscribe()
+              }
+            }, [])
+            ```
+
+            ## 常见问题
+            - **RLS错误**: 确保用户已登录且user_id正确
+            - **类型错误**: 使用 supabase gen types 生成最新类型
+            - **连接失败**: 检查环境变量是否正确配置
+            """;
+    }
+
+    /**
+     * 首字母大写
+     */
+    private String capitalize(String str) {
+        if (str == null || str.isEmpty()) {
+            return str;
+        }
+        return str.substring(0, 1).toUpperCase() + str.substring(1);
     }
 
     /**

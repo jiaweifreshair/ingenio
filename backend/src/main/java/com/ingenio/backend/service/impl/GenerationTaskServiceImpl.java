@@ -351,7 +351,7 @@ public class GenerationTaskServiceImpl implements IGenerationTaskService {
                 }
 
                 // 根据生成结果更新任务状态
-                if ("completed".equals(response.getStatus())) {
+                if ("completed".equals(response.getStatus()) || "validating".equals(response.getStatus())) {
                     updateTaskResult(
                             taskId,
                             response.getAppSpecId(),

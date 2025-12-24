@@ -323,6 +323,13 @@ public class AICapabilityRequirement {
      */
     public enum AIApproach {
         /**
+         * 无AI需求
+         */
+        @JsonProperty("NONE")
+        @com.fasterxml.jackson.annotation.JsonAlias({"None", "none", "null"})
+        NONE("无", "不需要AI能力"),
+
+        /**
          * 直接调用AI API（适用于简单场景）
          */
         DIRECT_API("直接调用AI API", "适用于简单场景，生成直接调用七牛云/阿里云API的代码"),

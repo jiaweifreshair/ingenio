@@ -1,0 +1,249 @@
+# GitHub Actions CI/CD Pipeline
+# 灵构Creator - Spec Agents系统
+
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # 代码质量检查
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: [backend, frontend]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        if: matrix.service == 'backend' || matrix.service == 'frontend'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'pnpm'
+          cache-dependency-path: |
+            ${{ matrix.service }}/pnpm-lock.yaml
+
+      - name: Setup Python
+        if: matrix.service == 'agent-service'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies (Backend)
+        if: matrix.service == 'backend'
+        working-directory: ./${{ matrix.service }}
+        run: |
+          npm install -g pnpm
+          pnpm install --frozen-lockfile
+
+      - name: Install dependencies (Frontend)
+        if: matrix.service == 'frontend'
+        working-directory: ./${{ matrix.service }}
+        run: |
+          npm install -g pnpm
+          pnpm install --frozen-lockfile
+
+      - name: Install dependencies (Agent Service)
+        if: matrix.service == 'agent-service'
+        working-directory: ./${{ matrix.service }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Type check (Backend)
+        if: matrix.service == 'backend'
+        working-directory: ./backend
+        run: pnpm typecheck
+
+      - name: Lint (Backend)
+        if: matrix.service == 'backend'
+        working-directory: ./backend
+        run: pnpm lint
+
+      - name: Unit tests (Backend)
+        if: matrix.service == 'backend'
+        working-directory: ./backend
+        run: pnpm test
+
+      - name: Type check (Frontend)
+        if: matrix.service == 'frontend'
+        working-directory: ./frontend
+        run: pnpm typecheck
+
+      - name: Lint (Frontend)
+        if: matrix.service == 'frontend'
+        working-directory: ./frontend
+        run: pnpm lint
+
+      - name: Unit tests (Frontend)
+        if: matrix.service == 'frontend'
+        working-directory: ./frontend
+        run: pnpm test
+
+      - name: Python lint (Agent Service)
+        if: matrix.service == 'agent-service'
+        working-directory: ./agent-service
+        run: |
+          pip install flake8 black
+          flake8 src/ --max-line-length=88
+          black --check src/
+
+      - name: Python tests (Agent Service)
+        if: matrix.service == 'agent-service'
+        working-directory: ./agent-service
+        run: |
+          pip install pytest pytest-cov
+          pytest --cov=src tests/
+
+  # 构建Docker镜像
+  build-images:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.ref == 'refs/heads/main'
+
+    strategy:
+      matrix:
+        service: [backend, frontend, agent-service]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # E2E测试
+  e2e-tests:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    needs: build-images
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        run: |
+          sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          sudo chmod +x /usr/local/bin/docker-compose
+
+      - name: Start services
+        run: |
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env
+          echo "ANTHROPIC_API_KEY=${{ secrets.ANTHROPIC_API_KEY }}" >> .env
+          docker-compose up -d
+
+      - name: Wait for services to be ready
+        run: |
+          timeout 300 bash -c 'until curl -f http://localhost:3000/health; do sleep 5; done'
+          timeout 300 bash -c 'until curl -f http://localhost:3001/health; do sleep 5; done'
+          timeout 300 bash -c 'until curl -f http://localhost:8000/health; do sleep 5; done'
+
+      - name: Install Playwright
+        run: |
+          cd frontend
+          npm install -g pnpm
+          pnpm install
+          npx playwright install --with-deps
+
+      - name: Run E2E tests
+        run: |
+          cd frontend
+          npx playwright test
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v3
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker-compose logs
+          docker-compose down -v
+
+  # 部署到生产环境
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-images, e2e-tests]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to production
+        run: |
+          echo "Deploying to production environment..."
+          # 这里添加实际的部署脚本
+          # 例如：kubectl apply -f k8s/
+          # 或者：ssh user@server 'docker-compose up -d'
+
+  # 安全扫描
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: build-images
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'

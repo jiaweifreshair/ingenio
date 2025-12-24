@@ -7,7 +7,6 @@ import { Module, NestModule, MiddlewareConsumer } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { APP_GUARD } from '@nestjs/core';
-import { WorkersClientModule } from './common/clients/workers-client.module';
 import { GenerateController } from './modules/generate/generate.controller';
 import { GenerateService } from './modules/generate/generate.service';
 import { AppSpecController } from './modules/generate/app-spec.controller';
@@ -42,9 +41,6 @@ import { PermissionGuard } from './common/guards/permission.guard';
 
     // 注册Entity到模块
     TypeOrmModule.forFeature([AppSpecEntity, AppSpecVersionEntity, UserEntity]),
-
-    // Workers HTTP客户端模块
-    WorkersClientModule,
 
     // 认证模块
     AuthModule,

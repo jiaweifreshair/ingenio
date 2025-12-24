@@ -241,4 +241,36 @@ public class PlanRoutingController {
         // TODO: 实现状态查询逻辑
         throw new UnsupportedOperationException("状态查询功能尚未实现");
     }
+
+    /**
+     * 更新原型状态
+     * V2.0新增：前端使用OpenLovable生成预览后，调用此API更新AppSpec的原型信息
+     *
+     * 解决问题：前端通过SSE流式生成预览后，需要同步更新后端AppSpec的frontendPrototype字段，
+     * 否则confirmDesign会检查失败
+     *
+     * @param appSpecId 应用规格ID
+     * @param prototypeInfo 原型信息（包含sandboxId、previewUrl等）
+     * @return 更新结果
+     */
+    @PostMapping("/{appSpecId}/update-prototype")
+    @Operation(summary = "更新原型状态", description = "前端生成预览后，同步更新AppSpec的原型信息")
+    public Result<java.util.Map<String, Object>> updatePrototypeStatus(
+            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId,
+            @RequestBody java.util.Map<String, Object> prototypeInfo
+    ) {
+        log.info("收到原型状态更新请求 - appSpecId: {}, prototypeInfo: {}", appSpecId, prototypeInfo);
+
+        planRoutingService.updatePrototypeStatus(appSpecId, prototypeInfo);
+
+        log.info("原型状态更新完成 - appSpecId: {}", appSpecId);
+
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("success", true);
+        response.put("appSpecId", appSpecId);
+        response.put("message", "原型状态更新成功");
+        response.put("updatedAt", Instant.now().toString());
+
+        return Result.success(response);
+    }
 }

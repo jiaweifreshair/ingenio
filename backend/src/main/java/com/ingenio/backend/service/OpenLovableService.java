@@ -588,7 +588,7 @@ public class OpenLovableService {
             // 构建请求体
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("prompt", prompt);
-            requestBody.put("model", "deepseek-v3");
+            requestBody.put("model", "deepseek-r1");  // 推理模型，代码质量更高，支持自动 fallback 到 Gemini
             requestBody.put("isEdit", false);
 
             Map<String, Object> context = new HashMap<>();

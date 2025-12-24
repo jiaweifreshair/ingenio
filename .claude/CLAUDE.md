@@ -7,6 +7,14 @@
 
 ---
 
+## 0. 当前有效口径（先读文档再改代码）
+
+- 规划文档：`01-INGENIO_SMART_BUILDER_DEVELOPMENT_PLAN.md` ~ `07-AGENT_STACK_AGENT_SCOPE_GOOSE_SELECTION.md`
+- 文档编号索引：
+  - `docs/00-INDEX.md`
+  - `backend/docs/00-INDEX.md`
+  - `frontend/docs/00-INDEX.md`
+
 ## 1. 项目概览
 
 ### 1.1 系统定位
@@ -40,8 +48,8 @@ Ingenio是基于**意图识别+双重选择机制**的AI应用全栈生成系统
 | 组件 | 技术 | 版本 |
 |-----|------|------|
 | 框架 | Spring Boot | 3.4.0 |
-| 语言 | Java | 21 |
-| ORM | MyBatis-Plus | 3.5.5 |
+| 语言 | Java | 17+ |
+| ORM | MyBatis-Plus | 3.5.8 |
 | 数据库 | PostgreSQL | 15+ |
 | 缓存 | Redis | 7+ |
 | AI集成 | 七牛云AI（DeepSeek） | - |
@@ -57,9 +65,11 @@ Ingenio是基于**意图识别+双重选择机制**的AI应用全栈生成系统
 
 ### 2.3 AI模型栈
 
-- **Qwen-Max**：意图识别、需求分析、Schema设计
-- **DeepSeek**：代码生成、修复建议
-- **OpenLovable-CN**：原型生成（5-10秒）
+结合当前“JeecgBoot × Smart Builder”方向，模型栈建议按职责拆分：
+
+- **Gemini（前端/产品面）**：交互与组件方案、前端类型与契约、产品文档与说明。
+- **Claude（服务端/工程闭环）**：服务端代码生成与修复、测试修复、工程化自修复闭环。
+- **OpenLovable-CN（可选）**：原型预览生成（保持现状，后续可演进/替换）。
 
 ---
 
@@ -193,9 +203,24 @@ cd backend && source .env && mvn spring-boot:run -Dspring-boot.run.profiles=loca
 
 ---
 
-## 5. V2.0 Agent架构
+## 5. 智能体工程化（文档先行）
 
-### 5.1 三Agent职责
+> 目标：提升“代码生成一次性通过率”，以工程闭环实现自修复（Generate → Build/Test → Fix → Re-test）。
+
+### 5.1 技术选型口径（你已确认的方向）
+
+- 多智能体编排：`AgentScope（Python）`
+- 代码修改执行器：`Goose`（`https://github.com/block/goose`，以 PoC 指标验证可用性）
+- 模型职责拆分：前端/产品面可用 Gemini；服务端代码生成/修复以 Claude 为主
+
+详见：`07-AGENT_STACK_AGENT_SCOPE_GOOSE_SELECTION.md`
+
+### 5.2 与 JeecgBoot 的关系
+
+- JeecgBoot 作为控制面：治理模板/能力/PromptPack/评测集，负责写入/审批/发布。
+- 工程化智能体建议以“独立执行器/CI 工具”形态落地：只读消费控制面已发布资产，产出 patch/PR 与报告。
+
+### 5.3 现有 V2 链路（历史实现，供对齐现状用）
 
 **Plan Agent（规划层）**：
 - 意图识别：使用IntentClassifier分析用户需求类型
@@ -214,7 +239,7 @@ cd backend && source .env && mvn spring-boot:run -Dspring-boot.run.profiles=loca
 - 运行时验证：应用启动、UI渲染、API调用
 - 性能验证：启动时间、渲染时间、响应时间
 
-### 5.2 关键开发规则
+### 5.4 关键开发规则（仍然有效）
 
 - Plan阶段必须先进行意图识别，等待用户确认设计
 - Execute阶段必须通过ExecuteGuard检查前置条件

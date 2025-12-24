@@ -1,0 +1,121 @@
+# Docker Compose配置
+# Ingenio - AI驱动的自然语言编程平台
+version: '3.8'
+
+services:
+  # PostgreSQL数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: ingenio-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ingenio}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ingenio_20251122}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - ingenio-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ingenio"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis缓存
+  redis:
+    image: redis:7-alpine
+    container_name: ingenio-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ingenio-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # MinIO对象存储
+  minio:
+    image: minio/minio:latest
+    container_name: ingenio-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - ingenio-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Java后端服务 (Spring Boot) - 已禁用，使用宿主机JAR运行
+  # backend:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #   container_name: ingenio-backend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "8080:8080"
+  #   environment:
+  #     SPRING_PROFILES_ACTIVE: docker
+  #     DB_HOST: ${DB_HOST:-postgres}
+  #     DB_PORT: ${DB_PORT:-5432}
+  #     DB_NAME: ${DB_NAME:-ingenio}
+  #     DB_USER: ${DB_USER:-postgres}
+  #     DB_PASSWORD: ${DB_PASSWORD}
+  #     REDIS_HOST: ${REDIS_HOST:-redis}
+  #     REDIS_PORT: ${REDIS_PORT:-6379}
+  #     REDIS_PASSWORD: ${REDIS_PASSWORD}
+  #     MINIO_ENDPOINT: ${MINIO_ENDPOINT:-http://minio:9000}
+  #     MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+  #     MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+  #     JWT_SECRET: ${JWT_SECRET}
+  #     DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+  #     DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #     minio:
+  #       condition: service_healthy
+  #   networks:
+  #     - ingenio-network
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:8080/actuator/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+  #     start_period: 60s
+
+
+# 数据卷
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+
+# 网络
+networks:
+  ingenio-network:
+    driver: bridge

@@ -202,7 +202,7 @@ public class GlobalExceptionHandler {
      * 处理其他未知异常
      */
     @ExceptionHandler(Exception.class)
-    @ResponseStatus(HttpStatus.OK)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     public Result<Object> handleException(Exception e) {
         log.error("系统异常", e);
         return Result.error(ErrorCode.SYSTEM_ERROR);

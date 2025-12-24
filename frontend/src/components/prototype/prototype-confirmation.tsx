@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 
 import type { PlanRoutingResult } from '@/lib/api/plan-routing';
+import { updatePrototypeStatus } from '@/lib/api/plan-routing';
 import type { Template } from '@/types/template';
 import { useOpenLovablePreview } from '@/hooks/use-openlovable-preview';
 import { cn } from '@/lib/utils';
@@ -41,6 +42,8 @@ import { InteractionPanel } from './interaction-panel';
 import { RealtimeCodeViewer } from '@/components/code-generation/realtime-code-viewer';
 import { ResizablePanels } from '@/components/ui/resizable-panels';
 import { useToast } from '@/hooks/use-toast';
+import { useSandboxHeartbeat } from '@/hooks/use-sandbox-heartbeat';
+import { useSandboxCleanup } from '@/hooks/use-sandbox-cleanup';
 
 // ==================== 类型定义 ====================
 
@@ -71,6 +74,7 @@ export function PrototypeConfirmation({
   // OpenLovable Hook
   const {
     stage,
+    sandboxInfo,  // V2.0新增：用于同步原型状态到后端
     previewUrl,
     generatedFiles,
     currentFile,
@@ -97,6 +101,29 @@ export function PrototypeConfirmation({
   const effectivePreviewUrl = previewUrl || routingResult.prototypeUrl || null;
   const canConfirm = (stage === 'complete' || routingResult.prototypeGenerated) && !error;
   const isGenerating = stage === 'sandbox' || stage === 'generating';
+  const currentSandboxId = sandboxInfo?.sandboxId || null;
+
+  // Phase 2: Sandbox生命周期管理（保活 + 卸载清理）
+  useSandboxHeartbeat({
+    sandboxId: currentSandboxId,
+    interval: 60000,
+    enabled: !!currentSandboxId && !loading,
+    onHeartbeatError: (heartbeatError) => {
+      console.warn('[PrototypeConfirmation] Sandbox心跳失败:', heartbeatError);
+    },
+  });
+
+  useSandboxCleanup({
+    sandboxId: currentSandboxId,
+    cleanupOnHide: false,
+    enabled: !!currentSandboxId,
+    onBeforeCleanup: () => {
+      console.log('[PrototypeConfirmation] 准备清理Sandbox:', currentSandboxId);
+    },
+    onCleanupComplete: () => {
+      console.log('[PrototypeConfirmation] Sandbox清理完成:', currentSandboxId);
+    },
+  });
 
   // ========== 副作用 ==========
 
@@ -120,6 +147,43 @@ export function PrototypeConfirmation({
       return () => clearTimeout(timer);
     }
   }, [stage, previewUrl]);
+
+  // V2.0新增：生成完成后同步更新后端AppSpec的原型状态
+  // 解决问题：前端生成预览后，需要更新后端的frontendPrototype字段，否则confirmDesign会检查失败
+  const hasUpdatedPrototypeRef = React.useRef(false);
+  useEffect(() => {
+    async function syncPrototypeStatus() {
+      // 条件：生成完成、有sandboxInfo、有appSpecId、未曾更新过
+      if (
+        stage === 'complete' &&
+        sandboxInfo?.sandboxId &&
+        sandboxInfo?.url &&
+        routingResult.appSpecId &&
+        !hasUpdatedPrototypeRef.current
+      ) {
+        hasUpdatedPrototypeRef.current = true;
+        try {
+          console.log('[PrototypeConfirmation] 同步原型状态到后端...');
+          await updatePrototypeStatus(routingResult.appSpecId.toString(), {
+            sandboxId: sandboxInfo.sandboxId,
+            previewUrl: sandboxInfo.url,
+            provider: sandboxInfo.provider || 'e2b',
+          });
+          console.log('[PrototypeConfirmation] ✅ 原型状态同步成功');
+        } catch (err) {
+          console.error('[PrototypeConfirmation] ❌ 原型状态同步失败:', err);
+          // 不阻塞用户流程，仅记录错误
+          toast({
+            title: '状态同步失败',
+            description: '预览已生成，但状态同步失败。如果确认设计失败，请刷新页面重试。',
+            variant: 'default',
+          });
+        }
+      }
+    }
+
+    syncPrototypeStatus();
+  }, [stage, sandboxInfo, routingResult.appSpecId, toast]);
 
   // 自动切换到代码视图（如果生成中且没有预览URL）
   useEffect(() => {

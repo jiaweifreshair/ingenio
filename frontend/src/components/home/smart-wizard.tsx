@@ -295,6 +295,42 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
   }, [routingResult]);
 
   /**
+   * 处理技术方案确认（从PlanDisplay点击"Confirm & Generate Prototype"按钮）
+   * 跳转到原型预览步骤
+   */
+  const handlePlanConfirm = useCallback(() => {
+    if (!routingResult?.appSpecId) {
+      setError('AppSpec ID 丢失，请重新开始');
+      return;
+    }
+
+    console.log('[SmartWizard] 用户确认技术方案，跳转到原型预览');
+    hasTriggeredTransitionRef.current = true;
+
+    // 更新routingResult，设置默认风格
+    setRoutingResult(prev => prev ? ({
+      ...prev,
+      selectedStyleId: 'modern_minimal',
+      prototypeGenerated: false
+    }) : null);
+
+    setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
+    setLoading(false);
+  }, [routingResult]);
+
+  /**
+   * 处理技术方案修改
+   * TODO: 实现增量修改逻辑
+   */
+  const handlePlanModify = useCallback((newReq: string) => {
+    console.log('[SmartWizard] 用户请求修改方案:', newReq);
+    toast({
+      title: '功能开发中',
+      description: '方案修改功能即将上线',
+    });
+  }, [toast]);
+
+  /**
    * 确认设计，执行生成
    */
   const handleConfirmDesign = useCallback(async () => {
@@ -366,6 +402,8 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
               isCompleted={isAnalysisCompleted}
               error={analysisError}
               finalResult={routingResult}
+              onConfirmPlan={handlePlanConfirm}
+              onModifyPlan={handlePlanModify}
             />
           </div>
         );

@@ -59,7 +59,6 @@ async function bootstrap() {
 
   logger.log(`应用已启动: http://localhost:${port}`);
   logger.log(`Swagger文档: http://localhost:${port}/api/docs`);
-  logger.log(`Workers服务: ${configService.get('WORKERS_BASE_URL', 'http://localhost:8000')}`);
 }
 
 bootstrap();

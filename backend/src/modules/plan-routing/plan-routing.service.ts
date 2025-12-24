@@ -130,8 +130,8 @@ export class PlanRoutingService {
        refinedRequirement += `\n\nIntent: ${intent}.`;
     }
 
-    // Trigger generation (async in real world, here just acknowledge)
-    // In a real implementation, we would call workersClient.invokeExecuteAgent(..., { plan: ... })
+    // 触发生成（真实实现应异步下发任务）
+    // 说明：历史 Python Workers 执行面已移除；后续应由 JeecgBoot 控制面创建“生成任务”并调度执行面
     
     return {
       success: true,

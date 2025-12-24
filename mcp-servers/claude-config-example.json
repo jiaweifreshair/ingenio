@@ -1,0 +1,43 @@
+{
+  "mcpServers": {
+    "figma": {
+      "transport": "http",
+      "url": "https://mcp.figma.com/mcp",
+      "description": "Figma设计工具集成，用于访问Figma文件和设计资源"
+    },
+    "calicat": {
+      "transport": "http",
+      "url": "https://www.calicat.cn/mcp",
+      "description": "Calicat服务集成"
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["chrome-devtools-mcp@latest"],
+      "description": "Chrome DevTools MCP - 使用npx直接运行（推荐）"
+    },
+    "chrome-devtools-docker": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "chrome-devtools-mcp",
+        "npx",
+        "chrome-devtools-mcp"
+      ],
+      "description": "Chrome DevTools MCP - 通过Docker运行（需要先启动Docker容器）",
+      "disabled": true
+    }
+  },
+  "anthropic": {
+    "apiKey": "${ANTHROPIC_API_KEY}",
+    "baseUrl": "https://api.anthropic.com"
+  },
+  "settings": {
+    "mcpTimeout": 30000,
+    "maxMcpRetries": 3,
+    "logging": {
+      "level": "info",
+      "mcpCalls": true
+    }
+  }
+}

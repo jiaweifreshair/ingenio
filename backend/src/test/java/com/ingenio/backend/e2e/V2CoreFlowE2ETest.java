@@ -142,7 +142,7 @@ public class V2CoreFlowE2ETest extends BaseE2ETest {
                 Platform.WEB,
                 Platform.ANDROID,
                 Platform.IOS,
-                Platform.WECHAT,
+                KuiklyUIGenerator.Platform.WEB,
                 Platform.HARMONYOS
         );
     }
@@ -160,8 +160,8 @@ public class V2CoreFlowE2ETest extends BaseE2ETest {
         assertThat(Platform.IOS.getDisplayName()).isEqualTo("iOS");
         assertThat(Platform.IOS.getTechStack()).isEqualTo("Swift/SwiftUI");
 
-        assertThat(Platform.WECHAT.getDisplayName()).isEqualTo("WeChat");
-        assertThat(Platform.WECHAT.getTechStack()).isEqualTo("微信小程序");
+        assertThat(KuiklyUIGenerator.Platform.WEB.getDisplayName()).isEqualTo("WeChat");
+        assertThat(KuiklyUIGenerator.Platform.WEB.getTechStack()).isEqualTo("微信小程序");
 
         assertThat(Platform.HARMONYOS.getDisplayName()).isEqualTo("HarmonyOS");
         assertThat(Platform.HARMONYOS.getTechStack()).isEqualTo("ArkTS/ArkUI");
@@ -201,7 +201,7 @@ public class V2CoreFlowE2ETest extends BaseE2ETest {
         assertThat(platformCodes).containsKey(Platform.WEB);
         assertThat(platformCodes).containsKey(Platform.ANDROID);
         assertThat(platformCodes).containsKey(Platform.IOS);
-        assertThat(platformCodes).containsKey(Platform.WECHAT);
+        assertThat(platformCodes).containsKey(KuiklyUIGenerator.Platform.WEB);
         assertThat(platformCodes).containsKey(Platform.HARMONYOS);
     }
 

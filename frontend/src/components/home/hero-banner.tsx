@@ -347,6 +347,8 @@ export function HeroBanner({
   
 
     const handleSubmitRequirement = () => {
+      // 重要：在提交时重新计算prompt，确保获取最新的input值
+      const currentPrompt = getFullPrompt();
 
       if (generationMode === 'CLONE_WEBSITE') {
 
@@ -362,7 +364,7 @@ export function HeroBanner({
 
       } else {
 
-        if (!fullPrompt.trim()) {
+        if (!currentPrompt.trim()) {
 
           toast({ title: "请输入需求", description: "请描述应用或选择标签", variant: "destructive" });
 
@@ -372,13 +374,13 @@ export function HeroBanner({
 
       }
 
-      
+
 
       // Call parent handler to start wizard
 
       if (onLaunchWizard) {
 
-        onLaunchWizard(fullPrompt, {
+        onLaunchWizard(currentPrompt, {
 
           industry: localIndustry,
 

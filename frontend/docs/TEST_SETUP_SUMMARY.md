@@ -21,7 +21,7 @@
 
 **配置内容**:
 - 真实后端API地址：`http://localhost:8080`
-- Agent服务地址：`http://localhost:8000`
+- Agent服务：已移除（不再使用 Python Agent，后续以 JeecgBoot AI 平台能力为主）
 - 测试数据库连接（PostgreSQL）
 - 测试Redis连接
 - 调试模式开启
@@ -277,7 +277,7 @@ pnpm test:all
 
 ### 2. 测试环境要求
 - 后端服务运行在 `http://localhost:8080`
-- Agent服务运行在 `http://localhost:8000`
+- Agent服务：已移除（不再需要）
 - PostgreSQL运行在 `localhost:5432`
 - Redis运行在 `localhost:6379`
 
