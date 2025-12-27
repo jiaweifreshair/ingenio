@@ -11,6 +11,7 @@ import { TargetAudiences } from "@/components/home/target-audiences";
 import { StepsShowcase } from "@/components/home/steps-showcase";
 import { FAQAccordion } from "@/components/home/faq-accordion";
 import { SmartWizard } from "@/components/home/smart-wizard";
+import { FloatingActionBar } from "@/components/home/floating-action-bar";
 
 // Smart Builder Components & Types
 import { AppComplexitySelector } from "@/components/home/app-complexity-selector";
@@ -165,6 +166,18 @@ function HomePageContent(): React.ReactElement {
 
   return (
     <div className="flex min-h-screen flex-col">
+      {/* Floating Action Bar (Visible on Scroll) */}
+      {!isWizardActive && (
+        <FloatingActionBar
+          requirement={requirement}
+          onRequirementChange={handleRequirementChange}
+          onLaunchWizard={handleLaunchWizard}
+          selectedIndustry={selectedIndustry}
+          selectedMode={selectedMode}
+          selectedCapabilities={selectedCapabilities}
+        />
+      )}
+
       {/* 顶部导航 */}
       <TopNav />
 
