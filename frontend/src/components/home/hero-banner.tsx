@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 
 import { Textarea } from "@/components/ui/textarea";
 
+import { Badge } from "@/components/ui/badge";
+
 
 
 import { LoginDialog } from "@/components/auth/login-dialog";
@@ -38,7 +40,9 @@ import {
 
   ChevronDown,
 
-  X
+  X,
+
+  Plus
 
 } from "lucide-react";
 
@@ -522,7 +526,7 @@ export function HeroBanner({
               >
                 <Layout className="w-3 h-3" />
               </div>
-              <span className="text-sm font-medium">
+              <span className="text-sm font-medium whitespace-nowrap">
                 {selectedModeConfig ? selectedModeConfig.title : "技术选型"}
               </span>
 
@@ -594,7 +598,7 @@ export function HeroBanner({
               >
                 <Briefcase className="w-3 h-3" />
               </div>
-              <span className="text-sm font-medium">
+              <span className="text-sm font-medium whitespace-nowrap">
                 {selectedIndustryConfig ? (selectedIndustryConfig.label || "更多场景") : "应用场景"}
               </span>
 
@@ -645,7 +649,31 @@ export function HeroBanner({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* 3. AI 能力 (多选) */}
+        {/* 3. AI 能力 (多选) - 展示为标签列表 */}
+        {localCapabilities.map((capId) => {
+            const cap = AI_CAPABILITIES.find(c => c.id === capId);
+            return (
+                <Badge 
+                    key={capId} 
+                    variant="secondary"
+                    className="h-9 px-3 py-1.5 flex items-center gap-1.5 whitespace-nowrap bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800 rounded-full text-sm font-medium"
+                >
+                    {cap?.label}
+                    <div 
+                        role="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            toggleLocalCapability(capId);
+                        }}
+                        className="ml-0.5 hover:bg-purple-200 dark:hover:bg-purple-800 rounded-full p-0.5 transition-colors cursor-pointer"
+                    >
+                        <X className="w-3 h-3" />
+                    </div>
+                </Badge>
+            );
+        })}
+
+        {/* AI 能力 Dropdown Trigger (Plus Button or Label) */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <div
@@ -654,47 +682,20 @@ export function HeroBanner({
               className={cn(
                 "flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all duration-300 h-9 group outline-none cursor-pointer",
                 localCapabilities.length > 0
-                  ? "bg-white dark:bg-slate-800 border-purple-200 dark:border-purple-800 shadow-sm text-foreground pr-2"
-                  : "bg-white/60 dark:bg-white/5 border-transparent hover:bg-white hover:shadow-sm text-muted-foreground"
+                  ? "bg-slate-100 dark:bg-slate-800 border-transparent text-muted-foreground w-9 px-0 justify-center" // Compact plus button
+                  : "bg-white/60 dark:bg-white/5 border-transparent hover:bg-white hover:shadow-sm text-muted-foreground" // Full label
               )}
             >
-              <div
-                className={cn(
-                  "p-1.5 rounded-full text-white shrink-0",
-                  localCapabilities.length > 0 ? "bg-purple-500" : "bg-slate-300"
-                )}
-              >
-                <Zap className="w-3 h-3" />
-              </div>
-              <span className="text-sm font-medium">
-                {localCapabilities.length > 0 ? `AI 能力 · 已选 ${localCapabilities.length} 项` : "AI 能力"}
-              </span>
-
               {localCapabilities.length > 0 ? (
-                <button
-                  type="button"
-                  aria-label="清除 AI 能力"
-                  className="ml-1 p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-muted-foreground transition-colors cursor-pointer"
-                  onPointerDown={stopDropdownTrigger}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setLocalCapabilities([]);
-                    onCapabilitiesChange?.([]);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setLocalCapabilities([]);
-                      onCapabilitiesChange?.([]);
-                    }
-                  }}
-                >
-                  <X className="w-3 h-3" />
-                </button>
+                 <Plus className="w-4 h-4" />
               ) : (
-                <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+                <>
+                    <div className="p-1.5 rounded-full text-white shrink-0 bg-slate-300">
+                        <Zap className="w-3 h-3" />
+                    </div>
+                    <span className="text-sm font-medium whitespace-nowrap">AI 能力</span>
+                    <ChevronDown className="w-3.5 h-3.5 opacity-60" />
+                </>
               )}
             </div>
           </DropdownMenuTrigger>
