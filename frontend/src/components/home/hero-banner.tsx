@@ -277,23 +277,43 @@ export function HeroBanner({
 
   
 
-        const getFullPrompt = () => {
+                const getFullPrompt = () => {
 
   
 
-          if (generationMode === 'REDESIGN_SITE') {
+          
 
   
 
-            const url = cloneUrlInputRef.current?.value || '';
+                  if (generationMode === 'REDESIGN_SITE') {
 
   
 
-            return `Redesign/Refactor the website at this URL: ${url}. `;
+          
 
   
 
-          }
+                    const url = cloneUrlInputRef.current?.value || '';
+
+  
+
+                    const userReq = requirement.trim() ? `\nUser Instructions: ${requirement}` : '';
+
+  
+
+          
+
+  
+
+                    return `Redesign/Refactor the website at this URL: ${url}.${userReq}`;
+
+  
+
+          
+
+  
+
+                  }
 
   
 
@@ -754,80 +774,78 @@ export function HeroBanner({
           <div className="relative w-full bg-white dark:bg-slate-900 rounded-[2rem] p-2 shadow-2xl border border-white/20 ring-1 ring-black/5 dark:ring-white/10">
             <div className="relative min-h-[220px] flex flex-col">
 
-              {generationMode === 'REDESIGN_SITE' ? (
-                <div className="flex-1 flex flex-col justify-center items-center p-8 gap-6 animate-in fade-in zoom-in-95">
-                  <div className="w-full max-w-lg space-y-4">
-                    <h3 className="text-lg font-semibold text-center mb-2">输入旧网站链接</h3>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                          <LinkIcon className="w-4 h-4" />
-                        </div>
-                        <input
-                          ref={cloneUrlInputRef}
-                          type="url"
-                          placeholder="https://example.com"
-                          className="w-full pl-9 pr-4 py-3 rounded-xl border bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-text font-mono text-sm"
-                        />
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground text-center">
-                      AI 将分析该网站的结构和样式，并为您重构为现代化的代码副本
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex-1 p-6 flex flex-col animate-in fade-in zoom-in-95">
-                  {/* 技术选型 / 应用场景 / AI能力 下拉选择，内嵌在输入框中 */}
+              <div className="flex-1 p-6 flex flex-col animate-in fade-in zoom-in-95">
+                
+                {/* 模式特定的顶部控件 */}
+                <div className="mb-4 space-y-4">
+                  
+                  {/* NEW_IDEA 模式：显示标签选择器 */}
                   {generationMode === 'NEW_IDEA' && (
-                    <div className="mb-4">
-                      {renderSelectors()}
-                    </div>
+                    renderSelectors()
                   )}
 
-                  <Textarea
-                    value={requirement}
-                    onChange={(e) => {
-                      setRequirement(e.target.value);
-                      onRequirementChange?.(e.target.value);
-                    }}
-                    placeholder="在这里输入你想做什么小程序/APP/H5网页..."
-                    className="flex-1 w-full resize-none border-none bg-transparent text-sm placeholder:text-slate-300 dark:placeholder:text-slate-600 focus-visible:ring-0 p-0 leading-relaxed font-light min-h-[120px]"
-                  />
-
-                  {/* Input Tools */}
-                  <div className="flex items-center justify-between mt-4 md:mt-0 pt-4 border-t border-slate-100 dark:border-slate-800/50">
-                    <div className="flex items-center gap-1 text-slate-400">
-                      <TooltipProvider>
-                        {INPUT_MODES.map((modeConfig) => (
-                          <Tooltip key={modeConfig.mode}>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className={cn(
-                                  "h-9 w-9 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
-                                  inputMode === modeConfig.mode && "bg-slate-100 dark:bg-slate-800 text-primary"
-                                )}
-                                onClick={() => setInputMode(modeConfig.mode)}
-                              >
-                                {modeConfig.icon}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{modeConfig.label}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        ))}
-                      </TooltipProvider>
+                  {/* REDESIGN_SITE 模式：显示 URL 输入框 */}
+                  {generationMode === 'REDESIGN_SITE' && (
+                    <div className="relative w-full max-w-xl">
+                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                        <LinkIcon className="w-4 h-4" />
+                      </div>
+                      <input
+                        ref={cloneUrlInputRef}
+                        type="url"
+                        placeholder="请输入旧网站链接 (https://...)"
+                        className="w-full pl-9 pr-4 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-text font-mono text-sm"
+                      />
                     </div>
-
-                    <span className="text-xs text-slate-300 dark:text-slate-600 font-mono">
-                      {requirement.length}/500
-                    </span>
-                  </div>
+                  )}
                 </div>
-              )}
+
+                <Textarea
+                  value={requirement}
+                  onChange={(e) => {
+                    setRequirement(e.target.value);
+                    onRequirementChange?.(e.target.value);
+                  }}
+                  placeholder={
+                    generationMode === 'REDESIGN_SITE' 
+                      ? "请输入重构需求（例如：保留原有布局，但改为暗黑风格，使用 React + Tailwind 重写...）"
+                      : "在这里输入你想做什么小程序/APP/H5网页..."
+                  }
+                  className="flex-1 w-full resize-none border-none bg-transparent text-sm placeholder:text-slate-300 dark:placeholder:text-slate-600 focus-visible:ring-0 p-0 leading-relaxed font-light min-h-[120px]"
+                />
+
+                {/* Input Tools */}
+                <div className="flex items-center justify-between mt-4 md:mt-0 pt-4 border-t border-slate-100 dark:border-slate-800/50">
+                  <div className="flex items-center gap-1 text-slate-400">
+                    <TooltipProvider>
+                      {INPUT_MODES.map((modeConfig) => (
+                        <Tooltip key={modeConfig.mode}>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className={cn(
+                                "h-9 w-9 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
+                                inputMode === modeConfig.mode && "bg-slate-100 dark:bg-slate-800 text-primary"
+                              )}
+                              onClick={() => setInputMode(modeConfig.mode)}
+                            >
+                              {modeConfig.icon}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{modeConfig.label}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      ))}
+                    </TooltipProvider>
+                  </div>
+
+                  <span className="text-xs text-slate-300 dark:text-slate-600 font-mono">
+                    {requirement.length}/500
+                  </span>
+                </div>
+              </div>
 
               {/* Generate Button Wrapper - Positioned absolutely or flex-end */}
               <div className="absolute bottom-6 right-6 z-20">
