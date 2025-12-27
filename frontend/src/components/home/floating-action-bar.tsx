@@ -98,7 +98,7 @@ export function FloatingActionBar({
   return (
     <div 
       className={cn(
-        "fixed top-0 left-0 right-0 z-50 flex justify-center pt-4 px-4 transition-all duration-300 transform",
+        "fixed top-0 left-0 right-0 z-[100] flex justify-center pt-4 px-4 transition-all duration-300 transform",
         isVisible ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0"
       )}
     >
