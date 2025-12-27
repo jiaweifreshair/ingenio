@@ -175,6 +175,7 @@ function HomePageContent(): React.ReactElement {
           selectedIndustry={selectedIndustry}
           selectedMode={selectedMode}
           selectedCapabilities={selectedCapabilities}
+          onCapabilitiesChange={handleCapabilitiesChange}
         />
       )}
 

@@ -3,13 +3,16 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Sparkles, Maximize2, Minimize2, ArrowUp, Wand2, Link as LinkIcon, ChevronDown, Check } from "lucide-react";
+import { Sparkles, Maximize2, Minimize2, ArrowUp, Wand2, Link as LinkIcon, ChevronDown, Check, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
+  DropdownMenuCheckboxItem,
+  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import {
   type IndustryType,
@@ -27,6 +30,7 @@ interface FloatingActionBarProps {
   selectedIndustry?: IndustryType | null;
   selectedMode?: AppComplexityMode | null;
   selectedCapabilities?: AICapabilityType[];
+  onCapabilitiesChange?: (capabilities: AICapabilityType[]) => void;
 }
 
 type GenerationMode = 'NEW_IDEA' | 'REDESIGN_SITE';
@@ -37,12 +41,28 @@ export function FloatingActionBar({
   onLaunchWizard,
   selectedIndustry,
   selectedMode,
-  selectedCapabilities
+  selectedCapabilities,
+  onCapabilitiesChange
 }: FloatingActionBarProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [generationMode, setGenerationMode] = useState<GenerationMode>('NEW_IDEA');
   const [url, setUrl] = useState("");
+  const [localCapabilities, setLocalCapabilities] = useState<AICapabilityType[]>(selectedCapabilities || []);
+
+  // Sync props to local state
+  useEffect(() => {
+    if (selectedCapabilities !== undefined) setLocalCapabilities(selectedCapabilities);
+  }, [selectedCapabilities]);
+
+  const toggleLocalCapability = (capId: AICapabilityType) => {
+    setLocalCapabilities(prev => {
+      const exists = prev.includes(capId);
+      const next = exists ? prev.filter(c => c !== capId) : [...prev, capId];
+      onCapabilitiesChange?.(next);
+      return next;
+    });
+  };
 
   // Scroll detection
   useEffect(() => {
@@ -140,13 +160,13 @@ export function FloatingActionBar({
                 ) : (
                     <>
                     <Wand2 className="w-4 h-4 text-purple-500" />
-                    <span className="hidden sm:inline">重构旧站</span>
+                    <span className="hidden sm:inline">复刻旧站</span>
                     </>
                 )}
                 <ChevronDown className="w-3 h-3 opacity-50" />
                 </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start">
+            <DropdownMenuContent align="start" className="z-[110]">
                 <DropdownMenuItem onClick={() => setGenerationMode('NEW_IDEA')}>
                 <Sparkles className="w-4 h-4 mr-2 text-amber-500" />
                 创造模式
@@ -154,11 +174,61 @@ export function FloatingActionBar({
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setGenerationMode('REDESIGN_SITE')}>
                 <Wand2 className="w-4 h-4 mr-2 text-purple-500" />
-                重构旧站
+                复刻旧站
                 {generationMode === 'REDESIGN_SITE' && <Check className="w-3 h-3 ml-auto" />}
                 </DropdownMenuItem>
             </DropdownMenuContent>
             </DropdownMenu>
+
+            {/* AI Capabilities Selector (Creation Mode Only) */}
+            {generationMode === 'NEW_IDEA' && (
+                <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                        <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className={cn(
+                                "h-9 gap-1 px-2 text-muted-foreground hover:text-foreground shrink-0 border border-transparent",
+                                localCapabilities.length > 0 && "border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-300"
+                            )}
+                        >
+                            <Zap className={cn("w-3.5 h-3.5", localCapabilities.length > 0 ? "fill-purple-500 text-purple-500" : "")} />
+                            <span className="hidden sm:inline">
+                                {localCapabilities.length > 0 ? `AI能力(${localCapabilities.length})` : "AI能��"}
+                            </span>
+                            <ChevronDown className="w-3 h-3 opacity-50" />
+                        </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-56 z-[110]">
+                        <DropdownMenuLabel>选择 AI 能力</DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                        {AI_CAPABILITIES.map((cap) => (
+                            <DropdownMenuCheckboxItem
+                                key={cap.id}
+                                checked={localCapabilities.includes(cap.id)}
+                                onCheckedChange={() => toggleLocalCapability(cap.id)}
+                            >
+                                {cap.label}
+                            </DropdownMenuCheckboxItem>
+                        ))}
+                        {localCapabilities.length > 0 && (
+                            <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem 
+                                    className="justify-center text-xs text-muted-foreground cursor-pointer"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        setLocalCapabilities([]);
+                                        onCapabilitiesChange?.([]);
+                                    }}
+                                >
+                                    清除已选
+                                </DropdownMenuItem>
+                            </>
+                        )}
+                    </DropdownMenuContent>
+                </DropdownMenu>
+            )}
 
            {/* Input Area */}
            <div className="flex-1 flex flex-col gap-2 relative">
