@@ -116,7 +116,9 @@ export function PrototypeConfirmation({
   useSandboxCleanup({
     sandboxId: currentSandboxId,
     cleanupOnHide: false,
-    enabled: !!currentSandboxId,
+    // 修复：在生成期间禁用清理，防止 apply 操作时 Sandbox 被意外杀死
+    // 同时在 reloading 期间也禁用，避免刷新时的竞态条件
+    enabled: !!currentSandboxId && !isGenerating && !isReloading,
     onBeforeCleanup: () => {
       console.log('[PrototypeConfirmation] 准备清理Sandbox:', currentSandboxId);
     },

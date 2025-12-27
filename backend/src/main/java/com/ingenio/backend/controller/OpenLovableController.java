@@ -136,6 +136,15 @@ public class OpenLovableController {
                 log.info("提示词增强: 原长度={}, 增强后长度={}", originalPrompt.length(), enhancedPrompt.length());
             }
 
+            // 2.1 默认模型：优先走 Gemini 3 Pro（OpenLovable-CN 的 gemini- 前缀模型）
+            // 若上游未配置 Gemini GCA，会在上游服务内部自动回退到其它可用模型。
+            Object modelObj = adaptedRequest.get("model");
+            boolean hasValidModel = modelObj instanceof String && !((String) modelObj).isBlank();
+            if (!hasValidModel) {
+                adaptedRequest.put("model", "gemini-3-pro-preview");
+                log.debug("参数适配: 默认模型 -> gemini-3-pro-preview");
+            }
+
             // 3. 将sandboxId包装到context对象中
             if (adaptedRequest.containsKey("sandboxId")) {
                 String sandboxId = (String) adaptedRequest.remove("sandboxId");
@@ -157,11 +166,12 @@ public class OpenLovableController {
                     connection.setRequestProperty("Accept", "text/event-stream");
                     connection.setDoOutput(true);
                     connection.setDoInput(true);
-                    // 设置超时：V2.0快速原型生成优化
+                    // 设置超时：V2.2推理模型优化
                     // readTimeout是指两次read()之间的最大间隔，SSE流持续有数据时不会触发
-                    // 设置为2分钟作为兜底，如果AI生成卡住则快速失败
+                    // 🔧 修复：推理模型（如 DeepSeek R1）需要较长时间思考
+                    // 设置为5分钟作为兜底，支持复杂推理任务
                     connection.setConnectTimeout(30000);   // 连接超时30秒
-                    connection.setReadTimeout(120000);     // 读取超时2分钟（120秒）- V2.0优化
+                    connection.setReadTimeout(300000);     // 读取超时5分钟（300秒）- V2.2推理模型优化
 
                     // 转发适配后的请求体（JSON格式）
                     String jsonBody = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(adaptedRequest);
@@ -431,7 +441,11 @@ public class OpenLovableController {
             String url = openLovableBaseUrl + "/api/apply-ai-code-stream";
 
             // 先从请求体中解析AI响应文本
-            String aiResponse = (String) request.get("response");
+            Object responseObj = request.get("response");
+            if (!(responseObj instanceof String aiResponse) || aiResponse.isBlank()) {
+                log.warn("apply请求缺少response或内容为空，已拒绝写入");
+                return ResponseEntity.badRequest().body(Result.error(400, "缺少必需参数: response（AI代码为空）"));
+            }
 
             // V2.0增强-1：自动补全 React Hook 导入（避免 useState/useEffect 未定义导致预览崩溃）
             String fixedResponse = autoFixReactHookImports(aiResponse);
@@ -480,11 +494,34 @@ public class OpenLovableController {
             connection.getOutputStream().write(jsonBody.getBytes(StandardCharsets.UTF_8));
             connection.getOutputStream().flush();
 
+            // OpenLovable 上游返回非2xx时，getInputStream()会抛异常；这里提前处理并透出错误
+            int upstreamStatus = connection.getResponseCode();
+            if (upstreamStatus < 200 || upstreamStatus >= 300) {
+                String upstreamBody = "";
+                try (InputStream errorStream = connection.getErrorStream()) {
+                    if (errorStream != null) {
+                        upstreamBody = new BufferedReader(new InputStreamReader(errorStream, StandardCharsets.UTF_8))
+                                .lines()
+                                .collect(Collectors.joining("\n"));
+                    }
+                } catch (Exception readErr) {
+                    log.warn("读取OpenLovable错误响应失败: {}", readErr.getMessage());
+                }
+                String preview = upstreamBody.length() > 500 ? upstreamBody.substring(0, 500) + "..." : upstreamBody;
+                log.error("OpenLovable apply返回错误: status={}, body={}", upstreamStatus, preview);
+                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                        .body(Result.error(502, "OpenLovable apply失败: " + upstreamStatus));
+            }
+
             // 读取SSE流式响应
             Map<String, Object> finalResult = new java.util.HashMap<>();
             finalResult.put("filesCreated", new java.util.ArrayList<>());
             finalResult.put("packagesInstalled", new java.util.ArrayList<>());
             boolean receivedComplete = false;
+            String upstreamErrorMessage = null;
+            // 收集 file-error 事件，用于诊断写入失败
+            java.util.List<String> fileErrors = new java.util.ArrayList<>();
+            java.util.List<String> warnings = new java.util.ArrayList<>();
 
             try (InputStream inputStream = connection.getInputStream();
                  BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
@@ -498,6 +535,42 @@ public class OpenLovableController {
                                     .readValue(jsonData, Map.class);
 
                             String type = (String) eventData.get("type");
+
+                            // 处理 sandbox 事件：上游可能会“替换 sandboxId”（例如传入的 sandboxId 不存在时）
+                            // 需要把最终实际使用的 sandboxId/url 返回给前端，避免出现 “Sandbox Not Found”
+                            if ("sandbox".equals(type)) {
+                                Object sandboxIdObj = eventData.get("sandboxId");
+                                Object urlObj = eventData.get("url");
+                                if (sandboxIdObj instanceof String sid && !sid.isBlank()) {
+                                    finalResult.put("sandboxId", sid);
+                                }
+                                if (urlObj instanceof String urlStr && !urlStr.isBlank()) {
+                                    finalResult.put("sandboxUrl", urlStr);
+                                    // 兼容前端通用字段
+                                    finalResult.put("url", urlStr);
+                                }
+                                if (eventData.get("replacedSandboxId") instanceof String replaced && !replaced.isBlank()) {
+                                    finalResult.put("replacedSandboxId", replaced);
+                                }
+                                if (eventData.get("provider") instanceof String provider && !provider.isBlank()) {
+                                    finalResult.put("provider", provider);
+                                }
+                                continue;
+                            }
+
+                            // 处理 error 事件：直接失败返回，避免“假成功”（文件数从 AI 响应解析）
+                            if ("error".equals(type)) {
+                                Object err = eventData.get("error");
+                                Object msg = eventData.get("message");
+                                if (err instanceof String && !((String) err).isBlank()) {
+                                    upstreamErrorMessage = (String) err;
+                                } else if (msg instanceof String && !((String) msg).isBlank()) {
+                                    upstreamErrorMessage = (String) msg;
+                                } else {
+                                    upstreamErrorMessage = "OpenLovable apply 返回 error 事件";
+                                }
+                                break;
+                            }
 
                             // 处理complete事件，提取最终结果
                             if ("complete".equals(type)) {
@@ -514,12 +587,47 @@ public class OpenLovableController {
                                 break;
                             }
 
+                            // 处理 file-error 事件：记录详细的文件写入错误信息
+                            if ("file-error".equals(type)) {
+                                Object filePath = eventData.get("filePath");
+                                Object filePathAlt = eventData.get("path");
+                                Object errorMsg = eventData.get("error");
+                                Object errorMsgAlt = eventData.get("message");
+                                String path = (filePath != null) ? filePath.toString() : (filePathAlt != null ? filePathAlt.toString() : "unknown");
+                                String err = (errorMsg != null) ? errorMsg.toString() : (errorMsgAlt != null ? errorMsgAlt.toString() : "未知错误");
+                                String fileErrorInfo = String.format("文件 %s 写入失败: %s", path, err);
+                                fileErrors.add(fileErrorInfo);
+                                log.warn("SSE file-error: {}", fileErrorInfo);
+                                continue;
+                            }
+
+                            // 处理 warning 事件：记录警告信息
+                            if ("warning".equals(type)) {
+                                Object msg = eventData.get("message");
+                                String warnMsg = (msg != null) ? msg.toString() : eventData.toString();
+                                warnings.add(warnMsg);
+                                log.warn("SSE warning: {}", warnMsg);
+                                continue;
+                            }
+
                             log.debug("SSE事件: type={}", type);
                         } catch (Exception parseError) {
                             log.debug("解析SSE消息失败: {}", line, parseError);
                         }
                     }
                 }
+            }
+
+            if (upstreamErrorMessage != null && !upstreamErrorMessage.isBlank()) {
+                log.error("OpenLovable apply 失败（error事件）: {}", upstreamErrorMessage);
+                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                        .body(Result.error(502, "OpenLovable apply失败: " + upstreamErrorMessage));
+            }
+
+            if (!receivedComplete) {
+                log.error("OpenLovable apply 未返回 complete 事件，已拒绝返回假成功");
+                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                        .body(Result.error(502, "OpenLovable apply未返回complete事件，请稍后重试"));
             }
 
             // 计算写入文件数
@@ -531,12 +639,27 @@ public class OpenLovableController {
                 filesWritten += ((java.util.List<?>) finalResult.get("filesUpdated")).size();
             }
 
-            // 如果没有收到complete事件，使用从AI响应解析的文件数作为备用
-            // 这是因为SSE流可能在完成前被关闭
-            if (!receivedComplete || filesWritten == 0) {
-                log.warn("未收到complete事件或文件数为0，使用解析的文件数: {}", parsedFilesCount);
-                filesWritten = parsedFilesCount;
-                finalResult.put("message", "代码已应用（文件数从AI响应解析）");
+            // 收到 complete 但文件数为 0 时，视为异常（避免写入失败却误报成功）
+            if (filesWritten == 0) {
+                StringBuilder errorDetail = new StringBuilder("OpenLovable apply失败：写入文件数为0");
+                if (!fileErrors.isEmpty()) {
+                    errorDetail.append("\n文件错误详情:\n");
+                    for (String fe : fileErrors) {
+                        errorDetail.append("  - ").append(fe).append("\n");
+                    }
+                    log.error("OpenLovable apply 完成但写入文件数为0，file-error详情: {}", fileErrors);
+                } else {
+                    log.error("OpenLovable apply 完成但写入文件数为0，疑似上游异常（无file-error事件）");
+                }
+                if (!warnings.isEmpty()) {
+                    errorDetail.append("警告信息:\n");
+                    for (String w : warnings) {
+                        errorDetail.append("  - ").append(w).append("\n");
+                    }
+                    log.warn("OpenLovable apply warnings: {}", warnings);
+                }
+                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                        .body(Result.error(502, errorDetail.toString().trim()));
             }
 
             finalResult.put("filesWritten", filesWritten);

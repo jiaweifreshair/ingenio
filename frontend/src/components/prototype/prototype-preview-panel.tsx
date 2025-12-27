@@ -146,7 +146,8 @@ export function PrototypePreviewPanel({
   useSandboxCleanup({
     sandboxId,
     cleanupOnHide: false, // 仅在页面卸载时清理
-    enabled: !!sandboxId,
+    // 修复：在 loading/生成/刷新期间禁用清理，防止 apply 操作时 Sandbox 被意外杀死
+    enabled: !!sandboxId && !loading && !isGenerating && !isRefreshing,
     onBeforeCleanup: () => {
       console.log('[原型预览] 准备清理Sandbox');
     },
