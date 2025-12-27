@@ -34,8 +34,6 @@ import {
 
   Briefcase,
 
-  Layers,
-
   Wand2,
 
   ChevronDown,
@@ -97,12 +95,9 @@ type InputMode = 'TEXT' | 'IMAGE' | 'AUDIO' | 'DOC' | 'LINK';
 
 
 /**
-
- * 生成模式枚举 (New Idea vs Clone)
-
+ * 生成模式枚举 (New Idea vs Redesign)
  */
-
-type GenerationMode = 'NEW_IDEA' | 'CLONE_WEBSITE' | 'REDESIGN_SITE';
+type GenerationMode = 'NEW_IDEA' | 'REDESIGN_SITE';
 
 
 
@@ -270,21 +265,35 @@ export function HeroBanner({
 
   
 
-    /**
+        /**
 
-     * Constructs the full prompt
+  
 
-     */
+         * Constructs the full prompt
 
-    const getFullPrompt = () => {
+  
 
-      if (generationMode === 'CLONE_WEBSITE') {
+         */
 
-        const url = cloneUrlInputRef.current?.value || '';
+  
 
-        return `Clone the website at this URL: ${url}. `;
+        const getFullPrompt = () => {
 
-      }
+  
+
+          if (generationMode === 'REDESIGN_SITE') {
+
+  
+
+            const url = cloneUrlInputRef.current?.value || '';
+
+  
+
+            return `Redesign/Refactor the website at this URL: ${url}. `;
+
+  
+
+          }
 
   
 
@@ -350,7 +359,7 @@ export function HeroBanner({
       // 重要：在提交时重新计算prompt，确保获取最新的input值
       const currentPrompt = getFullPrompt();
 
-      if (generationMode === 'CLONE_WEBSITE') {
+      if (generationMode === 'REDESIGN_SITE') {
 
         const url = cloneUrlInputRef.current?.value;
 
@@ -726,18 +735,7 @@ export function HeroBanner({
                   : "text-muted-foreground hover:text-foreground hover:bg-white/50 dark:hover:bg-white/10"
               )}
             >
-              <Sparkles className="w-4 h-4 text-amber-500" /> 新建应用
-            </button>
-            <button
-              onClick={() => setGenerationMode('CLONE_WEBSITE')}
-              className={cn(
-                "px-4 py-1.5 rounded-xl text-sm font-medium transition-all duration-200 flex items-center gap-2",
-                generationMode === 'CLONE_WEBSITE'
-                  ? "bg-white dark:bg-slate-900 shadow-sm text-foreground scale-[1.02]"
-                  : "text-muted-foreground hover:text-foreground hover:bg-white/50 dark:hover:bg-white/10"
-              )}
-            >
-              <Layers className="w-4 h-4 text-blue-500" /> 复刻网站
+              <Sparkles className="w-4 h-4 text-amber-500" /> 创造模式
             </button>
             <button
               onClick={() => setGenerationMode('REDESIGN_SITE')}
@@ -756,10 +754,10 @@ export function HeroBanner({
           <div className="relative w-full bg-white dark:bg-slate-900 rounded-[2rem] p-2 shadow-2xl border border-white/20 ring-1 ring-black/5 dark:ring-white/10">
             <div className="relative min-h-[220px] flex flex-col">
 
-              {generationMode === 'CLONE_WEBSITE' ? (
+              {generationMode === 'REDESIGN_SITE' ? (
                 <div className="flex-1 flex flex-col justify-center items-center p-8 gap-6 animate-in fade-in zoom-in-95">
                   <div className="w-full max-w-lg space-y-4">
-                    <h3 className="text-lg font-semibold text-center mb-2">输入目标网站链接</h3>
+                    <h3 className="text-lg font-semibold text-center mb-2">输入旧网站链接</h3>
                     <div className="flex gap-2">
                       <div className="relative flex-1">
                         <div className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
@@ -774,7 +772,7 @@ export function HeroBanner({
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground text-center">
-                      AI 将分析该网站的结构和样式，并为您生成可编辑的代码副本
+                      AI 将分析该网站的结构和样式，并为您重构为现代化的代码副本
                     </p>
                   </div>
                 </div>
