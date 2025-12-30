@@ -1,0 +1,39 @@
+# Ingenio G3 Agent Scope Template
+# 用于定义 Python 侧 Agent 的结构
+
+import agentscope
+from agentscope.agents import AgentBase
+from agentscope.message import Msg
+
+class ${AgentName}(AgentBase):
+    """
+    ${AgentDescription}
+    """
+    
+    def __init__(self, name: str, model_config_name: str, **kwargs):
+        super().__init__(name=name, model_config_name=model_config_name, **kwargs)
+        
+    def reply(self, x: dict = None) -> dict:
+        """
+        Agent 回复逻辑
+        """
+        # 1. 接收输入消息
+        content = x.get('content', '')
+        
+        # 2. 调用 LLM 进行推理 (Player 或 Coach 逻辑)
+        # prompt = self._construct_prompt(content)
+        # response = self.model(prompt)
+        
+        # 3. 构造回复
+        msg = Msg(name=self.name, content="Response from ${AgentName}", role="assistant")
+        
+        # 4. 打印日志 (用于调试和 G3 裁判分析)
+        self.speak(msg)
+        
+        return msg
+
+    def _construct_prompt(self, user_input: str) -> str:
+        """
+        构建 Prompt
+        """
+        return f"User Input: {user_input}"

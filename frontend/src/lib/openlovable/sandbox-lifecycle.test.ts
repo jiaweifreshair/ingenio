@@ -71,6 +71,42 @@ describe('OpenLovable Sandbox Lifecycle', () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('兼容 open-lovable-cn: 状态返回 sandboxData 时应同步 sandboxId/url', async () => {
+    const now = 1_700_000_000_000;
+    const apiBaseUrl = 'http://backend.test/api';
+    const current: SandboxInfo = {
+      success: true,
+      sandboxId: 'sb_stale',
+      url: 'https://5173-sb_stale.e2b.app',
+      provider: 'e2b',
+      message: '',
+      createdAt: now - 60_000,
+    };
+
+    global.fetch = vi.fn(async (url: any, options: any) => {
+      expect(options?.method).toBe('GET');
+      expect(url).toBe(`${apiBaseUrl}/v1/openlovable/sandbox/status?sandboxId=sb_stale`);
+      return mockJsonResponse({
+        success: true,
+        data: {
+          success: true,
+          active: true,
+          healthy: true,
+          sandboxData: { sandboxId: 'sb_actual', url: 'https://5173-sb_actual.e2b.app' },
+          message: 'Sandbox is active and healthy',
+        },
+      });
+    }) as any;
+
+    const result = await ensureSandboxAvailable(apiBaseUrl, current, null, { now });
+
+    expect(result.action).toBe('recreated');
+    expect(result.reason).toBe('not_found');
+    expect(result.sandbox.sandboxId).toBe('sb_actual');
+    expect(result.sandbox.url).toBe('https://5173-sb_actual.e2b.app');
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('现有沙箱状态为 not_found 时应重建', async () => {
     const now = 1_700_000_000_000;
     const apiBaseUrl = 'http://backend.test/api';
@@ -158,4 +194,3 @@ describe('OpenLovable Sandbox Lifecycle', () => {
     expect(result.sandbox.createdAt).toBe(now);
   });
 });
-

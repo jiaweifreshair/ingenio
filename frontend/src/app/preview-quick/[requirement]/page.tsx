@@ -108,7 +108,7 @@ interface AIMessage {
 /**
  * 生成阶段
  */
-type GenerationStage = 'init' | 'sandbox' | 'generating' | 'complete' | 'error';
+type GenerationStage = 'init' | 'scouting' | 'sandbox' | 'generating' | 'complete' | 'error';
 
 /**
  * 代码显示视图
@@ -162,6 +162,7 @@ export default function QuickPreviewPage() {
   const [previewKey, setPreviewKey] = useState(0);
 
   const hasStartedRef = useRef(false);
+  const scoutContextRef = useRef<string>('');
   const codeContainerRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
@@ -302,6 +303,83 @@ export default function QuickPreviewPage() {
   const startQuickGeneration = async () => {
     try {
       addLog('🚀 启动快速Web预览生成...');
+      
+      // Step 0: G3 Scout 智能侦察
+      setStage('scouting');
+      addLog('🕵️ 启动 Repo Scout 智能侦察兵...');
+      
+      try {
+        const scoutRes = await fetch('/api/g3/scout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            requirement: requirement,
+            tenant_id: 'default'
+          })
+        });
+        
+        if (scoutRes.ok) {
+          const scoutData = await scoutRes.json();
+          const scoutTaskId = scoutData.task_id;
+          addLog(`✅ Scout 任务已启动: ${scoutTaskId}`);
+          
+          // 轮询 Scout 日志
+          let scoutCompleted = false;
+          while (!scoutCompleted) {
+            const logsRes = await fetch(`/api/g3/logs/${scoutTaskId}`);
+            if (logsRes.ok) {
+              const logs = await logsRes.json();
+              // 简单的去重显示逻辑（实际应该比较 timestamp）
+              logs.forEach((log: any) => {
+                 // 这里简单处理，只显示最新的或关键的，为了防止日志爆炸，实际项目应用更复杂的日志合并
+                 // 目前为了演示，暂不重复打印，只是通过UI状态展示
+              });
+              
+              // 检查任务是否完成 (后端 API 目前没返回 status，只能通过日志判断或者另外一个 API)
+              // 临时方案：检查日志中是否有 "COMPLETED" 或 "FAILED"
+              const lastLog = logs[logs.length - 1];
+              if (lastLog && (lastLog.content.includes('Completed') || lastLog.content.includes('Failed'))) {
+                scoutCompleted = true;
+                if (lastLog.content.includes('Failed')) {
+                   addLog('⚠️ Scout 侦察遇到问题，降级为普通生成模式');
+                } else {
+                   addLog('✅ Scout 侦察完成，已选定最佳模版');
+                   
+                   // 获取 Scout 结果
+                   try {
+                     const resultRes = await fetch(`/api/g3/result/${scoutTaskId}`);
+                     if (resultRes.ok) {
+                       const resultData = await resultRes.json();
+                       if (resultData && Array.isArray(resultData) && resultData.length > 0) {
+                         const topPick = resultData[0];
+                         const contextStr = `## G3 Scout Recommendation\n` +
+                           `Based on your requirements, the Repo Scout Agent has identified the following template as the best starting point:\n` +
+                           `- Name: ${topPick.name}\n` +
+                           `- Description: ${topPick.description}\n` +
+                           `- Match Score: ${topPick.match_score}\n` +
+                           `- Reason: ${topPick.analysis_reason}\n\n` +
+                           `Please prioritize using patterns and structures from this template where applicable.`;
+                         
+                         scoutContextRef.current = contextStr;
+                         addLog(`📋 已加载模版上下文: ${topPick.name}`);
+                       }
+                     }
+                   } catch (err) {
+                     console.error('Failed to fetch scout result:', err);
+                   }
+                }
+              }
+            }
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        } else {
+          addLog('⚠️ Scout 服务不可用，跳过侦察阶段');
+        }
+      } catch (e) {
+        console.error('Scout error:', e);
+        addLog('⚠️ Scout 连接失败，跳过侦察阶段');
+      }
+
       setStage('sandbox');
       setStreamedCode('');
       setGeneratedFiles([]);
@@ -339,7 +417,7 @@ export default function QuickPreviewPage() {
       setStage('generating');
       addLog('🤖 AI正在生成代码（流式输出）...');
 
-      await generateCodeStream(requirement, sandbox.sandboxId);
+      await generateCodeStream(requirement, sandbox.sandboxId, scoutContextRef.current);
 
       // Step 3: 生成完成
       setStage('complete');
@@ -371,13 +449,22 @@ export default function QuickPreviewPage() {
   /**
    * SSE流式生成代码
    */
-  const generateCodeStream = async (userMessage: string, sandboxId: string): Promise<void> => {
+  const generateCodeStream = async (userMessage: string, sandboxId: string, templateContext?: string): Promise<void> => {
     return new Promise((resolve, reject) => {
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
       const apiUrl = `${API_BASE_URL}/v1/openlovable/generate/stream`;
       const token = getToken();
 
       let accumulationState = getInitialOpenLovableAccumulationState();
+      
+      const requestBody: any = {
+        userMessage,
+        sandboxId,
+      };
+      
+      if (templateContext) {
+        requestBody.templateContext = templateContext;
+      }
 
       fetch(apiUrl, {
         method: 'POST',
@@ -385,10 +472,7 @@ export default function QuickPreviewPage() {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': token } : {}),
         },
-        body: JSON.stringify({
-          userMessage,
-          sandboxId,
-        }),
+        body: JSON.stringify(requestBody),
       })
         .then(response => {
           if (!response.ok) {
@@ -444,6 +528,12 @@ export default function QuickPreviewPage() {
                 // 调用apply API将代码写入sandbox
                 try {
                   const responseToApply = getOpenLovableCodeForApply(accumulationState);
+                  if (!responseToApply.trim()) {
+                    throw new Error('AI生成的代码为空，无法部署到Sandbox（请检查 OpenLovable 服务输出或稍后重试）');
+                  }
+                  if (!responseToApply.includes('<file')) {
+                    throw new Error('AI生成的代码格式异常（缺少 <file> 标签），无法部署到Sandbox（请重试生成或切换模型）');
+                  }
                   // 🔍 调试日志：记录发送到apply API的内容长度
                   console.log('[preview-quick] responseToApply length:', responseToApply.length);
                   console.log('[preview-quick] responseToApply preview:', responseToApply.substring(0, 500));
@@ -462,11 +552,44 @@ export default function QuickPreviewPage() {
                   });
 
                   if (!applyResponse.ok) {
-                    throw new Error(`Apply API失败: ${applyResponse.status}`);
+                    let detail = '';
+                    try {
+                      const body = await applyResponse.json();
+                      const message = typeof body?.message === 'string' ? body.message : '';
+                      detail = message ? `: ${message}` : '';
+                    } catch {
+                      // 忽略解析失败，保留状态码
+                    }
+                    throw new Error(`Apply API失败: ${applyResponse.status}${detail}`);
                   }
 
                   const applyResult = await applyResponse.json();
                   addLog(`✅ 代码已成功写入Sandbox: ${applyResult.data?.filesWritten || 0} 个文件`);
+
+                  // 上游可能替换 sandboxId（例如传入的 sandboxId 不存在），需要同步到预览 URL
+                  const appliedSandboxId = typeof applyResult.data?.sandboxId === 'string' ? applyResult.data.sandboxId : null;
+                  const appliedSandboxUrl =
+                    typeof applyResult.data?.sandboxUrl === 'string'
+                      ? applyResult.data.sandboxUrl
+                      : typeof applyResult.data?.url === 'string'
+                        ? applyResult.data.url
+                        : null;
+
+                  if (appliedSandboxId && appliedSandboxId !== sandboxId) {
+                    addLog(`⚠️ 上游已替换Sandbox: ${sandboxId} → ${appliedSandboxId}`);
+                  }
+
+                  if (appliedSandboxId || (appliedSandboxUrl && isValidUrl(appliedSandboxUrl))) {
+                    setSandboxInfo(prev => {
+                      if (!prev) return prev;
+                      return {
+                        ...prev,
+                        sandboxId: appliedSandboxId || prev.sandboxId,
+                        url: appliedSandboxUrl && isValidUrl(appliedSandboxUrl) ? appliedSandboxUrl : prev.url,
+                      };
+                    });
+                    setPreviewKey(prev => prev + 1);
+                  }
 
                   // 最终解析文件
                   updateFilesFromStream(responseToApply);
@@ -648,17 +771,20 @@ export default function QuickPreviewPage() {
             <div className={cn(
               'px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2',
               stage === 'init' && 'bg-gray-200 text-gray-700',
+              stage === 'scouting' && 'bg-orange-100 text-orange-700',
               stage === 'sandbox' && 'bg-blue-100 text-blue-700',
               stage === 'generating' && 'bg-purple-100 text-purple-700',
               stage === 'complete' && 'bg-green-100 text-green-700',
               stage === 'error' && 'bg-red-100 text-red-700'
             )}>
               {stage === 'init' && <Loader2 className="w-3 h-3 animate-spin" />}
+              {stage === 'scouting' && <Loader2 className="w-3 h-3 animate-spin" />}
               {stage === 'sandbox' && <Loader2 className="w-3 h-3 animate-spin" />}
               {stage === 'generating' && <Loader2 className="w-3 h-3 animate-spin" />}
               {stage === 'complete' && <Eye className="w-3 h-3" />}
               {stage === 'error' && <AlertCircle className="w-3 h-3" />}
               {stage === 'init' && '初始化'}
+              {stage === 'scouting' && '侦察中...'}
               {stage === 'sandbox' && `创建沙箱 ${elapsedTime}s`}
               {stage === 'generating' && (statusMessage || `生成中 ${elapsedTime}s`)}
               {stage === 'complete' && `已完成 ${totalTime}s`}

@@ -1,0 +1,77 @@
+# Test Environment Configuration
+spring:
+  profiles:
+    active: test
+
+  # AI Configuration for Tests (Mock values)
+  ai:
+    openai:
+      api-key: test-mock-key-for-testing-only
+      chat:
+        enabled: false  # Disable real API calls in tests
+      base-url: http://localhost:9999  # Mock URL
+
+  # Database Configuration for Tests
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ingenio_test
+    username: postgres
+    password: postgres
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+
+  # JPA Configuration
+  jpa:
+    hibernate:
+      ddl-auto: create-drop  # Recreate schema for each test
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+
+  # Redis Configuration for Tests
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 1  # Use different database for tests
+      timeout: 5000
+
+  # Mail Configuration (Disabled for tests)
+  mail:
+    host: localhost
+    port: 1025  # Mock SMTP port
+
+# SaToken Configuration
+sa-token:
+  token-name: Authorization
+  timeout: 604800
+  is-concurrent: true
+  is-share: false
+  token-style: uuid
+  is-log: false
+
+# Application Configuration
+app:
+  openai:
+    apiKey: test-mock-key
+  qiniu:
+    accessKey: test-mock-access-key
+    secretKey: test-mock-secret-key
+    bucket: test-bucket
+    domain: http://test.example.com
+
+# Logging Configuration for Tests
+logging:
+  level:
+    root: WARN
+    com.ingenio.backend: DEBUG
+    org.springframework.web: WARN
+    org.hibernate: WARN
+    org.springframework.ai: ERROR  # Suppress AI related logs in tests
+
+# Server Configuration
+server:
+  port: 0  # Random port for tests

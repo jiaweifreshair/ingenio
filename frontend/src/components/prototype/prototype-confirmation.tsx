@@ -34,6 +34,7 @@ import {
 import type { PlanRoutingResult } from '@/lib/api/plan-routing';
 import { updatePrototypeStatus } from '@/lib/api/plan-routing';
 import type { Template } from '@/types/template';
+import type { G3LogEntry } from '@/types/g3';
 import { useOpenLovablePreview } from '@/hooks/use-openlovable-preview';
 import { cn } from '@/lib/utils';
 import { PrototypePreview } from './prototype-preview';
@@ -55,6 +56,7 @@ export interface PrototypeConfirmationProps {
   onBack: () => void;
   loading?: boolean;
   error?: string | null;
+  g3Logs?: G3LogEntry[];
 }
 
 type ViewMode = 'preview' | 'code';
@@ -68,6 +70,7 @@ export function PrototypeConfirmation({
   onBack,
   loading = false,
   error: externalError = null,
+  g3Logs = [],
 }: PrototypeConfirmationProps): React.ReactElement {
   const { toast } = useToast();
   
@@ -370,6 +373,7 @@ export function PrototypeConfirmation({
         onClose={() => setShowConfirmDialog(false)}
         onConfirm={onConfirm}
         loading={loading}
+        g3Logs={g3Logs}
       />
 
       {/* 响应式布局：桌面端使用 ResizablePanels，移动端使用 Tabs */}

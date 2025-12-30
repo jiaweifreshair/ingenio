@@ -40,17 +40,22 @@ public class OpenLovableGenerateRequest {
     private String customizationRequirement;
 
     /**
-     * AI模型选择（可选，默认使用deepseek-r1推理模型）
-     * 支持的模型（open-lovable-cn 支持自动 fallback）：
-     * - deepseek-r1（推理模型，代码质量更高）← 默认
+     * AI模型选择（可选，默认使用 Gemini 3 Pro）
+     *
+     * 说明：
+     * - 当前 OpenLovable-CN 的部署更适配 gemini- 前缀模型（GCA 直连/稳定输出），避免出现“生成成功但代码为空”的假阳性。
+     * - 仍支持其它模型（open-lovable-cn 会自动 fallback），但建议在未显式指定时优先 Gemini 3 Pro。
+     *
+     * 支持的模型示例：
+     * - gemini-3-pro-preview（默认）
+     * - deepseek-r1
      * - deepseek-v3
      * - deepseek-v3.1
      * - qwen3-max
      * - kimi-k2
-     * - gemini-3-pro-preview（备用）
      */
     @Builder.Default
-    private String aiModel = "deepseek-r1";
+    private String aiModel = "gemini-3-pro-preview";
 
     /**
      * 是否需要爬取网站（可选，默认根据referenceUrls自动判断）

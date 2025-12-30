@@ -22,7 +22,7 @@ const faqs: ReadonlyArray<FAQItem> = [
   {
     question: "需要写代码吗？",
     answer:
-      "不需要。秒构AI 提供可视化的向导式操作，完全不需要编程基础。对于高级用户，我们也提供专家模式进行深度定制。",
+      "不需要。Ingenio 妙构 提供可视化的向导式操作，完全不需要编程基础。对于高级用户，我们也提供专家模式进行深度定制。",
   },
   {
     question: "是否收费？",
@@ -49,7 +49,7 @@ export function FAQAccordion(): React.ReactElement {
             常见问题
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl">
-            快速了解秒构 AI 的核心特性
+            快速了解Ingenio 妙构 的核心特性
           </p>
         </div>
 

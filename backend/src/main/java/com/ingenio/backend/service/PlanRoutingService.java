@@ -663,7 +663,7 @@ public class PlanRoutingService {
                 .referenceUrls(Collections.emptyList())
                 .needsCrawling(false)
                 .streaming(false)
-                .aiModel("deepseek-r1")  // 推理模型，支持自动 fallback
+                .aiModel("gemini-3-pro-preview")  // 默认优先 Gemini 3 Pro，避免空代码导致预览不可用
                 .timeoutSeconds(90) // 设计分支需要更长时间
                 .build();
 

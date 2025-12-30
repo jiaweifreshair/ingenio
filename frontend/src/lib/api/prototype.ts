@@ -7,6 +7,7 @@ import type { DesignStyle } from '@/types/design-style';
 import type { IntentClassificationResult, RequirementIntent } from '@/types/intent';
 import { getApiBaseUrl } from '@/lib/api/base-url';
 import { getToken } from '@/lib/auth/token';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 /** 原型请求超时时间（毫秒），超过即判定依赖服务未响应
  * 参考 open-lovable-cn: E2B沙箱创建通常需要30-40秒，生成代码可能需要60-90秒
@@ -109,6 +110,7 @@ export async function generatePrototypeStream(
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
+        'x-trace-id': generateTraceId(),
         ...(token ? { Authorization: token } : {}),
       },
       body: JSON.stringify(payload),
@@ -361,6 +363,7 @@ export async function applyAiCodeToSandbox(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     body: JSON.stringify({ sandboxId, response }),
   });
@@ -401,6 +404,7 @@ export async function restartVite(sandboxId: string): Promise<void> {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     body: JSON.stringify({ sandboxId }),
   });

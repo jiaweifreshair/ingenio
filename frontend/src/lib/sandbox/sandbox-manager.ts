@@ -17,6 +17,7 @@
 import { getToken } from '@/lib/auth/token';
 import type { GeneratedFile } from '@/hooks/use-code-generation-stream';
 import { getApiBaseUrl } from '@/lib/api/base-url';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 /**
  * 沙箱状态
@@ -139,7 +140,8 @@ class SandboxManagerClass {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'X-Trace-Id': generateTraceId(),
+          ...(token && { 'Authorization': token }),
         },
         body: JSON.stringify({
           appSpecId,
@@ -237,7 +239,8 @@ class SandboxManagerClass {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            ...(token && { 'Authorization': `Bearer ${token}` }),
+            'X-Trace-Id': generateTraceId(),
+            ...(token && { 'Authorization': token }),
           },
           body: JSON.stringify({
             files: batch.map(f => ({
@@ -293,7 +296,8 @@ class SandboxManagerClass {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'X-Trace-Id': generateTraceId(),
+          ...(token && { 'Authorization': token }),
         },
         body: JSON.stringify({
           path: file.path,
@@ -324,7 +328,8 @@ class SandboxManagerClass {
       const response = await fetch(`${this.baseUrl}/v1/sandbox/${this.instance.id}/refresh`, {
         method: 'POST',
         headers: {
-          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'X-Trace-Id': generateTraceId(),
+          ...(token && { 'Authorization': token }),
         },
       });
 
@@ -347,7 +352,8 @@ class SandboxManagerClass {
       await fetch(`${this.baseUrl}/v1/sandbox/${sandboxId}`, {
         method: 'DELETE',
         headers: {
-          ...(token && { 'Authorization': `Bearer ${token}` }),
+          'X-Trace-Id': generateTraceId(),
+          ...(token && { 'Authorization': token }),
         },
       });
     } catch {

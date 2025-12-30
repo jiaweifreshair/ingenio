@@ -12,7 +12,7 @@ import java.util.Map;
  * 所有在此控制器下的端点都应通过服务间JWT进行保护。
  */
 @RestController
-@RequestMapping("/api/admin")
+@RequestMapping({"/admin", "/api/admin"})
 public class AdminStatusController {
 
     /**

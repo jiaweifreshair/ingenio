@@ -90,10 +90,38 @@ export function isSandboxNotFound(payload: Record<string, unknown>): boolean {
 }
 
 /**
+ * 从上游状态响应中提取 sandboxId
+ *
+ * 兼容说明：
+ * - open-lovable-cn 的 /api/sandbox-status 返回结构为：
+ *   { success, active, healthy, sandboxData: { sandboxId, url, ... }, message }
+ * - 旧版本/其它实现可能直接返回 { sandboxId, url, ... }
+ */
+export function extractSandboxId(payload: Record<string, unknown>): string | undefined {
+  const direct = getStringField(payload, 'sandboxId');
+  if (direct) return direct;
+
+  const sandboxData = payload.sandboxData;
+  if (isRecord(sandboxData)) {
+    return getStringField(sandboxData, 'sandboxId');
+  }
+
+  return undefined;
+}
+
+/**
  * 从上游状态响应中提取预览 URL
  */
 export function extractSandboxUrl(payload: Record<string, unknown>): string | undefined {
-  return getStringField(payload, 'url') || getStringField(payload, 'previewUrl');
+  const direct = getStringField(payload, 'url') || getStringField(payload, 'previewUrl');
+  if (direct) return direct;
+
+  const sandboxData = payload.sandboxData;
+  if (isRecord(sandboxData)) {
+    return getStringField(sandboxData, 'url') || getStringField(sandboxData, 'previewUrl');
+  }
+
+  return undefined;
 }
 
 /**
@@ -269,20 +297,24 @@ export async function ensureSandboxAvailable(
     return { sandbox: created, action: 'recreated', reason: 'not_found', urlUpdated: false };
   }
 
+  const latestSandboxId = extractSandboxId(statusResult.data);
   const latestUrl = extractSandboxUrl(statusResult.data);
+  const nextSandboxId = latestSandboxId || currentSandbox.sandboxId;
   const nextUrl = latestUrl && isValidUrl(latestUrl) ? latestUrl : currentSandbox.url;
   const urlUpdated = nextUrl !== currentSandbox.url;
+  const sandboxIdUpdated = nextSandboxId !== currentSandbox.sandboxId;
 
   return {
     sandbox: {
       ...currentSandbox,
+      sandboxId: nextSandboxId,
       url: nextUrl,
       provider: getStringField(statusResult.data, 'provider') || currentSandbox.provider,
       message: getStringField(statusResult.data, 'message') || currentSandbox.message,
       createdAt: currentSandbox.createdAt,
     },
-    action: 'reused',
-    reason: 'none',
+    action: sandboxIdUpdated ? 'recreated' : 'reused',
+    reason: sandboxIdUpdated ? 'not_found' : 'none',
     urlUpdated,
   };
 }
@@ -301,7 +333,11 @@ export async function ensureSandboxIdAvailable(
   const now = options.now ?? Date.now();
 
   const statusResult = await requestOpenLovableSandboxStatus(apiBaseUrl, sandboxId, token);
-  if (!statusResult.success || !statusResult.data || isSandboxNotFound(statusResult.data)) {
+  const statusPayload = statusResult.success && statusResult.data ? statusResult.data : null;
+  const statusSandboxId = statusPayload ? extractSandboxId(statusPayload) : undefined;
+  const sandboxIdMismatch = !!(statusSandboxId && statusSandboxId !== sandboxId);
+
+  if (!statusResult.success || !statusResult.data || isSandboxNotFound(statusResult.data) || sandboxIdMismatch) {
     const created = await requestOpenLovableCreateSandbox(apiBaseUrl, token, now);
     if (!isValidUrl(created.url)) {
       throw new Error(`沙箱URL无效: ${created.url || '空'}`);
@@ -320,7 +356,7 @@ export async function ensureSandboxIdAvailable(
   return {
     sandbox: {
       success: true,
-      sandboxId,
+      sandboxId: statusSandboxId || sandboxId,
       url,
       provider: getStringField(statusResult.data, 'provider') || 'e2b',
       message: getStringField(statusResult.data, 'message') || '',
@@ -331,4 +367,3 @@ export async function ensureSandboxIdAvailable(
     urlUpdated: false,
   };
 }
-

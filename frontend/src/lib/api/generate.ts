@@ -218,7 +218,7 @@ export interface TaskStatusResponse {
 export interface AsyncGenerateRequest {
   /** 需求描述 */
   userRequirement: string;
-  /** AI模型（可选，默认使用qwen-max） */
+  /** AI模型（可选，默认使用gemini-3-pro-preview） */
   model?: string;
   /** 跳过验证 */
   skipValidation?: boolean;

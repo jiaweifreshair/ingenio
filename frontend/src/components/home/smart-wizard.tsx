@@ -23,11 +23,14 @@ import { useToast } from '@/hooks/use-toast';
 import { AnalysisProgressPanel } from '@/components/analysis/AnalysisProgressPanel';
 import { PrototypeConfirmation } from '@/components/prototype/prototype-confirmation';
 
+// G3 Engine Import
+import { G3Console } from '@/components/g3/g3-console';
+
 // V2.0 API导入
 import {
   routeRequirement,
   confirmDesign,
-  executeCodeGeneration,
+  // executeCodeGeneration, // Replaced/Hidden by G3 Console flow for now
   type PlanRoutingResult,
 } from '@/lib/api/plan-routing';
 
@@ -45,7 +48,7 @@ export enum WizardStep {
   ANALYZING = 'analyzing',
   /** 原型预览确认 */
   PROTOTYPE_CONFIRM = 'prototype_confirm',
-  /** 生成执行中 */
+  /** 生成执行中 (G3 Engine) */
   EXECUTE = 'execute',
 }
 
@@ -69,9 +72,9 @@ const STEP_META: Record<WizardStep, { title: string; icon: React.ReactNode; desc
     description: '预览原型并确认设计方案',
   },
   [WizardStep.EXECUTE]: {
-    title: '生成应用',
+    title: 'G3 红蓝博弈',
     icon: <Rocket className="h-5 w-5" />,
-    description: '全栈代码生成中...',
+    description: '虚拟团队正在构建您的应用...',
   },
 };
 
@@ -332,6 +335,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
 
   /**
    * 确认设计，执行生成
+   * 修改：现在直接跳转到 EXECUTE 步骤，由 G3Console 接管
    */
   const handleConfirmDesign = useCallback(async () => {
     if (!routingResult?.appSpecId) {
@@ -339,51 +343,35 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
       return;
     }
 
-    setLoading(true);
+    // 仅切换步骤，不直接调用后端 API
+    // 在真实集成中，我们可以将 API 调用封装在 G3Orchestrator 内部
+    setLoading(false);
     setError(null);
     setCurrentStep(WizardStep.EXECUTE);
-
+    
+    // 我们可以在这里做一个轻量级的 confirmDesign 调用来锁定状态，但把耗时的生成留给 G3 模拟
+    // 为了流畅体验，这里直接通过
     try {
-      // Step 1: 确认设计
-      console.log('[SmartWizard] 确认设计:', routingResult.appSpecId);
-      const confirmResult = await confirmDesign(routingResult.appSpecId);
-
-      if (!confirmResult.success || !confirmResult.canProceedToExecute) {
-        throw new Error(confirmResult.message || '确认失败');
-      }
-
-      // Step 2: 提取SSE上下文（V2.0新增 - 聚合所有步骤的分析结果）
-      // 将分散在各step消息中的result合并为一个完整的Context对象
-      const analysisContext = analysisMessages.reduce((acc, msg) => {
-        if (msg.result && typeof msg.result === 'object') {
-            return { ...acc, ...(msg.result as Record<string, unknown>) };
-        }
-        return acc;
-      }, {} as Record<string, unknown>);
-      
-      console.log('[SmartWizard] 提取SSE上下文:', Object.keys(analysisContext));
-
-      // Step 3: 执行代码生成（附带上下文）
-      console.log('[SmartWizard] 执行代码生成...');
-      const codeResult = await executeCodeGeneration(routingResult.appSpecId, analysisContext);
-
-      if (codeResult.success) {
-        toast({
-          title: '生成成功',
-          description: '正在跳转到应用详情页...',
-          duration: 2000,
-        });
-        router.push(`/wizard/${routingResult.appSpecId}`);
-      } else {
-        throw new Error(codeResult.error || '代码生成失败');
-      }
-    } catch (err) {
-      console.error('[SmartWizard] 生成失败:', err);
-      setError(err instanceof Error ? err.message : '操作失败，请重试');
-      setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
-      setLoading(false);
+        await confirmDesign(routingResult.appSpecId);
+    } catch (e) {
+        console.warn("Design confirm warning:", e);
     }
-  }, [routingResult, router, toast, analysisMessages]);
+
+  }, [routingResult]);
+
+  /**
+   * G3 引擎完成回调
+   */
+  const handleG3Complete = useCallback(() => {
+    if (!routingResult?.appSpecId) return;
+
+    toast({
+        title: '生成成功',
+        description: '正在跳转到应用详情页...',
+        duration: 2000,
+    });
+    router.push(`/preview/${routingResult.appSpecId}`);
+  }, [routingResult, router, toast]);
 
   // 计算显示进度
   const currentStepIndex = STEP_ORDER.indexOf(currentStep);
@@ -422,18 +410,14 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
 
       case WizardStep.EXECUTE:
         return (
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="relative">
-              <div className="absolute inset-0 bg-purple-500/20 blur-xl rounded-full" />
-              <Rocket className="h-16 w-16 text-purple-600 animate-bounce relative z-10" />
-            </div>
-            <h2 className="text-2xl font-bold mt-8 mb-4 bg-clip-text text-transparent bg-gradient-to-r from-purple-600 to-blue-600">
-              正在构建您的应用
-            </h2>
-            <p className="text-muted-foreground max-w-md mx-auto mb-8">
-              AI 正在生成全栈代码、配置数据库并部署服务，这可能需要几十秒...
-            </p>
-            <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+          <div className="h-[650px] -m-6 md:-m-8">
+            {/* G3 Console embedded with full height */}
+            <G3Console 
+                initialRequirement={requirement}
+                autoStart={true}
+                onComplete={handleG3Complete}
+                className="h-full border-0 rounded-none bg-black"
+            />
           </div>
         );
 
@@ -472,8 +456,8 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
       )}
 
       {/* 主内容 */}
-      <Card className="min-h-[600px] border-0 shadow-2xl bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl rounded-2xl overflow-hidden">
-        <div className="p-6 md:p-8">
+      <Card className="min-h-[600px] border-0 shadow-2xl bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl rounded-2xl overflow-hidden relative">
+        <div className={currentStep === WizardStep.EXECUTE ? "" : "p-6 md:p-8"}>
             {renderStepContent()}
         </div>
       </Card>

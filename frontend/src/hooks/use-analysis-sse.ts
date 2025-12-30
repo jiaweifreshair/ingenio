@@ -10,11 +10,11 @@ import { getApiBaseUrl } from '@/lib/api/base-url';
 
 /**
  * 分析进度消息
- * 
+ *
  * 对应后端DTO: com.ingenio.backend.dto.response.AnalysisProgressMessage
  */
 export interface AnalysisProgressMessage {
-  /** 步骤编号（1-5） */
+  /** 步骤编号（1-6） */
   step: number;
   /** 步骤名称 */
   stepName: string;
@@ -32,6 +32,10 @@ export interface AnalysisProgressMessage {
   detail?: string;
   /** 时间戳 */
   timestamp: string;
+  /** 推理内容（DeepSeek R1 等推理模型的思考过程，step 6 时使用） */
+  reasoning?: string;
+  /** 是否正在推理中（step 6 时使用） */
+  isReasoning?: boolean;
 }
 
 /**

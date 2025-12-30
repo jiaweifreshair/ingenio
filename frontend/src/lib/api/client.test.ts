@@ -17,6 +17,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { get, post, put, del, APIError } from "./client";
 import * as tokenModule from "@/lib/auth/token";
+import { getApiBaseUrl } from "./base-url";
 
 // Mock全局fetch
 const mockFetch = vi.fn();
@@ -31,8 +32,8 @@ vi.mock("@/lib/auth/token", () => ({
 }));
 
 describe("API Client - client.ts", () => {
-  const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8080";
-  const TEST_ENDPOINT = "/api/v1/test";
+  const API_BASE_URL = getApiBaseUrl();
+  const TEST_ENDPOINT = "/v1/test";
   const TEST_URL = `${API_BASE_URL}${TEST_ENDPOINT}`;
 
   beforeEach(() => {
@@ -108,7 +109,7 @@ describe("API Client - client.ts", () => {
         TEST_URL,
         expect.objectContaining({
           headers: expect.objectContaining({
-            Authorization: `Bearer ${mockToken}`,
+            Authorization: mockToken,
           }),
         })
       );
@@ -617,7 +618,7 @@ describe("API Client - client.ts", () => {
     });
 
     it("应该处理包含查询参数的endpoint", async () => {
-      const endpointWithQuery = "/api/v1/users?page=1&limit=10";
+      const endpointWithQuery = "/v1/users?page=1&limit=10";
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -715,7 +716,7 @@ describe("API Client - client.ts", () => {
         expect.objectContaining({
           headers: expect.objectContaining({
             "Content-Type": "application/json",
-            Authorization: "Bearer test-token",
+            Authorization: "test-token",
             "x-custom-header": "custom-value",  // Headers API会将名称转为小写
             "x-request-id": "req-12345",        // Headers API会将名称转为小写
           }),

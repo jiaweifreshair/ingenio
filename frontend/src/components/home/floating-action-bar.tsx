@@ -3,8 +3,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Sparkles, Maximize2, Minimize2, ArrowUp, Wand2, Link as LinkIcon, ChevronDown, Check, Zap, X, Plus } from "lucide-react";
+import { Sparkles, Maximize2, Minimize2, ArrowUp, Wand2, Link as LinkIcon, ChevronDown, Check, Zap, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   DropdownMenu,
@@ -31,6 +30,8 @@ interface FloatingActionBarProps {
   selectedIndustry?: IndustryType | null;
   selectedMode?: AppComplexityMode | null;
   selectedCapabilities?: AICapabilityType[];
+  onIndustryChange?: (industry: IndustryType | null) => void;
+  onModeChange?: (mode: AppComplexityMode | null) => void;
   onCapabilitiesChange?: (capabilities: AICapabilityType[]) => void;
 }
 
@@ -43,6 +44,8 @@ export function FloatingActionBar({
   selectedIndustry,
   selectedMode,
   selectedCapabilities,
+  onIndustryChange,
+  onModeChange,
   onCapabilitiesChange
 }: FloatingActionBarProps) {
   const [isVisible, setIsVisible] = useState(false);
@@ -133,21 +136,100 @@ export function FloatingActionBar({
     setIsExpanded(!isExpanded);
   };
 
+  // 删除标签处理函数
+  const handleRemoveIndustry = () => {
+    onIndustryChange?.(null);
+  };
+
+  const handleRemoveMode = () => {
+    onModeChange?.(null);
+  };
+
+  const handleRemoveCapability = (capId: AICapabilityType) => {
+    const updated = localCapabilities.filter(c => c !== capId);
+    setLocalCapabilities(updated);
+    onCapabilitiesChange?.(updated);
+  };
+
   if (!isVisible) return null;
 
   return (
-    <div 
+    <div
       className={cn(
-        "fixed top-0 left-0 right-0 z-[100] flex justify-center pt-4 px-4 transition-all duration-300 transform",
+        "fixed top-0 left-0 right-0 z-[100] flex justify-center pt-4 px-4 transition-all duration-300 transform pointer-events-none",
         isVisible ? "translate-y-0 opacity-100" : "-translate-y-full opacity-0"
       )}
     >
-      <div 
+      <div
         className={cn(
-          "w-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200 dark:border-slate-700 shadow-xl rounded-2xl transition-all duration-300 overflow-hidden flex flex-col",
+          "w-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-slate-200 dark:border-slate-700 shadow-xl rounded-2xl transition-all duration-300 overflow-hidden pointer-events-auto",
           isExpanded ? "max-w-4xl" : "max-w-3xl"
         )}
       >
+        {/* Tags Row (if any tags selected) */}
+        {generationMode === 'NEW_IDEA' && (selectedMode || selectedIndustry || localCapabilities.length > 0) && (
+          <div className="flex flex-wrap gap-2 items-center px-4 pt-3 pb-2">
+            {/* Mode Tag */}
+            {selectedMode && (() => {
+              const mode = APP_MODES.find(m => m.id === selectedMode);
+              if (!mode) return null;
+              const Icon = mode.icon;
+              return (
+                <div key={mode.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 text-sm">
+                  <Icon className="w-4 h-4" />
+                  <span>{mode.title}</span>
+                  <button
+                    onClick={handleRemoveMode}
+                    className="ml-1 hover:bg-blue-200 rounded-full p-0.5 transition-colors"
+                    aria-label="移除"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })()}
+
+            {/* Industry Tag */}
+            {selectedIndustry && (() => {
+              const industry = INDUSTRIES.find(i => i.id === selectedIndustry);
+              if (!industry) return null;
+              const Icon = industry.icon;
+              return (
+                <div key={industry.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-sm">
+                  <Icon className="w-4 h-4" />
+                  <span>{industry.label}</span>
+                  <button
+                    onClick={handleRemoveIndustry}
+                    className="ml-1 hover:bg-green-200 rounded-full p-0.5 transition-colors"
+                    aria-label="移除"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              );
+            })()}
+
+            {/* AI Capabilities Tag */}
+            {localCapabilities.length > 0 && (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 text-sm">
+                <Zap className="w-4 h-4 fill-purple-500" />
+                <span>AI 能力 · 已选 {localCapabilities.length} 项</span>
+                <button
+                  onClick={() => {
+                    setLocalCapabilities([]);
+                    onCapabilitiesChange?.([]);
+                  }}
+                  className="ml-1 hover:bg-purple-200 rounded-full p-0.5 transition-colors"
+                  aria-label="移除"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Main Input Row */}
         <div className="flex items-start gap-2 p-2">
             {/* Mode Switcher */}
             <DropdownMenu>
@@ -180,56 +262,6 @@ export function FloatingActionBar({
                 </DropdownMenuItem>
             </DropdownMenuContent>
             </DropdownMenu>
-
-            {/* AI Capabilities Selector (Creation Mode Only) */}
-            {generationMode === 'NEW_IDEA' && (
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className={cn(
-                                "h-9 gap-1 px-2 text-muted-foreground hover:text-foreground shrink-0 border border-transparent",
-                                localCapabilities.length > 0 && "border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-300"
-                            )}
-                        >
-                            <Zap className={cn("w-3.5 h-3.5", localCapabilities.length > 0 ? "fill-purple-500 text-purple-500" : "")} />
-                            <span className="hidden sm:inline">
-                                {localCapabilities.length > 0 ? `AI能力(${localCapabilities.length})` : "AI能��"}
-                            </span>
-                            <ChevronDown className="w-3 h-3 opacity-50" />
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56 z-[110]">
-                        <DropdownMenuLabel>选择 AI 能力</DropdownMenuLabel>
-                        <DropdownMenuSeparator />
-                        {AI_CAPABILITIES.map((cap) => (
-                            <DropdownMenuCheckboxItem
-                                key={cap.id}
-                                checked={localCapabilities.includes(cap.id)}
-                                onCheckedChange={() => toggleLocalCapability(cap.id)}
-                            >
-                                {cap.label}
-                            </DropdownMenuCheckboxItem>
-                        ))}
-                        {localCapabilities.length > 0 && (
-                            <>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem 
-                                    className="justify-center text-xs text-muted-foreground cursor-pointer"
-                                    onClick={(e) => {
-                                        e.preventDefault();
-                                        setLocalCapabilities([]);
-                                        onCapabilitiesChange?.([]);
-                                    }}
-                                >
-                                    清除已选
-                                </DropdownMenuItem>
-                            </>
-                        )}
-                    </DropdownMenuContent>
-                </DropdownMenu>
-            )}
 
            {/* Input Area */}
            <div className="flex-1 flex flex-col gap-2 relative">
@@ -290,8 +322,8 @@ export function FloatingActionBar({
              <div className="px-4 pb-3 pt-0 text-xs text-slate-400 flex justify-between items-center border-t border-slate-100 dark:border-slate-800/50 mt-2">
                  <span>已输入 {requirement.length} 字符</span>
                  <span className="flex items-center gap-1">
-                     <ArrowUp className="w-3 h-3" /> 
-                     滚动��顶部查看完整配置
+                     <ArrowUp className="w-3 h-3" />
+                     滚动到顶部查看完整配置
                  </span>
              </div>
         )}

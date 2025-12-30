@@ -175,10 +175,14 @@ public class ValidationController {
     @PostMapping("/coverage")
     public Result<ValidationResponse> validateCoverage(@RequestBody Map<String, String> request) {
         UUID appSpecId = UUID.fromString(request.get("appSpecId"));
-        log.info("收到覆盖率验证请求 - appSpecId: {}", appSpecId);
+        String projectRoot = request.get("projectRoot");
+        String projectType = request.get("projectType");
+        log.info("收到覆盖率验证请求 - appSpecId: {}, projectRoot: {}, projectType: {}",
+                appSpecId, projectRoot, projectType);
 
         try {
-            ValidationResponse response = validationService.validateCoverage(appSpecId);
+            ValidationResponse response = validationService.validateCoverage(
+                    appSpecId, projectRoot, projectType);
             return Result.success(response);
         } catch (Exception e) {
             log.error("覆盖率验证失败", e);

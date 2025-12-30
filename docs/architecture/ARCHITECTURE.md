@@ -1,4 +1,4 @@
-# Ingenio秒构AI | 技术架构文档
+# IngenioIngenio (妙构) | 技术架构文档
 
 > **版本**: v2.0 (Phase 1.1-2.2 已完成实现)
 > **最后更新**: 2025-11-09
@@ -1560,7 +1560,7 @@ main (生产分支)
 
 | 术语 | 英文 | 解释 |
 |------|------|------|
-| **秒构AI** | Ingenio | 项目名称，意为"才能、创造力" |
+| **Ingenio (妙构)** | Ingenio | 项目名称，意为"才能、创造力" |
 | **时光机** | TimeMachine | 版本快照系统，支持版本回滚 |
 | **KMP** | Kotlin Multiplatform | Kotlin跨平台技术 |
 | **Supabase** | Supabase | 开源Firebase替代品 |
@@ -1609,7 +1609,7 @@ Ingenio项目集成了多个外部项目和参考实现：
 
 #### 项目间关系
 ```
-Ingenio (秒构AI)
+Ingenio (Ingenio (妙构))
 ├── 集成 SuperDesign
 │   └── AI UI设计多方案生成
 │       ├── 并行生成3个设计方案

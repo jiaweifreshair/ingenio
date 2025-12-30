@@ -21,8 +21,30 @@ PROJECT_ROOT="/Users/apus/Documents/UGit/Ingenio"
 BACKEND_DIR="$PROJECT_ROOT/backend"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 
+# 0. 加载环境变量（本地 .env，不入库的密钥/配置）
+echo -e "${YELLOW}[0/6] 加载环境变量 (.env)...${NC}"
+if [ -f "$PROJECT_ROOT/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$PROJECT_ROOT/.env"
+    set +a
+    echo -e "${GREEN}✓ 已加载: $PROJECT_ROOT/.env${NC}"
+else
+    echo -e "${YELLOW}⚠ 未找到: $PROJECT_ROOT/.env（如需AI能力，请配置QINIU_CLOUD_API_KEY/DEEPSEEK_API_KEY/DASHSCOPE_API_KEY等）${NC}"
+fi
+
+if [ -f "$BACKEND_DIR/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$BACKEND_DIR/.env"
+    set +a
+    echo -e "${GREEN}✓ 已加载: $BACKEND_DIR/.env${NC}"
+fi
+
+echo ""
+
 # 1. 检查Docker是否运行
-echo -e "${YELLOW}[1/5] 检查Docker状态...${NC}"
+echo -e "${YELLOW}[1/6] 检查Docker状态...${NC}"
 if ! docker info > /dev/null 2>&1; then
     echo -e "${RED}错误: Docker未运行，正在启动Docker Desktop...${NC}"
     open -a Docker
@@ -33,7 +55,7 @@ echo -e "${GREEN}✓ Docker已运行${NC}"
 echo ""
 
 # 2. 启动依赖服务（PostgreSQL, Redis, MinIO）
-echo -e "${YELLOW}[2/5] 启动依赖服务（PostgreSQL, Redis, MinIO）...${NC}"
+echo -e "${YELLOW}[2/6] 启动依赖服务（PostgreSQL, Redis, MinIO）...${NC}"
 cd "$PROJECT_ROOT"
 docker compose up -d postgres redis minio
 
@@ -48,7 +70,7 @@ docker compose ps
 echo ""
 
 # 3. 验证服务健康
-echo -e "${YELLOW}[3/5] 验证服务健康...${NC}"
+echo -e "${YELLOW}[3/6] 验证服务健康...${NC}"
 
 # 检查PostgreSQL
 if docker exec ingenio-postgres pg_isready -U ingenio_user > /dev/null 2>&1; then
@@ -82,7 +104,7 @@ done
 echo ""
 
 # 4. 启动后端服务
-echo -e "${YELLOW}[4/5] 启动Spring Boot后端服务...${NC}"
+echo -e "${YELLOW}[4/6] 启动Spring Boot后端服务...${NC}"
 cd "$BACKEND_DIR"
 
 # 清除代理环境变量，防止 localhost 连接被代理拦截导致 502 错误

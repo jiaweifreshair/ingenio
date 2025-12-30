@@ -157,6 +157,7 @@ public class ValidationResultEntity {
     public enum ValidationType {
         COMPILE("compile"),
         TEST("test"),
+        COVERAGE("coverage"),
         QUALITY_GATE("quality_gate"),
         CONTRACT("contract"),
         SCHEMA("schema"),

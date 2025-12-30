@@ -228,7 +228,7 @@ export default function ForgotPasswordPage() {
       <div className="max-w-md w-full space-y-8">
         {/* Logo和标题 */}
         <div className="text-center">
-          <h1 className="text-4xl font-bold text-gray-900 mb-2">秒构AI</h1>
+          <h1 className="text-4xl font-bold text-gray-900 mb-2">Ingenio 妙构</h1>
           <p className="text-sm text-gray-600">找回密码</p>
         </div>
 

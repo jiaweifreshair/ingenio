@@ -15,6 +15,7 @@
 import { getToken, clearToken } from '@/lib/auth/token';
 import { getApiBaseUrl } from './base-url';
 import { normalizeApiResponse } from './response';
+import { generateTraceId } from './trace-id';
 
 /**
  * 默认指向本地Java后端 (8080/api) 确保不显式配置也能访问真实API
@@ -73,10 +74,13 @@ async function request<T>(
 ): Promise<APIResponse<T>> {
   const url = `${API_BASE_URL}${endpoint}`;
   const token = getToken();
+  const traceId = generateTraceId();
 
   // 构建headers（使用Record类型避免索引错误）
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    // 使用小写 key，便于与 Headers API 的规范化行为对齐（避免重复 header）
+    "x-trace-id": traceId,
   };
 
   // 如果存在Token，添加Authorization header

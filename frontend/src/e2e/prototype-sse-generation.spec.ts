@@ -13,10 +13,19 @@ import { test, expect } from '@playwright/test';
  * 7. 测试重试功能
  */
 
+/**
+ * 说明：
+ * - 受限环境下 `localhost` 可能优先解析到 IPv6(::1) 或被代理劫持，统一使用 127.0.0.1 更稳定
+ * - 账号信息优先从环境变量读取，便于不同环境复用（本仓库已有默认测试账号）
+ */
+const BASE_URL = process.env.PLAYWRIGHT_TEST_BASE_URL || 'http://127.0.0.1:3000';
+const USERNAME = process.env.E2E_USERNAME || 'justin';
+const PASSWORD = process.env.E2E_PASSWORD || 'qazOKM123';
+
 test.describe('原型SSE流式生成测试', () => {
   test.beforeEach(async ({ page }) => {
     // 访问首页
-    await page.goto('http://localhost:3000');
+    await page.goto(BASE_URL);
     await page.waitForLoadState('networkidle');
 
     // 登录用户账号
@@ -31,10 +40,10 @@ test.describe('原型SSE流式生成测试', () => {
 
     // 填写用户名和密码
     const usernameInput = page.locator('input[type="text"], input[placeholder*="用户名"], input[placeholder*="邮箱"]').first();
-    await usernameInput.fill('justin');
+    await usernameInput.fill(USERNAME);
 
     const passwordInput = page.locator('input[type="password"]').first();
-    await passwordInput.fill('qazOKM123');
+    await passwordInput.fill(PASSWORD);
 
     // 点击登录提交按钮
     const submitButton = page.locator('button:has-text("登录"), button[type="submit"]').last();
@@ -46,12 +55,12 @@ test.describe('原型SSE流式生成测试', () => {
     console.log('[Test] 登录完成');
 
     // 返回首页（如果需要）
-    await page.goto('http://localhost:3000');
+    await page.goto(BASE_URL);
     await page.waitForLoadState('networkidle');
   });
 
   test('完整流程：需求输入 → 意图识别 → 风格选择 → SSE原型生成', async ({ page }) => {
-    test.setTimeout(240000); // 4分钟超时
+    test.setTimeout(420000); // 7分钟超时（包含沙箱创建与首次预览）
 
     // Step 1: 输入需求
     console.log('[Test] Step 1: 输入用户需求');
@@ -76,44 +85,43 @@ test.describe('原型SSE流式生成测试', () => {
 
     // Step 2: 处理AI需求采集对话框
     try {
-      // 等待对话框出现（使用Promise.race处理多个选择器）
-      await Promise.race([
-        page.waitForSelector('text=/AI需求/', { timeout: 10000 }),
-        page.waitForSelector('text=/从零开始/', { timeout: 10000 }),
-        page.waitForSelector('text=/克隆/', { timeout: 10000 }),
-      ]).catch(() => {
-        console.log('[Test] 未检测到对话框，可能已直接进入下一步');
-      });
+      // 部分版本会直接进入“快速预览生成/确认设计”阶段，不再弹出对话框；因此这里做“有则处理、无则跳过”
+      const dialogAppeared = await Promise.race([
+        page.waitForSelector('text=/AI需求/', { timeout: 8000 }).then(() => true),
+        page.waitForSelector('text=/从零开始/', { timeout: 8000 }).then(() => true),
+        page.waitForSelector('text=/克隆/', { timeout: 8000 }).then(() => true),
+      ]).catch(() => false);
 
-      console.log('[Test] Step 2: AI需求采集对话框已出现');
-
-      await page.screenshot({ path: '/tmp/e2e-02-dialog.png', fullPage: true });
-
-      // 选择"从零开始设计"选项（或第一个可见的选项）
-      const designOption = page.locator('text=/从零开始/, button:has-text("从零开始")').first();
-      const designOptionVisible = await designOption.isVisible({ timeout: 3000 }).catch(() => false);
-
-      if (designOptionVisible) {
-        await designOption.click();
-        console.log('[Test] 已选择"从零开始设计"');
+      if (!dialogAppeared) {
+        console.log('[Test] 未检测到对话框（可能已直接进入下一步），跳过对话框处理');
       } else {
-        // 如果找不到，尝试点击第一个可见的选项
-        const firstOption = page.locator('[role="radio"], [role="option"], button').first();
-        await firstOption.click();
-        console.log('[Test] 已选择第一个可用选项');
+        console.log('[Test] Step 2: AI需求采集对话框已出现');
+        await page.screenshot({ path: '/tmp/e2e-02-dialog.png', fullPage: true });
+
+        // 优先选择“从零开始/设计”路径（测试覆盖）
+        const designOption = page.getByRole('button', { name: /从零开始|设计/ }).first();
+        const cloneOption = page.getByRole('button', { name: /克隆|仿照|参考/ }).first();
+
+        if (await designOption.isVisible().catch(() => false)) {
+          await designOption.click();
+          console.log('[Test] 已选择“从零开始/设计”');
+        } else if (await cloneOption.isVisible().catch(() => false)) {
+          await cloneOption.click();
+          console.log('[Test] 未找到设计按钮，改选“克隆/参考”');
+        } else {
+          console.log('[Test] 未找到可点击的对话框选项，跳过选择（由系统默认决定）');
+        }
+
+        // 点击确认/下一步（若存在）
+        const confirmDialogButton = page.getByRole('button', { name: /确认|下一步|继续/ }).last();
+        if (await confirmDialogButton.isVisible().catch(() => false)) {
+          await confirmDialogButton.click();
+          console.log('[Test] 已确认对话框选择');
+        }
+
+        await page.waitForTimeout(1000);
+        await page.screenshot({ path: '/tmp/e2e-02-after-dialog.png', fullPage: true });
       }
-
-      // 点击确认/下一步按钮
-      await page.waitForTimeout(1000);
-      const confirmDialogButton = page.locator('button:has-text("确认"), button:has-text("下一步"), button:has-text("继续")').last();
-      await confirmDialogButton.click();
-
-      console.log('[Test] 已确认意图选择，等待进入下一步...');
-
-      // 等待对话框关闭，进入下一步
-      await page.waitForTimeout(2000);
-
-      await page.screenshot({ path: '/tmp/e2e-02-after-dialog.png', fullPage: true });
 
     } catch (error) {
       console.error('[Test] 处理AI需求采集对话框失败');
@@ -146,7 +154,8 @@ test.describe('原型SSE流式生成测试', () => {
 
       console.log('[Test] 已点击生成原型按钮');
     } else {
-      console.log('[Test] 未找到风格选择，可能已自动进入原型生成');
+      // 新版可能直接进入“确认设计/快速预览生成”，不再强制风格选择
+      console.log('[Test] 未找到风格选择，可能已自动进入原型生成/确认设计阶段');
     }
 
     // Step 4: 监听 SSE 请求
@@ -171,13 +180,15 @@ test.describe('原型SSE流式生成测试', () => {
     });
 
     // Step 5: 等待原型生成完成
-    console.log('[Test] Step 5: 等待原型生成完成（最长150秒）');
+    console.log('[Test] Step 5: 等待原型生成完成（最长240秒）');
 
     try {
-      // 等待原型预览界面
-      await page.waitForSelector('[data-step="PROTOTYPE_PREVIEW"], text=/预览/, iframe', { timeout: 150000 });
+      // 等待进入“确认设计/预览”阶段（仅作为阶段信号，避免误判后续 iframe）
+      await page.waitForSelector('text=/确认设计|界面预览|生成代码|设计助手/', { timeout: 120000 });
 
-      console.log('[Test] ✓ 检测到原型预览界面');
+      // 等待 iframe 真正出现（跨域沙箱预览）
+      await page.waitForSelector('iframe', { timeout: 240000 });
+      console.log('[Test] ✓ 检测到 iframe 预览容器');
 
       // 等待一段时间让 SSE 请求发送
       await page.waitForTimeout(3000);
@@ -191,36 +202,19 @@ test.describe('原型SSE流式生成测试', () => {
         console.log('[Test] ⚠️  未检测到任何原型生成请求');
       }
 
-      // 尝试找到 iframe 预览
-      const iframes = page.locator('iframe');
-      const iframeCount = await iframes.count();
-      console.log('[Test] 找到', iframeCount, '个 iframe');
+      // 等待 iframe 内容加载
+      await page.waitForTimeout(5000);
 
-      if (iframeCount > 0) {
-        console.log('[Test] ✓ 原型沙箱已加载');
+      // 截图记录
+      await page.screenshot({ path: '/tmp/e2e-04-prototype-success.png', fullPage: true });
 
-        // 等待 iframe 内容加载
-        await page.waitForTimeout(5000);
-
-        // 截图记录
-        await page.screenshot({ path: '/tmp/e2e-04-prototype-success.png', fullPage: true });
-
-        // 验证确认按钮
-        const confirmButton = page.locator('button:has-text("确认"), button:has-text("下一步")');
-        const confirmVisible = await confirmButton.isVisible({ timeout: 3000 }).catch(() => false);
-
-        if (confirmVisible) {
-          console.log('[Test] ✓ 找到确认按钮');
-        } else {
-          console.log('[Test] ⚠️  未找到确认按钮');
-        }
-
-        console.log('[Test] ✅ 测试通过：原型生成成功');
-
-      } else {
-        console.log('[Test] ⚠️  未找到 iframe，原型可能以其他方式显示');
-        await page.screenshot({ path: '/tmp/e2e-04-no-iframe.png', fullPage: true });
+      // “确认设计”按钮：可能在生成完成后才可点击，存在即可
+      const confirmButton = page.getByRole('button', { name: /确认设计|确认/ }).first();
+      if (await confirmButton.isVisible().catch(() => false)) {
+        console.log('[Test] ✓ 找到确认按钮（可能仍处于disabled状态）');
       }
+
+      console.log('[Test] ✅ 测试通过：已进入预览并出现沙箱 iframe');
 
     } catch (error) {
       console.error('[Test] ✗ 原型生成超时或失败');

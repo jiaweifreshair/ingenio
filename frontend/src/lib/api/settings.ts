@@ -15,6 +15,7 @@ import type {
 } from '@/types/settings';
 import { getApiBaseUrl } from '@/lib/api/base-url';
 import { normalizeApiResponse } from '@/lib/api/response';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 const API_BASE_URL = getApiBaseUrl();
 
@@ -26,6 +27,7 @@ export async function getProjectSettings(projectId: string): Promise<ProjectSett
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
   });
@@ -55,6 +57,7 @@ export async function updateProjectSettings(
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
     body: JSON.stringify(settings),
@@ -83,6 +86,7 @@ export async function transferProject(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
     body: JSON.stringify(request),
@@ -108,6 +112,7 @@ export async function getProjectMembers(projectId: string): Promise<ProjectMembe
     method: 'GET',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
   });
@@ -137,6 +142,7 @@ export async function inviteMember(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
     body: JSON.stringify(request),
@@ -162,6 +168,7 @@ export async function removeMember(projectId: string, memberId: string): Promise
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
   });
@@ -192,6 +199,7 @@ export async function updateMemberRole(
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
+        'x-trace-id': generateTraceId(),
       },
       credentials: 'include',
       body: JSON.stringify({ role }),

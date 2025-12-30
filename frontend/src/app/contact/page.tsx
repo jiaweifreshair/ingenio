@@ -87,7 +87,7 @@ export default function ContactPage() {
                   <div className="w-4 h-4 bg-red-600 rounded-full relative z-10 border-2 border-white dark:border-slate-900"></div>
                 </div>
                 <div className="mt-2 bg-white dark:bg-slate-950 px-3 py-1.5 rounded-lg shadow-lg text-xs font-bold border border-slate-100 dark:border-slate-800 whitespace-nowrap">
-                  秒构 AI 创新中心
+                  Ingenio 妙构 创新中心
                 </div>
              </div>
           </div>

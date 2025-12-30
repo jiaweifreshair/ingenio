@@ -9,6 +9,7 @@
 import { getToken } from '@/lib/auth/token';
 import { getApiBaseUrl } from '@/lib/api/base-url';
 import { normalizeApiResponse } from '@/lib/api/response';
+import { generateTraceId } from '@/lib/api/trace-id';
 import type {
   Project,
   ProjectStats,
@@ -29,6 +30,7 @@ function buildFetchOptions(options: RequestInit = {}): RequestInit {
   const token = getToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'x-trace-id': generateTraceId(),
   };
 
   if (token) {

@@ -1,0 +1,41 @@
+# goose 忽略规则（防止敏感信息被 agent 读取/输出）
+# 说明：该文件用于 goose（block/goose）的上下文保护，不影响 git。
+
+# Git/Claude 等内部文件
+.git/
+.claude/
+
+# 环境变量与敏感配置
+.env
+.env.*
+*.env
+backend/.env
+frontend/.env
+**/.env
+**/.env.*
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/secrets.yml
+**/credentials.yml
+**/*secret*
+**/*token*
+
+# 依赖与构建产物（体积大且无意义）
+**/node_modules/
+**/.pnpm-store/
+**/.next/
+**/dist/
+**/build/
+**/coverage/
+backend/target/
+
+# 日志/运行产物
+logs/
+*.log
+nohup.out
+
+# 临时目录（避免误读/误改）
+.tmp-goose/
+

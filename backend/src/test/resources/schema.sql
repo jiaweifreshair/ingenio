@@ -1617,3 +1617,158 @@ CREATE TRIGGER update_industry_templates_updated_at
 
 -- 添加表注释
 COMMENT ON TABLE industry_templates IS '行业应用模板库 - Phase X.4';
+
+-- ==========================================
+-- V025: G3引擎核心表（测试环境版本）
+-- ==========================================
+
+-- 1. G3 Jobs（G3任务主表）
+CREATE TABLE IF NOT EXISTS g3_jobs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- 关联字段
+    app_spec_id UUID,
+    tenant_id UUID,  -- 测试环境：不设置外键约束
+    user_id UUID,
+    
+    -- 任务配置
+    requirement TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'QUEUED',
+    current_round INTEGER NOT NULL DEFAULT 0,
+    max_rounds INTEGER NOT NULL DEFAULT 3,
+    
+    -- 契约相关
+    contract_yaml TEXT,
+    db_schema_sql TEXT,
+    contract_locked BOOLEAN DEFAULT FALSE,
+    contract_locked_at TIMESTAMP,
+    
+    -- 技术栈配置
+    target_stack JSONB DEFAULT '{"backend": "spring-boot", "frontend": "react", "database": "postgresql"}'::jsonb,
+    generation_options JSONB DEFAULT '{}'::jsonb,
+    
+    -- 执行日志
+    logs JSONB DEFAULT '[]'::jsonb,
+    
+    -- E2B沙箱配置
+    sandbox_id VARCHAR(100),
+    sandbox_url VARCHAR(500),
+    sandbox_provider VARCHAR(50) DEFAULT 'e2b',
+    
+    -- 错误追踪
+    last_error TEXT,
+    error_count INTEGER DEFAULT 0,
+    
+    -- 时间戳
+    started_at TIMESTAMP,
+    completed_at TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    -- 外键约束（测试环境简化版）
+    CONSTRAINT fk_g3_jobs_app_spec FOREIGN KEY (app_spec_id) REFERENCES app_specs(id) ON DELETE SET NULL,
+    CONSTRAINT fk_g3_jobs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- G3 Jobs 索引
+CREATE INDEX idx_g3_jobs_app_spec ON g3_jobs(app_spec_id);
+CREATE INDEX idx_g3_jobs_tenant ON g3_jobs(tenant_id);
+CREATE INDEX idx_g3_jobs_user ON g3_jobs(user_id);
+CREATE INDEX idx_g3_jobs_status ON g3_jobs(status);
+CREATE INDEX idx_g3_jobs_created_at ON g3_jobs(created_at DESC);
+
+-- G3 Jobs 触发器
+CREATE TRIGGER update_g3_jobs_updated_at
+    BEFORE UPDATE ON g3_jobs
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- 2. G3 Artifacts（G3产物表）
+CREATE TABLE IF NOT EXISTS g3_artifacts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    job_id UUID NOT NULL,
+    
+    -- 产物信息
+    artifact_type VARCHAR(50) NOT NULL,
+    file_path VARCHAR(500) NOT NULL,
+    file_name VARCHAR(200) NOT NULL,
+    content TEXT NOT NULL,
+    language VARCHAR(20) NOT NULL DEFAULT 'java',
+    
+    -- 版本控制
+    version INTEGER NOT NULL DEFAULT 1,
+    checksum VARCHAR(64),
+    parent_artifact_id UUID,
+    
+    -- 验证状态
+    has_errors BOOLEAN DEFAULT FALSE,
+    compiler_output TEXT,
+    validated_at TIMESTAMP,
+    
+    -- 生成信息
+    generated_by VARCHAR(50),
+    generation_round INTEGER,
+    
+    -- 时间戳
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    -- 外键约束
+    CONSTRAINT fk_g3_artifacts_job FOREIGN KEY (job_id) REFERENCES g3_jobs(id) ON DELETE CASCADE,
+    CONSTRAINT fk_g3_artifacts_parent FOREIGN KEY (parent_artifact_id) REFERENCES g3_artifacts(id) ON DELETE SET NULL
+);
+
+-- G3 Artifacts 索引
+CREATE INDEX idx_g3_artifacts_job ON g3_artifacts(job_id);
+CREATE INDEX idx_g3_artifacts_type ON g3_artifacts(artifact_type);
+CREATE INDEX idx_g3_artifacts_has_errors ON g3_artifacts(has_errors);
+CREATE INDEX idx_g3_artifacts_file_path ON g3_artifacts(file_path);
+CREATE INDEX idx_g3_artifacts_generation_round ON g3_artifacts(generation_round);
+
+-- G3 Artifacts 触发器
+CREATE TRIGGER update_g3_artifacts_updated_at
+    BEFORE UPDATE ON g3_artifacts
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- 3. G3 Validation Results（验证结果表）
+CREATE TABLE IF NOT EXISTS g3_validation_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    job_id UUID NOT NULL,
+    round INTEGER NOT NULL,
+    
+    -- 验证结果
+    validation_type VARCHAR(50) NOT NULL,
+    passed BOOLEAN NOT NULL DEFAULT FALSE,
+    
+    -- 详细信息
+    command VARCHAR(500),
+    exit_code INTEGER,
+    stdout TEXT,
+    stderr TEXT,
+    duration_ms INTEGER,
+    
+    -- 解析后的错误
+    parsed_errors JSONB DEFAULT '[]'::jsonb,
+    error_count INTEGER DEFAULT 0,
+    warning_count INTEGER DEFAULT 0,
+    
+    -- 时间戳
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    -- 外键约束
+    CONSTRAINT fk_g3_validation_results_job FOREIGN KEY (job_id) REFERENCES g3_jobs(id) ON DELETE CASCADE
+);
+
+-- G3 Validation Results 索引
+CREATE INDEX idx_g3_validation_results_job ON g3_validation_results(job_id);
+CREATE INDEX idx_g3_validation_results_round ON g3_validation_results(round);
+CREATE INDEX idx_g3_validation_results_type ON g3_validation_results(validation_type);
+CREATE INDEX idx_g3_validation_results_passed ON g3_validation_results(passed);
+
+-- 表注释
+COMMENT ON TABLE g3_jobs IS 'G3引擎任务主表 - 存储代码生成任务的状态、配置和日志';
+COMMENT ON TABLE g3_artifacts IS 'G3引擎产物表 - 存储每轮生成的代码文件';
+COMMENT ON TABLE g3_validation_results IS 'G3引擎验证结果表 - 存储每次沙箱验证的详细结果';

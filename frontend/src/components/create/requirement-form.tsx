@@ -84,6 +84,8 @@ export function RequirementForm(): React.ReactElement {
     loadedTemplate,
     routingResult,
     setRequirement,
+    g3Logs,
+    setG3Logs,
     setSelectedModel,
     setLoading,
     setShowSuccess,
@@ -112,6 +114,7 @@ export function RequirementForm(): React.ReactElement {
     setShowSuccess,
     routingResult,
     setRoutingResult,
+    setG3Logs,
   });
 
   /**
@@ -240,6 +243,7 @@ export function RequirementForm(): React.ReactElement {
             onBack={handleStyleCancel}
             loading={loading}
             error={analysisError}
+            g3Logs={g3Logs}
           />
         ) : showAnalysis ? (
           /* 分析面板：左右分屏布局 */

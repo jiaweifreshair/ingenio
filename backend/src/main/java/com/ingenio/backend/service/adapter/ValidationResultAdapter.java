@@ -1,6 +1,7 @@
 package com.ingenio.backend.service.adapter;
 
 import com.ingenio.backend.dto.CompilationResult;
+import com.ingenio.backend.dto.TestResult;
 import com.ingenio.backend.dto.response.validation.ValidationResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -347,5 +348,334 @@ public class ValidationResultAdapter {
                 .durationMs(totalDurationMs)
                 .completedAt(Instant.now())
                 .build();
+    }
+
+    /**
+     * 将TestResult转换为ValidationResponse（Phase 2扩展）
+     *
+     * 转换逻辑：
+     * 1. allPassed → passed
+     * 2. allPassed → status (PASSED/FAILED)
+     * 3. 通过率 + 覆盖率 → qualityScore
+     * 4. TestFailure列表 → String错误消息列表
+     * 5. 构建详情Map（包含framework、totalTests、passedTests等）
+     *
+     * @param testResult 测试结果
+     * @param appSpecId AppSpec ID（用于关联）
+     * @return 验证响应
+     */
+    public ValidationResponse toValidationResponseFromTestResult(
+            TestResult testResult,
+            UUID appSpecId
+    ) {
+        log.info("开始适配TestResult → ValidationResponse: allPassed={}, totalTests={}, coverage={}",
+                testResult.getAllPassed(),
+                testResult.getTotalTests(),
+                testResult.getCoverage());
+
+        // 1. 生成验证ID和时间戳
+        UUID validationId = UUID.randomUUID();
+        Instant completedAt = Instant.now();
+
+        // 2. 确定验证状态
+        String status = testResult.getAllPassed() ? "PASSED" : "FAILED";
+
+        // 3. 计算质量评分（基于通过率和覆盖率）
+        int qualityScore = calculateTestQualityScore(
+                testResult.getAllPassed(),
+                testResult.getPassRate(),
+                testResult.getCoverage()
+        );
+
+        // 4. 转换失败的测试用例为错误消息
+        List<String> errors = convertTestFailures(testResult.getFailures());
+
+        // 5. 警告消息（测试场景主要关注失败，警告较少）
+        List<String> warnings = new ArrayList<>();
+        if (!testResult.getAllPassed() && testResult.getCoverage() != null && testResult.getCoverage() < 0.85) {
+            warnings.add(String.format("测试覆盖率不足：%.2f%% （要求≥85%%）", testResult.getCoverage() * 100));
+        }
+
+        // 6. 构建详情Map
+        Map<String, Object> details = buildTestDetails(testResult, appSpecId);
+
+        // 7. 构建ValidationResponse
+        ValidationResponse response = ValidationResponse.builder()
+                .validationId(validationId)
+                .validationType(testResult.getTestType()) // "unit" / "integration" / "e2e"
+                .passed(testResult.getAllPassed())
+                .status(status)
+                .qualityScore(qualityScore)
+                .details(details)
+                .errors(errors)
+                .warnings(warnings)
+                .durationMs(testResult.getDurationMs())
+                .completedAt(completedAt)
+                .build();
+
+        log.info("测试结果适配完成: validationId={}, passed={}, qualityScore={}, errors={}, coverage={}",
+                validationId, response.getPassed(), qualityScore, errors.size(), testResult.getCoverage());
+
+        return response;
+    }
+
+    /**
+     * 计算测试质量评分
+     *
+     * 评分规则：
+     * - 基础分: 通过率 × 50
+     * - 覆盖率加分: 覆盖率 × 50
+     * - 全部通过且覆盖率≥85%: 100分
+     * - 全部通过但覆盖率<85%: 50-99分
+     * - 有失败: 0-49分
+     *
+     * @param allPassed 是否全部通过
+     * @param passRate 通过率（0-1）
+     * @param coverage 覆盖率（0-1，可能为null）
+     * @return 质量评分（0-100）
+     */
+    private int calculateTestQualityScore(boolean allPassed, double passRate, Double coverage) {
+        int score = 0;
+
+        // 基础分：通过率 × 50
+        score += (int) (passRate * 50);
+
+        // 覆盖率加分：覆盖率 × 50
+        if (coverage != null) {
+            score += (int) (coverage * 50);
+        }
+
+        // 特殊奖励：全部通过且覆盖率≥85% = 满分
+        if (allPassed && coverage != null && coverage >= 0.85) {
+            score = 100;
+        }
+
+        // 确保分数在0-100范围内
+        score = Math.max(0, Math.min(100, score));
+
+        log.debug("测试质量评分计算: allPassed={}, passRate={}, coverage={}, score={}",
+                allPassed, passRate, coverage, score);
+
+        return score;
+    }
+
+    /**
+     * 转换测试失败用例为错误消息列表
+     *
+     * 格式: "[套件名] 测试名 - 失败消息"
+     * 示例: "[UserService] should create user - Expected 201 but got 500"
+     *
+     * @param failures 测试失败列表
+     * @return 错误消息列表
+     */
+    private List<String> convertTestFailures(List<TestResult.TestFailure> failures) {
+        if (failures == null || failures.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        return failures.stream()
+                .map(this::formatTestFailure)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 格式化单个测试失败
+     */
+    private String formatTestFailure(TestResult.TestFailure failure) {
+        StringBuilder sb = new StringBuilder();
+
+        // [套件名]
+        if (failure.getSuiteName() != null) {
+            sb.append("[").append(failure.getSuiteName()).append("] ");
+        }
+
+        // 测试名
+        if (failure.getTestName() != null) {
+            sb.append(failure.getTestName());
+        }
+
+        // 失败消息
+        if (failure.getMessage() != null) {
+            sb.append(" - ").append(failure.getMessage());
+        }
+
+        // 预期值 vs 实际值（如果有）
+        if (failure.getExpected() != null && failure.getActual() != null) {
+            sb.append(String.format(" (Expected: %s, Actual: %s)",
+                    failure.getExpected(), failure.getActual()));
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * 构建测试详情Map
+     *
+     * 包含的信息：
+     * - appSpecId: 应用规格ID
+     * - framework: 测试框架（JUnit/Vitest/Playwright）
+     * - testType: 测试类型（unit/integration/e2e）
+     * - totalTests: 总测试数
+     * - passedTests: 通过的测试数
+     * - failedTests: 失败的测试数
+     * - skippedTests: 跳过的测试数
+     * - passRate: 通过率
+     * - coverage: 总覆盖率
+     * - lineCoverage: 行覆盖率
+     * - branchCoverage: 分支覆盖率
+     * - reportPath: 测试报告路径
+     *
+     * @param testResult 测试结果
+     * @param appSpecId AppSpec ID
+     * @return 详情Map
+     */
+    private Map<String, Object> buildTestDetails(TestResult testResult, UUID appSpecId) {
+        Map<String, Object> details = new HashMap<>();
+
+        details.put("appSpecId", appSpecId.toString());
+        details.put("framework", testResult.getFramework());
+        details.put("testType", testResult.getTestType());
+        details.put("totalTests", testResult.getTotalTests());
+        details.put("passedTests", testResult.getPassedTests());
+        details.put("failedTests", testResult.getFailedTests());
+        details.put("skippedTests", testResult.getSkippedTests());
+        details.put("passRate", testResult.getPassRate());
+
+        // 覆盖率信息（可能为null）
+        if (testResult.getCoverage() != null) {
+            details.put("coverage", testResult.getCoverage());
+        }
+        if (testResult.getLineCoverage() != null) {
+            details.put("lineCoverage", testResult.getLineCoverage());
+        }
+        if (testResult.getBranchCoverage() != null) {
+            details.put("branchCoverage", testResult.getBranchCoverage());
+        }
+        if (testResult.getFunctionCoverage() != null) {
+            details.put("functionCoverage", testResult.getFunctionCoverage());
+        }
+
+        // 测试报告路径
+        if (testResult.getReportPath() != null) {
+            details.put("reportPath", testResult.getReportPath());
+        }
+
+        // 仅在有失败时包含完整输出（截断）
+        if (!testResult.getAllPassed() && testResult.getFullOutput() != null) {
+            String fullOutput = testResult.getFullOutput();
+            if (fullOutput.length() > 5000) {
+                fullOutput = fullOutput.substring(0, 5000) + "\n... (输出被截断)";
+            }
+            details.put("fullOutput", fullOutput);
+        }
+
+        return details;
+    }
+
+    /**
+     * 将CoverageResult转换为ValidationResponse（Phase 3扩展）
+     *
+     * 转换逻辑：
+     * 1. meetsQualityGate → passed
+     * 2. meetsQualityGate → status (PASSED/FAILED)
+     * 3. overallCoverage → qualityScore（0-100分）
+     * 4. 构建详情Map（包含lineCoverage、branchCoverage等）
+     *
+     * @param coverageResult 覆盖率结果
+     * @param appSpecId AppSpec ID（用于关联）
+     * @return 验证响应
+     */
+    public ValidationResponse toValidationResponseFromCoverageResult(
+            com.ingenio.backend.dto.CoverageResult coverageResult,
+            UUID appSpecId
+    ) {
+        log.info("开始适配CoverageResult → ValidationResponse: tool={}, overallCoverage={}, meetsQualityGate={}",
+                coverageResult.getTool(),
+                coverageResult.getOverallCoverage(),
+                coverageResult.getMeetsQualityGate());
+
+        // 1. 生成验证ID和时间戳
+        UUID validationId = UUID.randomUUID();
+        Instant completedAt = Instant.now();
+
+        // 2. 确定验证状态（基于质量门禁）
+        String status = coverageResult.getMeetsQualityGate() ? "PASSED" : "FAILED";
+
+        // 3. 计算质量评分（直接使用覆盖率百分比）
+        int qualityScore = (int) (coverageResult.getOverallCoverage() * 100);
+
+        // 4. 警告消息（覆盖率不足时）
+        List<String> warnings = new ArrayList<>();
+        if (!coverageResult.getMeetsQualityGate()) {
+            warnings.add(String.format("代码覆盖率不足：%.2f%% （要求≥85%%）",
+                    coverageResult.getOverallCoverage() * 100));
+        }
+
+        // 5. 构建详情Map
+        Map<String, Object> details = buildCoverageDetails(coverageResult, appSpecId);
+
+        // 6. 构建ValidationResponse
+        ValidationResponse response = ValidationResponse.builder()
+                .validationId(validationId)
+                .validationType("coverage")
+                .passed(coverageResult.getMeetsQualityGate())
+                .status(status)
+                .qualityScore(qualityScore)
+                .details(details)
+                .errors(new ArrayList<>()) // 覆盖率验证通常不产生编译错误
+                .warnings(warnings)
+                .durationMs(0L) // CoverageResult不包含耗时信息
+                .completedAt(completedAt)
+                .build();
+
+        log.info("覆盖率结果适配完成: validationId={}, passed={}, qualityScore={}",
+                validationId, response.getPassed(), qualityScore);
+
+        return response;
+    }
+
+    /**
+     * 构建覆盖率详情Map
+     *
+     * 包含的信息：
+     * - appSpecId: 应用规格ID
+     * - projectType: 项目类型（nextjs/spring-boot/kmp）
+     * - tool: 覆盖率工具（istanbul/jacoco/kover）
+     * - overallCoverage: 总体覆盖率
+     * - lineCoverage: 行覆盖率
+     * - branchCoverage: 分支覆盖率
+     * - functionCoverage: 函数覆盖率
+     * - statementCoverage: 语句覆盖率（仅JavaScript/TypeScript）
+     * - reportPath: 覆盖率报告路径
+     *
+     * @param coverageResult 覆盖率结果
+     * @param appSpecId AppSpec ID
+     * @return 详情Map
+     */
+    private Map<String, Object> buildCoverageDetails(
+            com.ingenio.backend.dto.CoverageResult coverageResult,
+            UUID appSpecId
+    ) {
+        Map<String, Object> details = new HashMap<>();
+
+        details.put("appSpecId", appSpecId.toString());
+        details.put("projectType", coverageResult.getProjectType());
+        details.put("tool", coverageResult.getTool());
+        details.put("overallCoverage", coverageResult.getOverallCoverage());
+        details.put("lineCoverage", coverageResult.getLineCoverage());
+        details.put("branchCoverage", coverageResult.getBranchCoverage());
+        details.put("functionCoverage", coverageResult.getFunctionCoverage());
+
+        // 语句覆盖率（仅Istanbul提供）
+        if (coverageResult.getStatementCoverage() != null) {
+            details.put("statementCoverage", coverageResult.getStatementCoverage());
+        }
+
+        // 覆盖率报告路径
+        if (coverageResult.getReportPath() != null) {
+            details.put("reportPath", coverageResult.getReportPath());
+        }
+
+        return details;
     }
 }

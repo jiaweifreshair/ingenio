@@ -14,6 +14,7 @@ import type {
 } from '@/types/design-style';
 import { getApiBaseUrl } from '@/lib/api/base-url';
 import { normalizeApiResponse } from '@/lib/api/response';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 /**
  * API基础URL配置
@@ -67,6 +68,7 @@ export async function generate7StylePreviews(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-trace-id': generateTraceId(),
       },
       body: JSON.stringify(request),
     });
@@ -133,7 +135,11 @@ export async function checkStyleServiceHealth(): Promise<{
   message: string;
 }> {
   try {
-    const response = await fetch(`${API_BASE_URL}/v1/styles/health`);
+    const response = await fetch(`${API_BASE_URL}/v1/styles/health`, {
+      headers: {
+        'x-trace-id': generateTraceId(),
+      },
+    });
 
     if (!response.ok) {
       return {

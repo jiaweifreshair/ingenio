@@ -181,11 +181,6 @@ springdoc:
   api-docs:
     enabled: true
     path: /api-docs
-  swagger-ui:
-    enabled: true
-    path: /swagger-ui.html
-    operations-sorter: method
-  packages-to-scan: com.ingenio.backend.controller
 
 # Actuator监控配置
 management:
@@ -221,6 +216,8 @@ logging:
     org.springframework.ai: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] [%X{traceId}] %-5level %logger{36} - %msg%n"
+    # 文件日志同样输出 traceId，确保可从日志文件中反查单次请求链路
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] [%X{traceId}] %-5level %logger{36} - %msg%n"
   file:
     name: logs/ingenio-backend.log
     max-size: 100MB
@@ -228,11 +225,15 @@ logging:
 
 # 应用自定义配置
 ingenio:
-  # Agent配置（使用七牛云DeepSeek-R1模型）
+  admin:
+    service-jwt:
+      enabled: true
+      # 临时密钥，用于开发和测试环境。生产环境必须通过环境变量覆盖！
+      secret-key: "my-super-secret-key-for-testing-only-1234567890"
+      issuer: "ingenio-internal"
+      audience: "ingenio-admin-api"
+      clock-skew-seconds: 60
   agent:
-    # Agent版本切换（Feature Flag模式）
-    # V1: ExecuteAgentV1KuiklyImpl (Kuikly平台AppSpec生成器，生产环境默认)
-    # V2: ExecuteAgentV2FullStackImpl (全栈多端代码生成器，Phase 2-8开发中)
     version: V2
     plan:
       model: deepseek/deepseek-v3.2-251201
@@ -246,46 +247,33 @@ ingenio:
       model: deepseek/deepseek-v3.2-251201
       temperature: 0.5
       max-tokens: 2000
-
-  # 代码生成配置
   codegen:
     default-renderer: kuikly-ui
     default-framework: taro
     preview-base-url: ${PREVIEW_BASE_URL:http://localhost:3000}
-
-  # 租户配置
   tenant:
     enabled: true
     default-tenant-id: 00000000-0000-0000-0000-000000000001
-
-  # 限流配置
   rate-limit:
     enabled: true
-    # 每分钟最大请求数
     requests-per-minute: 60
-    # AI调用每小时最大次数
     ai-calls-per-hour: 100
-
-  # 多端发布配置
   publish:
-    # 构建状态管理
     build-status:
-      # Redis TTL（天）- 与MinIO生命周期一致
       ttl-days: 30
-      # Redis Key前缀 (使用引号包裹包含冒号的值)
       key-prefix: "ingenio:publish:build:"
-      # 是否启用Redis持久化
       redis-enabled: true
-
-  # 代码生成任务配置
   generation:
-    # 任务状态管理
     task-status:
-      # Redis Key前缀
       key-prefix: "ingenio:generation:task:"
-      # 运行中任务的缓存时间（小时）
       running-ttl-hours: 1
-      # 已完成任务的缓存时间（小时）
       completed-ttl-hours: 24
-      # 是否启用Redis持久化
       redis-enabled: true
+  # G3引擎配置（Generate-Check-Fix自修复引擎）
+  g3:
+    engine-url: ${G3_ENGINE_URL:http://localhost:8000}
+    sandbox:
+      provider: e2b
+      e2b-api-key: ${E2B_API_KEY:}
+      compile-timeout: 300
+      max-rounds: 3

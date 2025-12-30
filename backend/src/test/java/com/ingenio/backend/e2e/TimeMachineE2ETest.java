@@ -71,8 +71,10 @@ public class TimeMachineE2ETest extends BaseE2ETest {
 
         // 创建测试用户（满足外键约束）
         testTenantId = UUID.randomUUID();
+        testUserId = UUID.randomUUID(); // 提前生成UUID
         long timestamp = System.currentTimeMillis();
         UserEntity testUser = UserEntity.builder()
+            .id(testUserId) // 修复：设置用户ID，避免数据库NOT NULL约束错误
             .tenantId(testTenantId)
             .username("test-user-" + timestamp)
             .email("test-" + timestamp + "@ingenio.test") // 动态email避免唯一约束冲突
@@ -81,7 +83,6 @@ public class TimeMachineE2ETest extends BaseE2ETest {
             .updatedAt(Instant.now())
             .build();
         userMapper.insert(testUser);
-        testUserId = testUser.getId();
 
         // 创建测试任务
         testTaskId = UUID.randomUUID();

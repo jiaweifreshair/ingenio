@@ -8,6 +8,7 @@
 
 import { post, get, type APIResponse } from './client';
 import { getApiBaseUrl } from './base-url';
+import { generateTraceId } from './trace-id';
 import { AICapabilityType } from '@/types/ai-capability';
 
 /**
@@ -85,6 +86,7 @@ export async function downloadGeneratedCode(taskId: string): Promise<Blob> {
     method: 'GET',
     headers: {
       'Content-Type': 'application/zip',
+      'x-trace-id': generateTraceId(),
     },
   });
 

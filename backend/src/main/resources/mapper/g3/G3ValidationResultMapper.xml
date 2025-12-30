@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ingenio.backend.mapper.g3.G3ValidationResultMapper">
+
+    <!-- 结果映射 -->
+    <resultMap id="G3ValidationResultMap" type="com.ingenio.backend.entity.g3.G3ValidationResultEntity">
+        <id column="id" property="id" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="job_id" property="jobId" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="round" property="round"/>
+        <result column="validation_type" property="validationType"/>
+        <result column="passed" property="passed"/>
+        <result column="command" property="command"/>
+        <result column="exit_code" property="exitCode"/>
+        <result column="stdout" property="stdout"/>
+        <result column="stderr" property="stderr"/>
+        <result column="duration_ms" property="durationMs"/>
+        <result column="parsed_errors" property="parsedErrors" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler"/>
+        <result column="error_count" property="errorCount"/>
+        <result column="warning_count" property="warningCount"/>
+        <result column="created_at" property="createdAt"/>
+    </resultMap>
+
+    <!-- 根据任务ID查询 -->
+    <select id="selectByJobId" resultMap="G3ValidationResultMap">
+        SELECT * FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+        ORDER BY round, created_at
+    </select>
+
+    <!-- 根据任务ID和轮次查询 -->
+    <select id="selectByJobIdAndRound" resultMap="G3ValidationResultMap">
+        SELECT * FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND round = #{round}
+        ORDER BY created_at
+    </select>
+
+    <!-- 查询最新一轮验证结果 -->
+    <select id="selectLatestByJobId" resultMap="G3ValidationResultMap">
+        SELECT * FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND round = (
+              SELECT MAX(round) FROM g3_validation_results
+              WHERE job_id = CAST(#{jobId} AS UUID)
+          )
+        ORDER BY created_at
+    </select>
+
+    <!-- 根据任务ID和类型查询 -->
+    <select id="selectByJobIdAndType" resultMap="G3ValidationResultMap">
+        SELECT * FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND validation_type = #{validationType}
+        ORDER BY round, created_at
+    </select>
+
+    <!-- 查询失败的验证结果 -->
+    <select id="selectFailedByJobId" resultMap="G3ValidationResultMap">
+        SELECT * FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND passed = FALSE
+        ORDER BY round, created_at
+    </select>
+
+    <!-- 查询某轮次失败的验证结果 -->
+    <select id="selectFailedByJobIdAndRound" resultMap="G3ValidationResultMap">
+        SELECT * FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND round = #{round}
+          AND passed = FALSE
+        ORDER BY created_at
+    </select>
+
+    <!-- 检查某轮次是否全部通过 -->
+    <select id="isAllPassedByJobIdAndRound" resultType="java.lang.Boolean">
+        SELECT CASE WHEN COUNT(*) = 0 THEN TRUE
+                    ELSE NOT EXISTS (
+                        SELECT 1 FROM g3_validation_results
+                        WHERE job_id = CAST(#{jobId} AS UUID)
+                          AND round = #{round}
+                          AND passed = FALSE
+                    )
+               END
+        FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND round = #{round}
+    </select>
+
+    <!-- 统计通过次数 -->
+    <select id="countPassedByJobId" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND passed = TRUE
+    </select>
+
+    <!-- 统计失败次数 -->
+    <select id="countFailedByJobId" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND passed = FALSE
+    </select>
+
+    <!-- 删除任务的所有验证结果 -->
+    <delete id="deleteByJobId">
+        DELETE FROM g3_validation_results
+        WHERE job_id = CAST(#{jobId} AS UUID)
+    </delete>
+
+</mapper>

@@ -736,9 +736,9 @@ export function HeroBanner({
 
         {/* Main Title */}
         <h1 className="text-3xl md:text-5xl font-bold text-center tracking-tight text-slate-900 dark:text-slate-50 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-600 dark:from-white dark:to-slate-400">
-          你的创意，AI 来实现 <br />
+          你的创意，AI 实现 <br />
           <span className="text-xl md:text-3xl font-normal text-slate-500 dark:text-slate-400 mt-4 block">
-            让每个想法都长成应用
+            自然语言 · 精准构建 · 增长助力
           </span>
         </h1>
 

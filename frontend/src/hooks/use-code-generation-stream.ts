@@ -22,6 +22,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import { getToken } from '@/lib/auth/token';
 
 import { getApiBaseUrl } from '@/lib/api/base-url';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 /**
  * 生成的文件信息
@@ -360,7 +361,8 @@ export function useCodeGenerationStream(options: UseCodeGenerationStreamOptions)
         headers: {
           'Content-Type': 'application/json',
           'Accept': 'text/event-stream',
-          ...(token && { 'Authorization': `Bearer ${token}` })
+          'X-Trace-Id': generateTraceId(),
+          ...(token && { 'Authorization': token })
         },
         body: JSON.stringify({
           appSpecId,

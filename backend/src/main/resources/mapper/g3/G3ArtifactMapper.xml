@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ingenio.backend.mapper.g3.G3ArtifactMapper">
+
+    <!-- 结果映射 -->
+    <resultMap id="G3ArtifactResultMap" type="com.ingenio.backend.entity.g3.G3ArtifactEntity">
+        <id column="id" property="id" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="job_id" property="jobId" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="artifact_type" property="artifactType"/>
+        <result column="file_path" property="filePath"/>
+        <result column="file_name" property="fileName"/>
+        <result column="content" property="content"/>
+        <result column="language" property="language"/>
+        <result column="version" property="version"/>
+        <result column="checksum" property="checksum"/>
+        <result column="parent_artifact_id" property="parentArtifactId" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="has_errors" property="hasErrors"/>
+        <result column="compiler_output" property="compilerOutput"/>
+        <result column="validated_at" property="validatedAt"/>
+        <result column="generated_by" property="generatedBy"/>
+        <result column="generation_round" property="generationRound"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <!-- 根据任务ID查询 -->
+    <select id="selectByJobId" resultMap="G3ArtifactResultMap">
+        SELECT * FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+        ORDER BY file_path, version DESC
+    </select>
+
+    <!-- 根据任务ID和轮次查询 -->
+    <select id="selectByJobIdAndRound" resultMap="G3ArtifactResultMap">
+        SELECT * FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND generation_round = #{generationRound}
+        ORDER BY file_path
+    </select>
+
+    <!-- 查询最新版本产物 -->
+    <select id="selectLatestByJobId" resultMap="G3ArtifactResultMap">
+        SELECT DISTINCT ON (file_path) *
+        FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+        ORDER BY file_path, version DESC
+    </select>
+
+    <!-- 根据任务ID和类型查询 -->
+    <select id="selectByJobIdAndType" resultMap="G3ArtifactResultMap">
+        SELECT * FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND artifact_type = #{artifactType}
+        ORDER BY file_path, version DESC
+    </select>
+
+    <!-- 根据任务ID和文件路径查询 -->
+    <select id="selectByJobIdAndFilePath" resultMap="G3ArtifactResultMap">
+        SELECT * FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND file_path = #{filePath}
+        ORDER BY version DESC
+        LIMIT 1
+    </select>
+
+    <!-- 查询最新版本（按文件路径） -->
+    <select id="selectLatestByJobIdAndFilePath" resultMap="G3ArtifactResultMap">
+        SELECT * FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND file_path = #{filePath}
+        ORDER BY version DESC
+        LIMIT 1
+    </select>
+
+    <!-- 查询有错误的产物 -->
+    <select id="selectWithErrors" resultMap="G3ArtifactResultMap">
+        SELECT * FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND has_errors = TRUE
+        ORDER BY file_path
+    </select>
+
+    <!-- 查询某轮次有错误的产物 -->
+    <select id="selectWithErrorsByRound" resultMap="G3ArtifactResultMap">
+        SELECT * FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND generation_round = #{generationRound}
+          AND has_errors = TRUE
+        ORDER BY file_path
+    </select>
+
+    <!-- 标记错误 -->
+    <update id="markError">
+        UPDATE g3_artifacts
+        SET has_errors = TRUE,
+            compiler_output = #{compilerOutput},
+            validated_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{artifactId} AS UUID)
+    </update>
+
+    <!-- 标记验证通过 -->
+    <update id="markValid">
+        UPDATE g3_artifacts
+        SET has_errors = FALSE,
+            compiler_output = NULL,
+            validated_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{artifactId} AS UUID)
+    </update>
+
+    <!-- 批量标记验证通过 -->
+    <update id="batchMarkValid">
+        UPDATE g3_artifacts
+        SET has_errors = FALSE,
+            compiler_output = NULL,
+            validated_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id IN
+        <foreach collection="artifactIds" item="id" open="(" separator="," close=")">
+            CAST(#{id} AS UUID)
+        </foreach>
+    </update>
+
+    <!-- 批量插入 -->
+    <insert id="batchInsert">
+        INSERT INTO g3_artifacts (
+            id, job_id, artifact_type, file_path, file_name,
+            content, language, version, checksum, parent_artifact_id,
+            has_errors, generated_by, generation_round, created_at, updated_at
+        ) VALUES
+        <foreach collection="artifacts" item="a" separator=",">
+            (
+                gen_random_uuid(),
+                CAST(#{a.jobId} AS UUID),
+                #{a.artifactType},
+                #{a.filePath},
+                #{a.fileName},
+                #{a.content},
+                #{a.language},
+                #{a.version},
+                #{a.checksum},
+                <choose>
+                    <when test="a.parentArtifactId != null">CAST(#{a.parentArtifactId} AS UUID)</when>
+                    <otherwise>NULL</otherwise>
+                </choose>,
+                COALESCE(#{a.hasErrors}, FALSE),
+                #{a.generatedBy},
+                #{a.generationRound},
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )
+        </foreach>
+    </insert>
+
+    <!-- 删除任务的所有产物 -->
+    <delete id="deleteByJobId">
+        DELETE FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+    </delete>
+
+    <!-- 统计产物数量 -->
+    <select id="countByJobId" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+    </select>
+
+    <!-- 统计错误产物数量 -->
+    <select id="countErrorsByJobId" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM g3_artifacts
+        WHERE job_id = CAST(#{jobId} AS UUID)
+          AND has_errors = TRUE
+    </select>
+
+    <!-- 查询修复历史链 -->
+    <select id="selectRepairHistory" resultMap="G3ArtifactResultMap">
+        WITH RECURSIVE history AS (
+            SELECT * FROM g3_artifacts WHERE id = CAST(#{artifactId} AS UUID)
+            UNION ALL
+            SELECT a.* FROM g3_artifacts a
+            INNER JOIN history h ON a.id = h.parent_artifact_id
+        )
+        SELECT * FROM history ORDER BY version ASC
+    </select>
+
+</mapper>

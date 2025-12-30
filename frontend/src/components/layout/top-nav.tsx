@@ -126,7 +126,7 @@ export function TopNav(): React.ReactElement {
         <div className="mr-8 flex">
           <Link href="/" className="flex items-center space-x-2">
             <div className="h-6 w-6 rounded-md bg-primary" />
-            <span className="hidden font-semibold sm:inline-block text-foreground tracking-tight">秒构AI</span>
+            <span className="hidden font-semibold sm:inline-block text-foreground tracking-tight">Ingenio 妙构</span>
           </Link>
         </div>
 
@@ -154,7 +154,7 @@ export function TopNav(): React.ReactElement {
             </SheetTrigger>
             <SheetContent side="left" className="w-[280px] sm:w-[320px]">
               <SheetHeader>
-                <SheetTitle>秒构AI</SheetTitle>
+                <SheetTitle>Ingenio 妙构</SheetTitle>
               </SheetHeader>
 
               {/* 导航链接列表 */}

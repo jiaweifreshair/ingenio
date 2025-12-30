@@ -12,6 +12,7 @@ import type { IntentClassificationResult } from '@/types/intent';
 import { RequirementIntent } from '@/types/intent';
 import { getToken } from '@/lib/auth/token';
 import { getApiBaseUrl } from '@/lib/api/base-url';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 /**
  * 意图识别请求接口
@@ -259,6 +260,7 @@ export async function classifyIntentStream(
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'text/event-stream',
+        'x-trace-id': generateTraceId(),
         ...(token ? { 'Authorization': token } : {})
       },
       body: JSON.stringify(request)

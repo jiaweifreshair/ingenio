@@ -25,6 +25,9 @@ export const UNIAIX_MODELS = {
   // MiniMax
   MINIMAX_ABAB: 'abab6-chat',
   MINIMAX_ABAB_PRO: 'abab6.5-chat',
+
+  // Google Gemini
+  GEMINI_3_PRO_PREVIEW: 'gemini-3-pro-preview',
 } as const;
 
 export type UniaixModel = typeof UNIAIX_MODELS[keyof typeof UNIAIX_MODELS];
@@ -45,6 +48,14 @@ export interface ModelConfig {
  * 所有模型的配置信息
  */
 export const MODEL_CONFIGS: ModelConfig[] = [
+  {
+    id: UNIAIX_MODELS.GEMINI_3_PRO_PREVIEW,
+    name: 'Gemini 3.0 Pro Preview',
+    provider: 'Google',
+    contextWindow: 2000000, // 2M token context
+    description: 'Google下一代旗舰模型预览版,具备更强的推理与多模态能力',
+    recommended: true,
+  },
   {
     id: UNIAIX_MODELS.QWEN_MAX,
     name: 'Qwen Max',

@@ -83,7 +83,7 @@ export async function getCategories(): Promise<CategoryMeta[]> {
 
   // 真实API调用
   try {
-    const response = await get<CategoryMeta[]>('/api/v1/templates/categories');
+    const response = await get<CategoryMeta[]>('/v1/templates/categories');
 
     if (!response.success || !response.data) {
       throw new Error(response.error || '获取分类列表失败');
@@ -138,15 +138,34 @@ export async function queryTemplates(
     if (params.pageSize) queryParams.set('pageSize', String(params.pageSize));
 
     const queryString = queryParams.toString();
-    const url = queryString ? `/api/v1/templates?${queryString}` : '/api/v1/templates';
+    const url = queryString ? `/v1/templates?${queryString}` : '/v1/templates';
 
-    const response = await get<TemplatePageResponse>(url);
+    const response = await get<TemplatePageResponse | Template[]>(url);
 
     if (!response.success || !response.data) {
       throw new Error(response.error || '查询模板列表失败');
     }
 
-    return response.data;
+    // 兼容后端返回数组的情况（后端暂时未实现完整分页结构）
+    if (Array.isArray(response.data)) {
+      const items = response.data as Template[];
+      const page = params.page || 1;
+      const pageSize = params.pageSize || 50;
+      
+      // 注意：后端目前返回的是 limit 限制后的列表，无法得知真实 total
+      // 暂时假设 total = items.length (如果是第一页且不满pageSize) 或 items.length + 1 (暗示还有下一页)
+      // 这里的逻辑主要是为了让前端不报错
+      
+      return {
+        items,
+        total: items.length, // 临时：因为后端没返回总数
+        page,
+        pageSize,
+        totalPages: 1, // 临时：假设只有一页
+      };
+    }
+
+    return response.data as TemplatePageResponse;
   } catch (error) {
     console.error('[Templates API] 查询模板列表失败:', error);
     throw error;
@@ -252,7 +271,7 @@ export async function getTemplateById(id: string): Promise<Template | null> {
 
   // 真实API调用
   try {
-    const response = await get<Template>(`/api/v1/templates/${id}`);
+    const response = await get<Template>(`/v1/templates/${id}`);
 
     if (!response.success) {
       if (response.error?.includes('404') || response.error?.includes('not found')) {
@@ -289,7 +308,7 @@ export async function useTemplate(id: string): Promise<void> {
 
   // 真实API调用
   try {
-    const response = await post<void>(`/api/v1/templates/${id}/use`, {});
+    const response = await post<void>(`/v1/templates/${id}/use`, {});
 
     if (!response.success) {
       throw new Error(response.error || '更新使用次数失败');
@@ -317,7 +336,7 @@ export async function favoriteTemplate(id: string): Promise<void> {
 
   // 真实API调用
   try {
-    const response = await post<void>(`/api/v1/templates/${id}/favorite`, {});
+    const response = await post<void>(`/v1/templates/${id}/favorite`, {});
 
     if (!response.success) {
       throw new Error(response.error || '收藏模板失败');
@@ -363,7 +382,7 @@ export async function getMatchedTemplates(
   // 真实API调用
   try {
     const response = await get<Template[]>(
-      `/api/v1/templates/matched?intent=${intent}`
+      `/v1/templates/matched?intent=${intent}`
     );
 
     if (!response.success || !response.data) {

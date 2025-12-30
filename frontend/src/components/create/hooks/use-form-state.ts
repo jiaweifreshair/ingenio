@@ -17,6 +17,7 @@ import { useState, useCallback } from 'react';
 import { UNIAIX_MODELS, type UniaixModel } from '@/lib/api/uniaix';
 import type { PlanRoutingResult } from '@/lib/api/plan-routing';
 import type { PhaseType, LoadedTemplate } from '@/types/requirement-form';
+import type { G3LogEntry } from '@/types/g3';
 
 /**
  * useFormState Hook返回值
@@ -35,35 +36,41 @@ export interface UseFormStateReturn {
   showSuccess: boolean;
   /** 是否显示分析面板 */
   showAnalysis: boolean;
-  /** 当前阶段 */
+  /** 当前流程阶段 */
   currentPhase: PhaseType;
   /** 加载的模板信息 */
   loadedTemplate: LoadedTemplate | null;
-  /** 路由结果 (V2) */
+  /** 路由结果 */
   routingResult: PlanRoutingResult | null;
+  /** G3引擎日志 */
+  g3Logs: G3LogEntry[];
 
-  // ==================== 方法 ====================
+  // ==================== 状态设置方法 ====================
   /** 设置需求描述 */
   setRequirement: (value: string) => void;
-  /** 设置AI模型 */
+  /** 设置选中的AI模型 */
   setSelectedModel: (model: UniaixModel) => void;
-  /** 设置设计风格 */
+  /** 设置选中的设计风格 */
   setSelectedStyle: (style: string | null) => void;
   /** 设置加载状态 */
   setLoading: (loading: boolean) => void;
-  /** 设置成功动画显示状态 */
+  /** 设置是否显示成功动画 */
   setShowSuccess: (show: boolean) => void;
-  /** 设置分析面板显示状态 */
+  /** 设置是否显示分析面板 */
   setShowAnalysis: (show: boolean) => void;
-  /** 设置当前阶段 */
+  /** 设置当前流程阶段 */
   setCurrentPhase: (phase: PhaseType) => void;
-  /** 设置加载的模板 */
+  /** 设置加载的模板信息 */
   setLoadedTemplate: (template: LoadedTemplate | null) => void;
   /** 设置路由结果 */
   setRoutingResult: (result: PlanRoutingResult | null) => void;
-  /** 清除模板 */
+  /** 设置G3日志 */
+  setG3Logs: (logs: G3LogEntry[] | ((prev: G3LogEntry[]) => G3LogEntry[])) => void;
+
+  // ==================== 操作方法 ====================
+  /** 清除已加载的模板 */
   clearTemplate: () => void;
-  /** 重置所有状态 */
+  /** 重置所有状态到初始值 */
   resetAll: () => void;
 }
 
@@ -72,28 +79,21 @@ export interface UseFormStateReturn {
  * 集中管理表单状态，提供统一的状态管理接口
  */
 export function useFormState(): UseFormStateReturn {
-  // ==================== 表单状态 ====================
+  // ==================== 状态定义 ====================
   const [requirement, setRequirement] = useState('');
-  const [selectedModel, setSelectedModel] = useState<UniaixModel>(UNIAIX_MODELS.QWEN_MAX);
+  const [selectedModel, setSelectedModel] = useState<UniaixModel>(UNIAIX_MODELS.QWEN_TURBO);
   const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
-
-  // ==================== UI状态 ====================
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(false);
-
-  // ==================== 流程阶段状态 ====================
   const [currentPhase, setCurrentPhase] = useState<PhaseType>('idle');
-
-  // ==================== 模板状态 ====================
   const [loadedTemplate, setLoadedTemplate] = useState<LoadedTemplate | null>(null);
-
-  // ==================== V2 路由状态 ====================
   const [routingResult, setRoutingResult] = useState<PlanRoutingResult | null>(null);
+  const [g3Logs, setG3Logs] = useState<G3LogEntry[]>([]);
 
   /**
    * 清除已加载的模板
-   * 重置为空白表单
+   * 同时清空需求描述和模板信息
    */
   const clearTemplate = useCallback(() => {
     setRequirement('');
@@ -102,11 +102,11 @@ export function useFormState(): UseFormStateReturn {
 
   /**
    * 重置所有状态到初始值
-   * 用于重新开始生成流程
+   * 用于用户取消或重新开始流程
    */
   const resetAll = useCallback(() => {
     setRequirement('');
-    setSelectedModel(UNIAIX_MODELS.QWEN_MAX);
+    setSelectedModel(UNIAIX_MODELS.QWEN_TURBO);
     setSelectedStyle(null);
     setLoading(false);
     setShowSuccess(false);
@@ -114,6 +114,7 @@ export function useFormState(): UseFormStateReturn {
     setCurrentPhase('idle');
     setLoadedTemplate(null);
     setRoutingResult(null);
+    setG3Logs([]);
   }, []);
 
   return {
@@ -127,6 +128,7 @@ export function useFormState(): UseFormStateReturn {
     currentPhase,
     loadedTemplate,
     routingResult,
+    g3Logs,
 
     // 方法
     setRequirement,
@@ -138,6 +140,7 @@ export function useFormState(): UseFormStateReturn {
     setCurrentPhase,
     setLoadedTemplate,
     setRoutingResult,
+    setG3Logs,
     clearTemplate,
     resetAll,
   };

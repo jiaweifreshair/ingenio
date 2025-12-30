@@ -175,7 +175,7 @@ const ConfigurationPanelComponent: React.FC<ConfigurationPanelProps> = ({
             <div>
               <Label htmlFor="model">选择AI模型</Label>
               <Select
-                value={config.model || 'qwen-max'}
+                value={config.model || 'gemini-3-pro-preview'}
                 onValueChange={handleModelChange}
                 disabled={!editable || isGenerating}
               >
@@ -183,10 +183,16 @@ const ConfigurationPanelComponent: React.FC<ConfigurationPanelProps> = ({
                   <SelectValue placeholder="选择AI模型" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="gemini-3-pro-preview">
+                    <div className="flex items-center justify-between w-full">
+                      <span>Gemini 3.0 Pro Preview</span>
+                      <Badge variant="secondary" className="ml-2">旗舰</Badge>
+                    </div>
+                  </SelectItem>
                   <SelectItem value="qwen-max">
                     <div className="flex items-center justify-between w-full">
                       <span>Qwen Max</span>
-                      <Badge variant="secondary" className="ml-2">推荐</Badge>
+                      <Badge variant="outline" className="ml-2">推荐</Badge>
                     </div>
                   </SelectItem>
                   <SelectItem value="deepseek-coder">

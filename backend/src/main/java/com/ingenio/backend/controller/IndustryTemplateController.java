@@ -2,6 +2,7 @@ package com.ingenio.backend.controller;
 
 import com.ingenio.backend.common.Result;
 import com.ingenio.backend.dto.request.TemplateMatchRequest;
+import com.ingenio.backend.dto.response.CategoryMetaResponse;
 import com.ingenio.backend.dto.response.TemplateMatchResponse;
 import com.ingenio.backend.entity.IndustryTemplateEntity;
 import com.ingenio.backend.mapper.IndustryTemplateMapper;
@@ -14,8 +15,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * 行业模板库Controller
@@ -333,6 +334,119 @@ public class IndustryTemplateController {
         } catch (Exception e) {
             log.error("查询模板列表失败: error={}", e.getMessage(), e);
             return Result.error(500, "查询模板列表失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 获取分类列表及统计
+     *
+     * 返回所有分类的元数据，包括每个分类下的模板数量
+     *
+     * 请求示例：
+     * <pre>
+     * GET /api/v1/templates/categories
+     * </pre>
+     *
+     * 响应示例：
+     * <pre>
+     * {
+     *   "code": 200,
+     *   "message": "success",
+     *   "data": [
+     *     {
+     *       "id": "ALL",
+     *       "name": "全部模板",
+     *       "icon": "📦",
+     *       "count": 40
+     *     },
+     *     {
+     *       "id": "ECOMMERCE",
+     *       "name": "电商类",
+     *       "icon": "🛒",
+     *       "count": 10
+     *     },
+     *     ...
+     *   ]
+     * }
+     * </pre>
+     *
+     * @return 分类元数据列表
+     */
+    @GetMapping("/categories")
+    @Operation(
+        summary = "获取分类列表",
+        description = "返回所有模板分类的元数据及统计信息"
+    )
+    public Result<List<CategoryMetaResponse>> getCategories() {
+        try {
+            log.info("查询模板分类列表");
+
+            // 查询所有启用的模板
+            com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<IndustryTemplateEntity> wrapper =
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+            wrapper.eq(IndustryTemplateEntity::getIsActive, true);
+            List<IndustryTemplateEntity> allTemplates = templateMapper.selectList(wrapper);
+
+            // 统计各分类的模板数量
+            Map<String, Long> categoryCountMap = allTemplates.stream()
+                    .collect(Collectors.groupingBy(
+                            IndustryTemplateEntity::getCategory,
+                            Collectors.counting()
+                    ));
+
+            // 定义分类元数据
+            List<CategoryMetaResponse> categories = Arrays.asList(
+                    CategoryMetaResponse.builder()
+                            .id("ALL")
+                            .name("全部模板")
+                            .icon("📦")
+                            .count(allTemplates.size())
+                            .build(),
+                    CategoryMetaResponse.builder()
+                            .id("ECOMMERCE")
+                            .name("电商类")
+                            .icon("🛒")
+                            .count(categoryCountMap.getOrDefault("电商", 0L).intValue())
+                            .build(),
+                    CategoryMetaResponse.builder()
+                            .id("SOCIAL")
+                            .name("社交类")
+                            .icon("💬")
+                            .count(categoryCountMap.getOrDefault("社交", 0L).intValue())
+                            .build(),
+                    CategoryMetaResponse.builder()
+                            .id("TOOLS")
+                            .name("工具类")
+                            .icon("🔧")
+                            .count(categoryCountMap.getOrDefault("工具", 0L).intValue())
+                            .build(),
+                    CategoryMetaResponse.builder()
+                            .id("CONTENT")
+                            .name("内容类")
+                            .icon("📝")
+                            .count(categoryCountMap.getOrDefault("内容", 0L).intValue())
+                            .build(),
+                    CategoryMetaResponse.builder()
+                            .id("EDUCATION")
+                            .name("教育类")
+                            .icon("🎓")
+                            .count(categoryCountMap.getOrDefault("教育", 0L).intValue())
+                            .build(),
+                    CategoryMetaResponse.builder()
+                            .id("OTHER")
+                            .name("其他")
+                            .icon("📱")
+                            .count(categoryCountMap.getOrDefault("其他", 0L).intValue())
+                            .build()
+            );
+
+            log.info("分类列表查询成功，返回 {} 个分类", categories.size());
+
+            return Result.success(categories);
+
+        } catch (Exception e) {
+            log.error("查询分类列表失败: error={}", e.getMessage(), e);
+            return Result.error(500, "查询分类列表失败: " + e.getMessage());
         }
     }
 }

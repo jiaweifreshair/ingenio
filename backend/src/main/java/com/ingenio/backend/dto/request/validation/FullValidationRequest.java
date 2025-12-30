@@ -53,6 +53,23 @@ public class FullValidationRequest {
     private String language;
 
     /**
+     * 项目根目录（可选，用于覆盖率验证）
+     * 示例: /tmp/test-project
+     */
+    private String projectRoot;
+
+    /**
+     * 项目类型（可选，用于覆盖率验证）
+     * 支持: nextjs, spring-boot, kmp
+     */
+    private String projectType;
+
+    /**
+     * 测试文件列表（可选，用于测试验证）
+     */
+    private List<String> testFiles;
+
+    /**
      * 是否并行验证（默认串行）
      */
     @Builder.Default

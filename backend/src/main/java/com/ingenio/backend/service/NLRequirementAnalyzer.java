@@ -44,8 +44,8 @@ public class NLRequirementAnalyzer {
      */
     private final AIProviderFactory aiProviderFactory;
 
-    private final StructuredRequirementMapper requirementMapper;
-    private final ObjectMapper objectMapper;
+	private final StructuredRequirementMapper requirementMapper;
+	private final ObjectMapper objectMapper;
 
     // 重试配置
     private static final int MAX_RETRIES = 2;

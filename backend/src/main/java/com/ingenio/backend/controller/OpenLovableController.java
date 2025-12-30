@@ -37,7 +37,7 @@ import java.util.stream.Collectors;
  * 4. 快速Web预览 - 5-10秒生成Web应用预览
  *
  * 架构说明：
- * - Open-Lovable服务运行在3001端口
+ * - Open-Lovable服务运行在3001端口（Docker部署默认3001:3000映射）
  * - Ingenio后端作为代理层统一对外暴露API
  * - 支持SSE流式响应
  * - V2.0架构：Sandbox创建是Plan阶段的快速预览功能，无需登录认证
@@ -127,6 +127,15 @@ public class OpenLovableController {
                 log.debug("参数适配: userRequirement -> prompt");
             } else if (adaptedRequest.containsKey("prompt")) {
                 originalPrompt = (String) adaptedRequest.get("prompt");
+            }
+
+            // 1.5 处理 Scout 模版上下文 (Phase 7 Integration)
+            if (adaptedRequest.containsKey("templateContext")) {
+                String templateContext = (String) adaptedRequest.remove("templateContext");
+                if (originalPrompt != null && !templateContext.isBlank()) {
+                    originalPrompt = originalPrompt + "\n\n" + templateContext;
+                    log.info("已注入 Scout 模版上下文");
+                }
             }
 
             // 2. 【方案A核心】增强提示词 - 添加结构化思维要求
@@ -466,6 +475,13 @@ public class OpenLovableController {
             if (fixedResponse != null && !fixedResponse.equals(aiResponse)) {
                 log.info("已移除空文件: 原长度={} 新长度={}", aiResponse.length(), fixedResponse.length());
                 aiResponse = fixedResponse;
+            }
+
+            // 基础校验：OpenLovable apply 依赖 <file path="...">...</file> 结构
+            if (!aiResponse.contains("<file")) {
+                log.warn("apply请求的AI代码不含<file>标签，无法应用到Sandbox");
+                return ResponseEntity.badRequest()
+                        .body(Result.error(400, "AI代码格式异常：缺少 <file path=\"...\"> 标签，无法应用到Sandbox"));
             }
 
             // 更新请求体

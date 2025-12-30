@@ -94,6 +94,9 @@ sa-token:
       - /public/**
       - /favicon.ico
       - /error
+      # Admin API：由独立的服务间JWT保护，必须排除C端用户登录态校验
+      - /admin/**
+      - /api/admin/**
 
 # 服务器配置
 server:
@@ -125,8 +128,10 @@ ingenio:
     default-tenant-id: 00000000-0000-0000-0000-000000000001
 
   # Open-Lovable集成配置
+  # Docker部署：3001端口（docker-compose映射3001:3000）
+  # 本地开发：设置环境变量 OPENLOVABLE_BASE_URL=http://localhost:3000
   openlovable:
-    base-url: http://localhost:3001
+    base-url: ${OPENLOVABLE_BASE_URL:http://localhost:3001}
 
   # 跨域配置（允许前端localhost:3000访问）
   cors:

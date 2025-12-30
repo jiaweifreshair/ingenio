@@ -3,6 +3,7 @@ package com.ingenio.backend.service.adapter;
 import com.ingenio.backend.dto.CodeGenerationResult;
 import com.ingenio.backend.dto.CodeGenerationResult.GeneratedFile;
 import com.ingenio.backend.dto.request.validation.CompileValidationRequest;
+import com.ingenio.backend.dto.request.validation.TestValidationRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -396,5 +397,87 @@ public class ValidationRequestAdapter {
         }
 
         return configs;
+    }
+
+    /**
+     * 将TestValidationRequest转换为CodeGenerationResult（Phase 2扩展）
+     *
+     * 转换逻辑：
+     * 1. appSpecId → taskId
+     * 2. testType + testFiles → 推断projectType
+     * 3. 使用现有的项目根目录（或创建临时目录）
+     *
+     * @param request 测试验证请求
+     * @return 代码生成结果（适配后）
+     * @throws RuntimeException 当临时目录创建失败时抛出
+     */
+    public CodeGenerationResult toCodeGenerationResultForTest(TestValidationRequest request) {
+        log.info("开始适配TestValidationRequest → CodeGenerationResult: appSpecId={}, testType={}",
+                request.getAppSpecId(), request.getTestType());
+
+        try {
+            // 1. 创建临时项目目录（测试场景）
+            Path tempProjectRoot = createTempProjectDirectory();
+            log.debug("创建临时项目目录: {}", tempProjectRoot);
+
+            // 2. 从testFiles推断项目类型
+            String projectType = detectProjectTypeFromTestFiles(request.getTestFiles());
+            log.debug("从测试文件推断项目类型: {}", projectType);
+
+            // 3. 构建CodeGenerationResult（测试执行不需要完整的文件列表）
+            CodeGenerationResult result = CodeGenerationResult.builder()
+                    .taskId(request.getAppSpecId())
+                    .tenantId(null) // 测试验证不需要租户ID
+                    .projectRoot(tempProjectRoot.toString())
+                    .projectType(projectType)
+                    .files(new ArrayList<>()) // 测试执行时文件已存在，不需要生成
+                    .techStack(detectTechStack(projectType))
+                    .buildConfigs(new HashMap<>())
+                    .dependencies(new ArrayList<>())
+                    .build();
+
+            log.info("测试请求适配完成: projectRoot={}, projectType={}",
+                    tempProjectRoot, projectType);
+
+            return result;
+
+        } catch (IOException e) {
+            log.error("适配TestValidationRequest失败：临时目录创建失败", e);
+            throw new RuntimeException("适配TestValidationRequest失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 从测试文件列表推断项目类型
+     *
+     * 推断规则：
+     * - 包含 .test.ts / .spec.ts → nextjs (TypeScript)
+     * - 包含 Test.java → spring-boot (Java)
+     * - 包含 Test.kt → kmp (Kotlin)
+     * - 默认 → nextjs
+     *
+     * @param testFiles 测试文件列表
+     * @return 项目类型
+     */
+    private String detectProjectTypeFromTestFiles(List<String> testFiles) {
+        if (testFiles == null || testFiles.isEmpty()) {
+            log.warn("测试文件列表为空，默认使用nextjs");
+            return "nextjs";
+        }
+
+        // 检查文件扩展名
+        for (String file : testFiles) {
+            if (file.endsWith(".test.ts") || file.endsWith(".spec.ts") ||
+                file.endsWith(".test.tsx") || file.endsWith(".spec.tsx")) {
+                return "nextjs";
+            } else if (file.endsWith("Test.java") || file.endsWith("Tests.java")) {
+                return "spring-boot";
+            } else if (file.endsWith("Test.kt") || file.endsWith("Tests.kt")) {
+                return "kmp";
+            }
+        }
+
+        log.warn("无法从测试文件推断项目类型，默认使用nextjs");
+        return "nextjs";
     }
 }

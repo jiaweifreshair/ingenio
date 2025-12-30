@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ingenio.backend.mapper.g3.G3JobMapper">
+
+    <!-- 结果映射 -->
+    <resultMap id="G3JobResultMap" type="com.ingenio.backend.entity.g3.G3JobEntity">
+        <id column="id" property="id" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="app_spec_id" property="appSpecId" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="tenant_id" property="tenantId" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="user_id" property="userId" typeHandler="com.ingenio.backend.config.UUIDv8TypeHandler"/>
+        <result column="requirement" property="requirement"/>
+        <result column="status" property="status"/>
+        <result column="current_round" property="currentRound"/>
+        <result column="max_rounds" property="maxRounds"/>
+        <result column="contract_yaml" property="contractYaml"/>
+        <result column="db_schema_sql" property="dbSchemaSql"/>
+        <result column="contract_locked" property="contractLocked"/>
+        <result column="contract_locked_at" property="contractLockedAt"/>
+        <result column="target_stack" property="targetStack" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler"/>
+        <result column="generation_options" property="generationOptions" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler"/>
+        <result column="logs" property="logs" typeHandler="com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler"/>
+        <result column="sandbox_id" property="sandboxId"/>
+        <result column="sandbox_url" property="sandboxUrl"/>
+        <result column="sandbox_provider" property="sandboxProvider"/>
+        <result column="last_error" property="lastError"/>
+        <result column="error_count" property="errorCount"/>
+        <result column="started_at" property="startedAt"/>
+        <result column="completed_at" property="completedAt"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <!-- 根据用户ID分页查询 -->
+    <select id="selectPageByUserId" resultMap="G3JobResultMap">
+        SELECT * FROM g3_jobs
+        WHERE user_id = CAST(#{userId} AS UUID)
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- 根据租户ID分页查询 -->
+    <select id="selectPageByTenantId" resultMap="G3JobResultMap">
+        SELECT * FROM g3_jobs
+        WHERE tenant_id = CAST(#{tenantId} AS UUID)
+        ORDER BY created_at DESC
+    </select>
+
+    <!-- 根据状态查询 -->
+    <select id="selectByStatus" resultMap="G3JobResultMap">
+        SELECT * FROM g3_jobs
+        WHERE status = #{status}
+        ORDER BY created_at ASC
+    </select>
+
+    <!-- 根据租户ID和状态查询 -->
+    <select id="selectByTenantIdAndStatus" resultMap="G3JobResultMap">
+        SELECT * FROM g3_jobs
+        WHERE tenant_id = CAST(#{tenantId} AS UUID)
+          AND status = #{status}
+        ORDER BY created_at ASC
+    </select>
+
+    <!-- 查询正在运行的任务 -->
+    <select id="selectRunningJobs" resultMap="G3JobResultMap">
+        SELECT * FROM g3_jobs
+        WHERE status IN ('PLANNING', 'CODING', 'TESTING')
+        ORDER BY created_at ASC
+    </select>
+
+    <!-- 查询用户正在运行的任务数量 -->
+    <select id="selectRunningJobCountByUser" resultType="java.lang.Integer">
+        SELECT COUNT(*) FROM g3_jobs
+        WHERE user_id = CAST(#{userId} AS UUID)
+          AND status IN ('PLANNING', 'CODING', 'TESTING')
+    </select>
+
+    <!-- 更新任务状态 -->
+    <update id="updateStatus">
+        UPDATE g3_jobs
+        SET status = #{status},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{jobId} AS UUID)
+    </update>
+
+    <!-- 更新契约 -->
+    <update id="updateContract">
+        UPDATE g3_jobs
+        SET contract_yaml = #{contractYaml},
+            db_schema_sql = #{dbSchemaSql},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{jobId} AS UUID)
+    </update>
+
+    <!-- 锁定契约 -->
+    <update id="lockContract">
+        UPDATE g3_jobs
+        SET contract_locked = TRUE,
+            contract_locked_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{jobId} AS UUID)
+    </update>
+
+    <!-- 更新沙箱信息 -->
+    <update id="updateSandboxInfo">
+        UPDATE g3_jobs
+        SET sandbox_id = #{sandboxId},
+            sandbox_url = #{sandboxUrl},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{jobId} AS UUID)
+    </update>
+
+    <!-- 进入下一轮修复 -->
+    <update id="incrementRound">
+        UPDATE g3_jobs
+        SET current_round = current_round + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{jobId} AS UUID)
+    </update>
+
+    <!-- 记录错误 -->
+    <update id="recordError">
+        UPDATE g3_jobs
+        SET last_error = #{lastError},
+            error_count = error_count + 1,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{jobId} AS UUID)
+    </update>
+
+    <!-- 标记完成 -->
+    <update id="markCompleted">
+        UPDATE g3_jobs
+        SET status = 'COMPLETED',
+            completed_at = #{completedAt},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{jobId} AS UUID)
+    </update>
+
+    <!-- 标记失败 -->
+    <update id="markFailed">
+        UPDATE g3_jobs
+        SET status = 'FAILED',
+            last_error = #{lastError},
+            completed_at = #{completedAt},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = CAST(#{jobId} AS UUID)
+    </update>
+
+    <!-- 清理过期任务 -->
+    <delete id="deleteExpiredJobs">
+        DELETE FROM g3_jobs
+        WHERE created_at &lt; #{beforeTime}
+          AND status IN ('COMPLETED', 'FAILED')
+    </delete>
+
+    <!-- 查询超时任务 -->
+    <select id="selectTimedOutJobs" resultMap="G3JobResultMap">
+        SELECT * FROM g3_jobs
+        WHERE status IN ('PLANNING', 'CODING', 'TESTING')
+          AND started_at &lt; #{timeout}
+    </select>
+
+</mapper>

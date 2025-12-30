@@ -64,6 +64,21 @@ services:
       timeout: 20s
       retries: 3
 
+  # G3 Engine (Python/AgentScope)
+  g3-engine:
+    build:
+      context: ./g3-engine
+      dockerfile: Dockerfile
+    container_name: ingenio-g3-engine
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Pass API keys if needed
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+    networks:
+      - ingenio-network
+
   # Java后端服务 (Spring Boot) - 已禁用，使用宿主机JAR运行
   # backend:
   #   build:

@@ -7,27 +7,43 @@ import com.ingenio.backend.entity.ValidationResultEntity;
 import com.ingenio.backend.mapper.ValidationResultMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.Executor;
 
 /**
- * V2.0 验证服务
+ * V2.0 验证服务（编排器模式 - Phase 1-6重构版）
  *
- * 功能：
- * 1. 编译验证（TypeScript/Java）
- * 2. 测试验证（单元测试+覆盖率）
- * 3. 质量门禁验证
- * 4. 业务验证（API契约+Schema+流程）
- * 5. 三环集成验证
+ * 架构设计：
+ * - 编排器模式：ValidationService仅负责任务调度、结果聚合、状态管理
+ * - 具体验证委托给专业验证器：CompilationValidator、TestExecutor、CoverageCalculator
+ * - 数据格式统一：通过Adapter层实现不同系统间的数据格式转换（G3ValidationAdapter）
+ *
+ * 核心功能：
+ * 1. 编译验证（Phase 1）：委托CompilationValidator执行真实编译（TypeScript/Java/Kotlin）
+ * 2. 测试验证（Phase 2）：委托TestExecutor执行单元测试和E2E测试
+ * 3. 覆盖率验证（Phase 3）：委托CoverageCalculator解析Istanbul/JaCoCo覆盖率报告
+ * 4. 质量门禁验证：检查编译、测试、覆盖率是否满足质量标准（覆盖率≥85%）
+ * 5. 业务验证（基础版）：API契约、数据库Schema、业务流程基本格式验证
+ * 6. 三环集成验证（Phase 4）：编译→测试→覆盖率的串行/并行验证链路
+ * 7. 外部结果保存（Phase 5）：允许G3等外部系统保存验证结果到统一存储
+ *
+ * 重构历程：
+ * - Phase 1: 集成CompilationValidator，删除Mock编译实现
+ * - Phase 2: 集成TestExecutor，删除Mock测试实现
+ * - Phase 3: 集成CoverageCalculator，删除硬编码覆盖率值
+ * - Phase 4: 重构validateFull三环验证，实现线程池优雅关闭
+ * - Phase 5: G3引擎集成，通过G3ValidationAdapter实现数据格式统一
+ * - Phase 6: 代码清理、JavaDoc文档补充、性能优化
  *
  * @author Ingenio Team
- * @since 2.0.0 Phase 3
+ * @since 2.0.0 Phase 1-6
  */
 @Slf4j
 @Service
@@ -41,8 +57,16 @@ public class ValidationService {
     private final com.ingenio.backend.service.adapter.ValidationRequestAdapter validationRequestAdapter;
     private final com.ingenio.backend.service.adapter.ValidationResultAdapter validationResultAdapter;
 
-    // 线程池用于并行验证
-    private final ExecutorService executorService = Executors.newFixedThreadPool(5);
+    // Phase 2: 测试执行集成依赖
+    private final TestExecutor testExecutor;
+
+    // Phase 3: 覆盖率计算集成依赖
+    private final CoverageCalculator coverageCalculator;
+
+    // Phase 4: 线程池用于并行验证（Spring管理，自动优雅关闭）
+    @Autowired
+    @Qualifier("validationExecutor")
+    private Executor validationExecutor;
 
     /**
      * 编译验证（Phase 1重构版：委托CompilationValidator）
@@ -83,7 +107,12 @@ public class ValidationService {
 
             // Step 4: 保存验证记录到数据库
             log.debug("Step 4/4: 保存验证记录到数据库");
-            saveValidationResult(request.getAppSpecId(), response, startTime);
+            saveValidationResult(
+                    request.getAppSpecId(),
+                    response,
+                    startTime,
+                    ValidationResultEntity.ValidationType.COMPILE
+            );
 
             log.info("编译验证完成 - success: {}, errors: {}, warnings: {}, qualityScore: {}, durationMs: {}",
                     response.getPassed(),
@@ -106,12 +135,18 @@ public class ValidationService {
      * @param appSpecId 应用规格ID
      * @param response 验证响应
      * @param startTime 开始时间
+     * @param validationType 验证类型（compile/test/coverage等）
      */
-    private void saveValidationResult(UUID appSpecId, ValidationResponse response, Instant startTime) {
+    private void saveValidationResult(
+            UUID appSpecId,
+            ValidationResponse response,
+            Instant startTime,
+            ValidationResultEntity.ValidationType validationType
+    ) {
         ValidationResultEntity entity = ValidationResultEntity.builder()
                 .id(response.getValidationId())
                 .appSpecId(appSpecId)
-                .validationType(ValidationResultEntity.ValidationType.COMPILE.getValue())
+                .validationType(validationType.getValue())
                 .status(response.getPassed() ?
                         ValidationResultEntity.Status.PASSED.getValue() :
                         ValidationResultEntity.Status.FAILED.getValue())
@@ -129,82 +164,81 @@ public class ValidationService {
 
         validationResultMapper.insert(entity);
 
-        log.debug("验证结果已保存: validationId={}, passed={}",
-                entity.getId(), entity.getIsPassed());
+        log.debug("验证结果已保存: validationId={}, validationType={}, passed={}",
+                entity.getId(), entity.getValidationType(), entity.getIsPassed());
     }
 
     /**
-     * 测试验证
+     * 测试验证（Phase 2重构版：委托TestExecutor）
+     *
+     * 执行流程：
+     * 1. 适配器转换TestValidationRequest → CodeGenerationResult
+     * 2. 委托TestExecutor根据testType执行真实测试（unit/integration/e2e）
+     * 3. 适配器转换TestResult → ValidationResponse
+     * 4. 保存验证记录到数据库
      *
      * @param request 测试验证请求
      * @return 验证响应
      */
     @Transactional(rollbackFor = Exception.class)
     public ValidationResponse validateTest(TestValidationRequest request) {
-        log.info("开始测试验证 - appSpecId: {}, testType: {}", request.getAppSpecId(), request.getTestType());
+        log.info("开始测试验证（Phase 2重构版） - appSpecId: {}, testType: {}",
+                request.getAppSpecId(), request.getTestType());
 
         Instant startTime = Instant.now();
-        ValidationResultEntity.ValidationResultEntityBuilder builder = ValidationResultEntity.builder()
-                .id(UUID.randomUUID())
-                .appSpecId(request.getAppSpecId())
-                .validationType(ValidationResultEntity.ValidationType.TEST.getValue())
-                .status(ValidationResultEntity.Status.RUNNING.getValue())
-                .startedAt(startTime);
 
         try {
-            // 模拟测试执行（实际应该调用测试框架）
-            // TODO: 集成Vitest/Jest/JUnit执行实际测试
-            int totalTests = 10;
-            int passedTests = 9;
-            int failedTests = 1;
+            // Step 1: 适配器转换测试请求
+            com.ingenio.backend.dto.CodeGenerationResult codeResult =
+                    validationRequestAdapter.toCodeGenerationResultForTest(request);
+            log.debug("适配器转换完成 - projectType: {}, projectRoot: {}",
+                    codeResult.getProjectType(), codeResult.getProjectRoot());
 
-            Map<String, Object> details = new HashMap<>();
-            details.put("totalTests", totalTests);
-            details.put("passedTests", passedTests);
-            details.put("failedTests", failedTests);
-            details.put("testType", request.getTestType());
-            details.put("testFiles", request.getTestFiles());
+            // Step 2: 委托TestExecutor根据testType执行真实测试
+            com.ingenio.backend.dto.TestResult testResult = switch (request.getTestType().toLowerCase()) {
+                case "unit" -> {
+                    log.info("执行单元测试 - projectType: {}", codeResult.getProjectType());
+                    yield testExecutor.runUnitTests(codeResult);
+                }
+                case "integration" -> {
+                    log.info("执行集成测试 - projectType: {}", codeResult.getProjectType());
+                    // 集成测试复用单元测试执行器（或后续可扩展独立的集成测试执行器）
+                    yield testExecutor.runUnitTests(codeResult);
+                }
+                case "e2e" -> {
+                    log.info("执行E2E测试 - projectType: {}", codeResult.getProjectType());
+                    yield testExecutor.runE2ETests(codeResult);
+                }
+                default -> throw new IllegalArgumentException(
+                        "不支持的测试类型: " + request.getTestType() +
+                        "，支持的类型: unit, integration, e2e");
+            };
 
-            boolean allPassed = failedTests == 0;
-            List<String> errors = new ArrayList<>();
-            if (!allPassed) {
-                errors.add("测试失败: 1个测试用例未通过");
-            }
+            log.debug("测试执行完成 - allPassed: {}, totalTests: {}, coverage: {}",
+                    testResult.getAllPassed(), testResult.getTotalTests(), testResult.getCoverage());
 
-            Instant endTime = Instant.now();
-            long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
+            // Step 3: 适配器转换测试结果
+            ValidationResponse response = validationResultAdapter.toValidationResponseFromTestResult(
+                    testResult, request.getAppSpecId());
 
-            builder.status(allPassed ? ValidationResultEntity.Status.PASSED.getValue()
-                    : ValidationResultEntity.Status.FAILED.getValue())
-                    .isPassed(allPassed)
-                    .validationDetails(details)
-                    .errorMessages(errors)
-                    .warningMessages(new ArrayList<>())
-                    .qualityScore((int) ((double) passedTests / totalTests * 100))
-                    .completedAt(endTime)
-                    .durationMs(durationMs)
-                    .createdAt(Instant.now())
-                    .updatedAt(Instant.now());
+            // Step 4: 保存验证记录到数据库
+            saveValidationResult(
+                    request.getAppSpecId(),
+                    response,
+                    startTime,
+                    ValidationResultEntity.ValidationType.TEST
+            );
 
-            ValidationResultEntity entity = builder.build();
-            validationResultMapper.insert(entity);
+            log.info("测试验证完成（Phase 2重构版） - passed: {}/{}, coverage: {}, qualityScore: {}, durationMs: {}",
+                    testResult.getPassedTests(), testResult.getTotalTests(),
+                    testResult.getCoverage() != null ? String.format("%.2f%%", testResult.getCoverage() * 100) : "N/A",
+                    response.getQualityScore(), response.getDurationMs());
 
-            log.info("测试验证完成 - passed: {}/{}, durationMs: {}",
-                    passedTests, totalTests, durationMs);
+            return response;
 
-            return ValidationResponse.builder()
-                    .validationId(entity.getId())
-                    .validationType("test")
-                    .passed(allPassed)
-                    .status(entity.getStatus())
-                    .qualityScore(entity.getQualityScore())
-                    .details(details)
-                    .errors(errors)
-                    .warnings(new ArrayList<>())
-                    .durationMs(durationMs)
-                    .completedAt(endTime)
-                    .build();
-
+        } catch (IllegalArgumentException e) {
+            log.error("测试验证参数错误: {}", e.getMessage());
+            throw e;
         } catch (Exception e) {
             log.error("测试验证失败", e);
             throw new RuntimeException("测试验证失败: " + e.getMessage(), e);
@@ -212,67 +246,50 @@ public class ValidationService {
     }
 
     /**
-     * 测试覆盖率验证
+     * 测试覆盖率验证（Phase 3重构版 - 调用CoverageCalculator）
      *
      * @param appSpecId AppSpec ID
+     * @param projectRoot 项目根目录
+     * @param projectType 项目类型（nextjs/spring-boot/kmp）
      * @return 验证响应
      */
     @Transactional(rollbackFor = Exception.class)
-    public ValidationResponse validateCoverage(UUID appSpecId) {
-        log.info("开始覆盖率验证 - appSpecId: {}", appSpecId);
+    public ValidationResponse validateCoverage(UUID appSpecId, String projectRoot, String projectType) {
+        log.info("开始覆盖率验证（Phase 3重构版） - appSpecId: {}, projectRoot: {}, projectType: {}",
+                appSpecId, projectRoot, projectType);
 
         Instant startTime = Instant.now();
 
         try {
-            // 模拟覆盖率计算（实际应该调用coverage工具）
-            // TODO: 集成Istanbul/JaCoCo计算实际覆盖率
-            double lineCoverage = 88.5;
-            double branchCoverage = 85.2;
-            double functionCoverage = 90.0;
-            double statementCoverage = 87.5;
+            // Step 1: 委托CoverageCalculator计算真实覆盖率
+            com.ingenio.backend.dto.CoverageResult coverageResult =
+                    coverageCalculator.calculate(projectRoot, projectType);
 
-            Map<String, Object> details = new HashMap<>();
-            details.put("lineCoverage", lineCoverage);
-            details.put("branchCoverage", branchCoverage);
-            details.put("functionCoverage", functionCoverage);
-            details.put("statementCoverage", statementCoverage);
+            log.info("覆盖率计算完成 - tool: {}, overall: {:.2f}%, meetsQualityGate: {}",
+                    coverageResult.getTool(),
+                    coverageResult.getOverallCoverage() * 100,
+                    coverageResult.getMeetsQualityGate());
 
-            Instant endTime = Instant.now();
-            long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
+            // Step 2: 适配器转换覆盖率结果
+            ValidationResponse response = validationResultAdapter.toValidationResponseFromCoverageResult(
+                    coverageResult, appSpecId);
 
-            ValidationResultEntity entity = ValidationResultEntity.builder()
-                    .id(UUID.randomUUID())
-                    .appSpecId(appSpecId)
-                    .validationType(ValidationResultEntity.ValidationType.TEST.getValue())
-                    .status(ValidationResultEntity.Status.PASSED.getValue())
-                    .isPassed(true)
-                    .validationDetails(details)
-                    .errorMessages(new ArrayList<>())
-                    .warningMessages(new ArrayList<>())
-                    .qualityScore((int) lineCoverage)
-                    .startedAt(startTime)
-                    .completedAt(endTime)
-                    .durationMs(durationMs)
-                    .createdAt(Instant.now())
-                    .updatedAt(Instant.now())
-                    .build();
+            // Step 3: 保存验证记录到数据库
+            saveValidationResult(
+                    appSpecId,
+                    response,
+                    startTime,
+                    ValidationResultEntity.ValidationType.COVERAGE
+            );
 
-            validationResultMapper.insert(entity);
+            log.info("覆盖率验证完成 - overall: {:.2f}%, line: {:.2f}%, branch: {:.2f}%, qualityScore: {}, durationMs: {}",
+                    coverageResult.getOverallCoverage() * 100,
+                    coverageResult.getLineCoverage() * 100,
+                    coverageResult.getBranchCoverage() * 100,
+                    response.getQualityScore(),
+                    response.getDurationMs());
 
-            log.info("覆盖率验证完成 - line: {}%, branch: {}%", lineCoverage, branchCoverage);
-
-            return ValidationResponse.builder()
-                    .validationId(entity.getId())
-                    .validationType("coverage")
-                    .passed(true)
-                    .status(entity.getStatus())
-                    .qualityScore(entity.getQualityScore())
-                    .details(details)
-                    .errors(new ArrayList<>())
-                    .warnings(new ArrayList<>())
-                    .durationMs(durationMs)
-                    .completedAt(endTime)
-                    .build();
+            return response;
 
         } catch (Exception e) {
             log.error("覆盖率验证失败", e);
@@ -281,10 +298,63 @@ public class ValidationService {
     }
 
     /**
-     * 质量门禁验证
+     * 保存外部验证结果（Phase 5: G3引擎集成）
      *
-     * @param request 质量门禁请求
-     * @return 验证响应
+     * 用途：
+     * - 允许G3SandboxService等外部系统将验证结果保存到统一的验证结果表
+     * - G3在E2B沙箱编译完成后，可以调用此方法保存结果
+     * - 实现验证结果的统一存储和查询
+     *
+     * 设计理念：
+     * - G3保持使用E2B沙箱进行编译（不调用validateCompile避免重复编译）
+     * - 通过G3ValidationAdapter将CompileResult转换为ValidationResponse
+     * - 调用此方法将结果保存到validation_results表
+     * - 实现G3和ValidationService的数据格式统一
+     *
+     * @param appSpecId 应用规格ID
+     * @param response 验证响应（由外部系统生成，如G3ValidationAdapter转换的结果）
+     * @param validationType 验证类型（compile/test/coverage等）
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void saveExternalValidationResult(
+            UUID appSpecId,
+            ValidationResponse response,
+            ValidationResultEntity.ValidationType validationType) {
+
+        log.info("保存外部验证结果（Phase 5） - appSpecId: {}, validationType: {}, passed: {}",
+                appSpecId, validationType, response.getPassed());
+
+        // 计算startTime（从completedAt和durationMs反推）
+        Instant startTime = response.getCompletedAt() != null ?
+                response.getCompletedAt().minusMillis(response.getDurationMs()) :
+                Instant.now().minusMillis(response.getDurationMs());
+
+        // 调用私有方法保存结果
+        saveValidationResult(appSpecId, response, startTime, validationType);
+
+        log.info("外部验证结果已保存 - validationId={}, appSpecId={}, validationType={}",
+                response.getValidationId(), appSpecId, validationType);
+    }
+
+    /**
+     * 质量门禁验证（质量标准检查）
+     *
+     * 验证规则：
+     * 1. 代码覆盖率检查：≥ coverageThreshold（默认85%）
+     * 2. 圈复杂度检查：≤ complexityThreshold（默认10）
+     * 3. 代码重复率检查：≤ 5%
+     *
+     * 通过标准（必须全部满足）：
+     * - coveragePassed = true
+     * - complexityPassed = true
+     * - duplicationPassed = true
+     *
+     * 质量评分计算（0-100）：
+     * - 全部通过：100分
+     * - 部分通过：根据通过项数量计算（通过数/总数 * 100）
+     *
+     * @param request 质量门禁请求（包含metrics、coverageThreshold、complexityThreshold）
+     * @return 验证响应（包含通过状态、质量评分、详细检查结果）
      */
     @Transactional(rollbackFor = Exception.class)
     public ValidationResponse validateQualityGate(QualityGateRequest request) {
@@ -349,8 +419,8 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("质量门禁验证完成 - passed: {}, coverage: {}%, complexity: {}",
-                    allPassed, coverage, complexity);
+            log.info("质量门禁验证完成 - passed: {}, coverage: {}%, complexity: {}, durationMs: {}",
+                    allPassed, coverage, complexity, durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -372,7 +442,18 @@ public class ValidationService {
     }
 
     /**
-     * API契约验证
+     * API契约验证（基础版本）
+     *
+     * 当前实现范围：
+     * - 验证OpenAPI规范基本格式（包含openapi版本和paths定义）
+     * - 统计API端点数量
+     * - 保存验证结果到数据库
+     *
+     * 未来扩展方向：
+     * - 集成Swagger Parser进行深度规范验证
+     * - 验证请求/响应Schema完整性
+     * - 检查API路径命名规范
+     * - 验证HTTP方法使用合理性
      *
      * @param appSpecId AppSpec ID
      * @param openApiSpec OpenAPI规范
@@ -385,8 +466,7 @@ public class ValidationService {
         Instant startTime = Instant.now();
 
         try {
-            // 模拟OpenAPI规范验证
-            // TODO: 集成Swagger Parser验证OpenAPI规范
+            // 基础OpenAPI规范格式验证
             boolean isValid = openApiSpec != null
                     && openApiSpec.containsKey("openapi")
                     && openApiSpec.containsKey("paths");
@@ -424,7 +504,7 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("API契约验证完成 - valid: {}", isValid);
+            log.info("API契约验证完成 - valid: {}, durationMs: {}", isValid, durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -446,7 +526,19 @@ public class ValidationService {
     }
 
     /**
-     * 数据库Schema验证
+     * 数据库Schema验证（基础版本）
+     *
+     * 当前实现范围：
+     * - 验证Schema定义非空
+     * - 统计数据库表数量
+     * - 保存验证结果到数据库
+     *
+     * 未来扩展方向：
+     * - 验证表结构完整性（字段类型、约束、索引）
+     * - 检查主外键关系一致性
+     * - 验证Schema命名规范（表名、字段名）
+     * - 检查数据库迁移脚本SQL语法
+     * - 验证Schema与API契约的匹配度
      *
      * @param appSpecId AppSpec ID
      * @param schema Schema定义
@@ -459,8 +551,7 @@ public class ValidationService {
         Instant startTime = Instant.now();
 
         try {
-            // 模拟Schema验证
-            // TODO: 实际验证数据库Schema完整性
+            // 基础Schema格式验证
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> tables = (List<Map<String, Object>>) schema.get("tables");
             boolean isValid = tables != null && !tables.isEmpty();
@@ -496,7 +587,7 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("Schema验证完成 - valid: {}, tables: {}", isValid, details.get("tableCount"));
+            log.info("Schema验证完成 - valid: {}, tables: {}, durationMs: {}", isValid, details.get("tableCount"), durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -518,7 +609,19 @@ public class ValidationService {
     }
 
     /**
-     * 业务流程验证
+     * 业务流程验证（基础版本）
+     *
+     * 当前实现范围：
+     * - 验证业务流程定义非空
+     * - 统计业务流程数量
+     * - 保存验证结果到数据库
+     *
+     * 未来扩展方向：
+     * - 验证业务流程逻辑完整性（开始节点、结束节点、路径可达性）
+     * - 检查业务规则一致性
+     * - 验证用户故事覆盖度
+     * - 检查业务流程与API契约的匹配度
+     * - 验证权限和角色定义合理性
      *
      * @param appSpecId AppSpec ID
      * @param flows 业务流程列表
@@ -531,7 +634,7 @@ public class ValidationService {
         Instant startTime = Instant.now();
 
         try {
-            // 模拟业务流程验证
+            // 基础业务流程格式验证
             boolean isValid = flows != null && !flows.isEmpty();
 
             List<String> errors = new ArrayList<>();
@@ -565,7 +668,7 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("业务流程验证完成 - valid: {}, flows: {}", isValid, details.get("flowCount"));
+            log.info("业务流程验证完成 - valid: {}, flows: {}, durationMs: {}", isValid, details.get("flowCount"), durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -587,10 +690,34 @@ public class ValidationService {
     }
 
     /**
-     * 三环集成验证
+     * 三环集成验证（Phase 4重构版 - 支持串行/并行模式）
      *
-     * @param request 全量验证请求
-     * @return 全量验证响应
+     * 验证流程：
+     * 1. 根据request.parallel选择执行模式（串行/并行）
+     * 2. 依次或并行执行各个阶段的验证（compile/test/coverage/business）
+     * 3. 聚合所有阶段的验证结果
+     * 4. 计算整体状态和质量评分
+     *
+     * 支持的验证阶段：
+     * - compile: 编译验证（委托CompilationValidator）
+     * - test: 测试验证（委托TestExecutor）
+     * - coverage: 覆盖率验证（委托CoverageCalculator）
+     * - business: 业务验证（基础版 - API契约/Schema/业务流程）
+     *
+     * 执行模式：
+     * - parallel=true: 并行验证（使用validationExecutor线程池，速度快但资源消耗高）
+     * - parallel=false: 串行验证（支持failFast，某阶段失败立即返回）
+     *
+     * failFast机制（仅串行模式）：
+     * - failFast=true: 某阶段失败立即终止后续验证
+     * - failFast=false: 执行所有阶段后返回完整结果
+     *
+     * 整体评分计算：
+     * - 所有阶段质量评分的平均值（0-100）
+     * - 所有阶段通过则overallStatus="passed"，否则"failed"
+     *
+     * @param request 全量验证请求（包含appSpecId、stages、parallel、failFast等参数）
+     * @return 全量验证响应（包含各阶段结果、整体状态、总评分、总耗时）
      */
     @Transactional(rollbackFor = Exception.class)
     public FullValidationResponse validateFull(FullValidationRequest request) {
@@ -645,7 +772,20 @@ public class ValidationService {
     }
 
     /**
-     * 串行验证（支持failFast）
+     * 串行验证（支持failFast快速失败）
+     *
+     * 执行流程：
+     * 1. 按顺序执行各个阶段验证（for循环）
+     * 2. 记录每个阶段的执行时间和结果
+     * 3. 如果failFast=true且某阶段失败，立即终止后续验证
+     * 4. 返回所有已执行阶段的结果Map（key=stage名称，value=StageResult）
+     *
+     * failFast机制：
+     * - failFast=true: 验证失败后break，不执行后续阶段
+     * - failFast=false: 继续执行所有阶段，收集完整结果
+     *
+     * @param request 全量验证请求
+     * @return 阶段结果Map（LinkedHashMap保持顺序）
      */
     private Map<String, FullValidationResponse.StageResult> validateStagesInSequence(FullValidationRequest request) {
         Map<String, FullValidationResponse.StageResult> results = new LinkedHashMap<>();
@@ -714,7 +854,29 @@ public class ValidationService {
     }
 
     /**
-     * 并行验证
+     * 并行验证（使用CompletableFuture和validationExecutor线程池）
+     *
+     * 执行流程：
+     * 1. 为每个阶段创建CompletableFuture异步任务
+     * 2. 提交到validationExecutor线程池并行执行
+     * 3. 等待所有任务完成（future.get()阻塞等待）
+     * 4. 收集所有阶段的验证结果
+     *
+     * 并行特性：
+     * - 所有阶段同时启动，互不阻塞
+     * - 不支持failFast（必须等待所有阶段完成）
+     * - 总耗时约等于最慢阶段的耗时
+     *
+     * 异常处理：
+     * - 单个阶段异常不影响其他阶段执行
+     * - 异常阶段返回failed状态和错误信息
+     *
+     * 线程池配置：
+     * - 使用Spring管理的validationExecutor（自动优雅关闭）
+     * - 配置见ValidationConfig类
+     *
+     * @param request 全量验证请求
+     * @return 阶段结果Map（HashMap无序）
      */
     private Map<String, FullValidationResponse.StageResult> validateStagesInParallel(FullValidationRequest request) {
         Map<String, CompletableFuture<FullValidationResponse.StageResult>> futures = new HashMap<>();
@@ -754,7 +916,7 @@ public class ValidationService {
                             .durationMs(0L)
                             .build();
                 }
-            }, executorService));
+            }, validationExecutor));
         }
 
         // 等待所有验证完成
@@ -779,90 +941,84 @@ public class ValidationService {
     }
 
     /**
-     * 执行单个阶段的验证
+     * 执行单个阶段的验证（阶段路由器）
+     *
+     * 功能：
+     * - 根据stage参数路由到对应的验证方法
+     * - 从FullValidationRequest中提取各阶段所需的参数
+     * - 调用Phase 1-3重构后的validate方法（委托专业验证器）
+     *
+     * 支持的阶段及参数要求：
+     * 1. compile: 需要code和language参数
+     *    - 委托CompilationValidator执行真实编译
+     *    - CompilationValidator自动创建临时项目目录
+     *
+     * 2. test: 需要testFiles参数（可选）
+     *    - 委托TestExecutor执行单元测试
+     *    - generateCoverage默认为true
+     *
+     * 3. coverage: 需要projectRoot和projectType参数
+     *    - 委托CoverageCalculator解析覆盖率报告
+     *    - 支持Istanbul（nextjs）和JaCoCo（spring-boot）
+     *
+     * 4. business: 无强制参数要求
+     *    - 当前为基础版实现，仅验证基本格式
+     *    - 未来需扩展FullValidationRequest添加openApiSpec、schema、flows字段
+     *
+     * @param stage 验证阶段（compile/test/coverage/business）
+     * @param request 全量验证请求（包含各阶段所需的参数）
+     * @return 验证响应（包含通过状态、质量评分、错误信息）
+     * @throws IllegalArgumentException 当阶段不支持或必需参数缺失时抛出
      */
     private ValidationResponse executeStageValidation(String stage, FullValidationRequest request) {
+        log.info("执行验证阶段: {}", stage);
+
         switch (stage) {
             case "compile":
+                // Phase 1重构后的编译验证（委托CompilationValidator）
+                // CompilationValidator会自动创建临时项目目录，无需传递projectRoot
                 if (request.getCode() != null && request.getLanguage() != null) {
-                    return validateCompile(CompileValidationRequest.builder()
+                    CompileValidationRequest compileRequest = CompileValidationRequest.builder()
                             .appSpecId(request.getAppSpecId())
                             .code(request.getCode())
                             .language(request.getLanguage())
-                            .build());
+                            .build();
+                    return validateCompile(compileRequest);
                 } else {
-                    // 如果没有提供代码，创建模拟的成功响应
-                    return createMockValidationResponse("compile", true);
+                    throw new IllegalArgumentException("compile阶段需要提供code和language参数");
                 }
 
             case "test":
-                return validateTest(TestValidationRequest.builder()
+                // Phase 2重构后的测试验证（委托TestExecutor）
+                TestValidationRequest testRequest = TestValidationRequest.builder()
                         .appSpecId(request.getAppSpecId())
                         .testType("unit")
-                        .testFiles(new ArrayList<>())
+                        .testFiles(request.getTestFiles() != null ? request.getTestFiles() : new ArrayList<>())
                         .generateCoverage(true)
-                        .build());
+                        .build();
+                return validateTest(testRequest);
+
+            case "coverage":
+                // Phase 3新增：覆盖率验证（委托CoverageCalculator）
+                if (request.getProjectRoot() == null || request.getProjectType() == null) {
+                    throw new IllegalArgumentException("coverage阶段需要提供projectRoot和projectType参数");
+                }
+                return validateCoverage(request.getAppSpecId(), request.getProjectRoot(), request.getProjectType());
 
             case "business":
-                // 业务验证：包括contract + schema + business_flow
+                // 业务验证链路（基础版本）
+                // 当前实现：仅验证API契约基本格式
+                // 未来扩展：需要在FullValidationRequest中添加以下字段后实现完整链路
+                //   - Map<String, Object> openApiSpec (API契约规范)
+                //   - Map<String, Object> schema (数据库Schema定义)
+                //   - List<Map<String, Object>> flows (业务流程定义)
+                // 完整链路：contract验证 → schema验证 → business_flow验证 → 聚合结果
+                log.warn("business验证当前为简化实现，仅验证基本格式。完整实现需扩展FullValidationRequest");
                 ValidationResponse contractResult = validateContract(request.getAppSpecId(), new HashMap<>());
                 return contractResult;
 
             default:
                 throw new IllegalArgumentException("不支持的验证阶段: " + stage);
         }
-    }
-
-    /**
-     * 创建模拟验证响应
-     */
-    private ValidationResponse createMockValidationResponse(String type, boolean passed) {
-        return ValidationResponse.builder()
-                .validationId(UUID.randomUUID())
-                .validationType(type)
-                .passed(passed)
-                .status(passed ? "passed" : "failed")
-                .qualityScore(passed ? 100 : 0)
-                .details(new HashMap<>())
-                .errors(new ArrayList<>())
-                .warnings(new ArrayList<>())
-                .durationMs(0L)
-                .completedAt(Instant.now())
-                .build();
-    }
-
-    /**
-     * 验证TypeScript代码
-     */
-    private boolean validateTypeScript(String code, List<String> errors) {
-        // TODO: 集成TypeScript Compiler API
-        // 这里是简化的验证逻辑
-        if (code.contains("const x: number = \"invalid\"")) {
-            errors.add("Line 1: Type 'string' is not assignable to type 'number'");
-            return false;
-        }
-        return true;
-    }
-
-    /**
-     * 验证Java代码
-     */
-    private boolean validateJava(String code, List<String> errors) {
-        // TODO: 集成Java Compiler API
-        // 这里是简化的验证逻辑
-        if (!code.contains("public class")) {
-            errors.add("Missing class declaration");
-            return false;
-        }
-        return true;
-    }
-
-    /**
-     * 验证Kotlin代码
-     */
-    private boolean validateKotlin(String code, List<String> errors) {
-        // TODO: 集成Kotlin Compiler
-        // 这里是简化的验证逻辑
-        return true;
     }
 }

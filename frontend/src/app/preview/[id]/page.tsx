@@ -293,7 +293,7 @@ export default function PreviewPage() {
 
       {/* 模拟Footer */}
       <footer className="bg-muted p-4 text-center text-sm text-muted-foreground">
-        <p>© 2024 生成的应用 | 由秒构AI驱动</p>
+        <p>© 2024 生成的应用 | 由 Ingenio 妙构 驱动</p>
       </footer>
     </div>
   );

@@ -1,0 +1,29 @@
+# goose 运行提示（本仓库约束与最佳实践）
+
+## 1) 总原则
+- 统一使用中文沟通与输出（含注释、文档）。
+- 文档先行：任何功能变更必须先明确需求边界、接口/数据契约与验收门禁。
+- 小步最小 diff：禁止“顺手大重构”，每次变更尽量控制在必要范围内。
+- 禁止把 Mock 带入联调/E2E/生产构建；若为设计演示引入 Mock，必须可开关且不可默认开启。
+- 不要读取/输出敏感信息（`.env*`、key、凭证等已在 `.gooseignore` 屏蔽）。
+
+## 2) 仓库结构速记
+- `frontend/`：Next.js 15（脚本见 `frontend/package.json`）
+- `backend/`：同时包含 Java(Spring Boot) 与 Nest(TS) 两套（脚本见 `backend/package.json`、构建见 `backend/pom.xml`）
+- `shared/`：前后端共享类型与协议
+- `docs/`：文档入口 `docs/README.md`，编号索引 `docs/00-INDEX.md`
+
+## 3) 默认质量门禁（改什么跑什么）
+- 前端必跑：`pnpm -C frontend typecheck`
+- 前端改 UI/组件：追加 `pnpm -C frontend test:unit`
+- Nest 必跑：`pnpm -C backend typecheck && pnpm -C backend test`
+- 改 Java 必跑：`mvn -f backend/pom.xml test`
+
+## 4) 检索优先
+- 修改前先用 `rg` 搜索定位现有实现，优先复用，不要重复造轮子。
+
+## 5) 安全红线（禁止）
+- 禁止执行破坏性命令（例如 `rm -rf`、`git reset --hard` 等）。
+- 禁止通过网络下载并执行脚本（例如 `curl|bash`）。
+- 禁止改动鉴权/租户/加密等核心逻辑，除非任务明确且有人工复核。
+

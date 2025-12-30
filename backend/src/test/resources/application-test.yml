@@ -20,14 +20,28 @@ spring:
     time-zone: Asia/Shanghai
     date-format: yyyy-MM-dd HH:mm:ss
 
-  # Spring AI 阿里云DashScope配置（测试环境）
+  # Spring AI OpenAI配置（测试环境使用真实AI服务）
+  # 通过环境变量注入真实的API密钥，确保测试环境与生产环境AI行为一致
   ai:
+    openai:
+      # 从环境变量读取API密钥（支持多个环境变量名称）
+      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-test-placeholder}}}}
+      # 使用七牛云OpenAI兼容接口
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:https://api.qnaigc.com}}
+      chat:
+        enabled: true
+        options:
+          # 使用通义千问模型（七牛云提供）
+          model: qwen3-235b-a22b-instruct-2507
+          temperature: 0.3
+          max-tokens: 4096
+          timeout: 30s  # 测试环境适当缩短超时时间
+    # DashScope配置（备用）
     dashscope:
-      # ⚠️ 测试环境禁止硬编码真实密钥，默认使用占位符，必要时通过环境变量注入
       api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
       base-url: https://dashscope.aliyuncs.com
       chat:
-        enabled: true
+        enabled: false
         options:
           model: qwen-max
           temperature: 0.3
@@ -35,10 +49,12 @@ spring:
           timeout: 90s
           max-retries: 2
 
-  # 禁用FreeMarker自动配置（测试环境不需要视图模板）
+  # 禁用不需要的自动配置（测试环境）
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.freemarker.FreeMarkerAutoConfiguration
+      # 注意：不排除OpenAI自动配置，否则ChatModel bean无法创建
+      # 通过配置enabled: false和mock的api-key来禁用实际调用
 
 # MyBatis-Plus配置
 mybatis-plus:

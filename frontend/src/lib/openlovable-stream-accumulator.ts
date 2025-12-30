@@ -7,7 +7,9 @@
  * - 如果把所有带 `text` 的事件都直接拼接，会导致重复、截断拼接污染，最终写入沙箱的代码出现语法错误
  *
  * 处理策略：
- * 1) 只从 `type=stream` 的 `text` 追加增量（delta）
+ * 1) 只从“增量事件”追加文本（delta）
+ *    - `type=stream` 的 `text`
+ *    - `type=content` 的 `content`（OpenLovable 上游常见格式）
  * 2) 一旦收到 `type=complete` 且包含 `generatedCode`，以其作为最终权威输出（覆盖流式拼接结果）
  */
 
@@ -23,7 +25,7 @@ export interface OpenLovableSseMessage {
 }
 
 export interface OpenLovableAccumulationState {
-  /** 流式拼接得到的文本（仅来自 stream 增量） */
+  /** 流式拼接得到的文本（仅来自“增量事件”） */
   streamedText: string;
   /** complete 事件给出的最终代码（存在时优先使用） */
   finalCode: string | null;
@@ -73,13 +75,50 @@ export function applyOpenLovableSseMessage(
     return prev;
   }
 
-  if (message.type === 'complete' && typeof message.generatedCode === 'string' && message.generatedCode.trim()) {
-    return { streamedText: message.generatedCode, finalCode: message.generatedCode };
+  const isLikelyFileTagCode = (text: string) => text.includes('<file') && text.includes('</file>');
+
+  if (message.type === 'complete') {
+    if (
+      typeof message.generatedCode === 'string' &&
+      message.generatedCode.trim() &&
+      isLikelyFileTagCode(message.generatedCode)
+    ) {
+      return { streamedText: message.generatedCode, finalCode: message.generatedCode };
+    }
+
+    // 兼容：个别上游版本会把最终代码放在 text/content，而 generatedCode 为空
+    const completeText =
+      typeof message.text === 'string' && message.text.trim()
+        ? message.text
+        : typeof message.content === 'string' && message.content.trim()
+          ? message.content
+          : '';
+
+    if (completeText && isLikelyFileTagCode(completeText)) {
+      return { streamedText: completeText, finalCode: completeText };
+    }
   }
 
-  // 仅追加 stream 的增量文本，避免 conversation 等事件重复/截断导致污染
-  if (message.type === 'stream' && typeof message.text === 'string' && message.text) {
-    return { streamedText: mergeStreamDelta(prev.streamedText, message.text), finalCode: null };
+  /**
+   * 仅追加“增量事件”的文本，避免 conversation 等事件重复/截断导致污染。
+   *
+   * 兼容说明：
+   * - OpenLovable 上游在不同版本中可能使用：
+   *   - type=stream, 字段 text
+   *   - type=content, 字段 content
+   * - 这里统一视为“流式增量”，走同一套去重合并逻辑。
+   */
+  if (message.type === 'stream' || message.type === 'content') {
+    const delta =
+      typeof message.text === 'string' && message.text
+        ? message.text
+        : typeof message.content === 'string' && message.content
+          ? message.content
+          : '';
+
+    if (delta) {
+      return { streamedText: mergeStreamDelta(prev.streamedText, delta), finalCode: null };
+    }
   }
 
   return prev;

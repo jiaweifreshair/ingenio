@@ -44,7 +44,7 @@ export default function RegisterPage() {
             </div>
             <div className="text-center">
               <h1 className="text-2xl font-semibold text-white tracking-tight">
-                秒构 AI
+                Ingenio 妙构
               </h1>
               <p className="mt-2 text-sm text-slate-400">
                 AI驱动的自然语言编程平台

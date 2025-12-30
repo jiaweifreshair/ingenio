@@ -1,6 +1,5 @@
 package com.ingenio.backend.config;
 
-import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.interceptor.SaInterceptor;
 import cn.dev33.satoken.context.SaHolder;
 import cn.dev33.satoken.router.SaRouter;
@@ -8,7 +7,6 @@ import cn.dev33.satoken.stp.StpUtil;
 import cn.dev33.satoken.filter.SaServletFilter;
 import cn.dev33.satoken.util.SaResult;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
@@ -40,9 +38,6 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class SaTokenConfig implements WebMvcConfigurer {
 
-    @Autowired
-    private AdminAuthInterceptor adminAuthInterceptor;
-
     /**
      * 注册SaToken拦截器
      *
@@ -57,14 +52,7 @@ public class SaTokenConfig implements WebMvcConfigurer {
     public void addInterceptors(InterceptorRegistry registry) {
         log.info("注册拦截器...");
 
-        // 1. 注册 Admin API 拦截器 (高优先级) - 使用标准Spring HandlerInterceptor
-        registry.addInterceptor(adminAuthInterceptor)
-                .addPathPatterns("/api/admin/**") // 仅拦截Admin API
-                .order(0); // 优先级最高
-        log.info("  - 已注册Admin API拦截器 (AdminAuthInterceptor, 优先级 0)");
-
-
-        // 2. 注册C端用户拦截器 (较低优先级)
+        // 注册C端用户拦截器
         registry.addInterceptor(new SaInterceptor(handle -> {
             // CORS预检请求（OPTIONS）直接放行，不进行认证检查
             String method = SaHolder.getRequest().getMethod();
@@ -76,8 +64,6 @@ public class SaTokenConfig implements WebMvcConfigurer {
         }))
         .addPathPatterns("/**") // 拦截所有路径
         .excludePathPatterns(
-            "/api/admin/**", // **重要: 排除所有Admin API，因为它们由上面的高优先级拦截器处理**
-
             // 认证相关公开接口（无需Token）
             "/v1/auth/login",                      // 用户名密码登录
             "/v1/auth/register",                   // 用户注册
@@ -91,9 +77,13 @@ public class SaTokenConfig implements WebMvcConfigurer {
             "/v1/generate/**",
             "/v1/intent/**",
             "/v2/**",
+            "/v1/g3/**",
             "/v1/prototype/generate/stream",
             "/v1/prototype/create-app-spec",
             "/v1/notifications/unread-count",
+
+            // 模板API（公开接口，无需认证）
+            "/v1/templates/**",
 
             // SSE流式接口
             "/v1/generate/analyze-stream",
@@ -113,7 +103,11 @@ public class SaTokenConfig implements WebMvcConfigurer {
             "/favicon.ico",
 
             // 错误页面
-            "/error"
+            "/error",
+
+            // Admin API：由独立的服务间JWT保护，必须排除C端用户登录态校验
+            "/admin/**",
+            "/api/admin/**"
         )
         .order(1); // 优先级较低
 
@@ -137,8 +131,6 @@ public class SaTokenConfig implements WebMvcConfigurer {
         return new SaServletFilter()
             .addInclude("/**")
             .addExclude(
-                "/api/admin/**", // **重要: 同样在Servlet过滤器中排除Admin API**
-
                 // 认证相关公开接口
                 "/v1/auth/login",
                 "/v1/auth/register",
@@ -152,10 +144,14 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 "/v1/generate/**",
                 "/v1/intent/**",
                 "/v2/**",
+                "/v1/g3/**",
                 "/v1/prototype/generate/stream",
                 "/v1/prototype/create-app-spec",
                 "/v1/notifications/unread-count",
                 "/v1/generate/analyze-stream",
+
+                // 模板API（公开接口）
+                "/v1/templates/**",
 
                 // API文档和监控
                 "/swagger-ui/**",
@@ -170,7 +166,11 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 "/static/**",
                 "/public/**",
                 "/favicon.ico",
-                "/error"
+                "/error",
+
+                // Admin API：由独立的服务间JWT保护，必须排除C端用户登录态校验
+                "/admin/**",
+                "/api/admin/**"
             )
             // 认证函数：每次请求执行
             .setAuth(obj -> {
@@ -179,10 +179,8 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 if ("OPTIONS".equalsIgnoreCase(method)) {
                     return;
                 }
-                // 使用 SaRouter 在认证函数内部进行路径匹配，显式排除 admin 路径
-                SaRouter.match("/**")
-                        .notMatch("/api/admin/**")
-                        .check(r -> StpUtil.checkLogin());
+                // 校验登录：能执行到这里的请求，都已经被 addExclude 排除规则过滤过了
+                StpUtil.checkLogin();
             })
             // 异常处理
             .setError(e -> {

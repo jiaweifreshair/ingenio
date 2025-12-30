@@ -113,7 +113,7 @@ export function StepResultPanel({
               <div>
                 <Label className="mb-2 block">AI模型</Label>
                 <Select
-                  value={config?.model || 'qwen-max'}
+                  value={config?.model || 'gemini-3-pro-preview'}
                   onValueChange={handleModelChange}
                   disabled={!isEditable}
                 >
@@ -121,6 +121,7 @@ export function StepResultPanel({
                     <SelectValue placeholder="选择AI模型" />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="gemini-3-pro-preview">Gemini 3.0 Pro Preview (旗舰)</SelectItem>
                     <SelectItem value="qwen-max">Qwen Max (推荐)</SelectItem>
                     <SelectItem value="deepseek-coder">DeepSeek Coder</SelectItem>
                     <SelectItem value="claude-3-opus">Claude 3 Opus</SelectItem>

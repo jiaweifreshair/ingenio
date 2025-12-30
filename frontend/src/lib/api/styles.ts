@@ -19,6 +19,7 @@ import {
   Generate7StylesResponse,
   StylePreviewResponse,
 } from '@/types/design-style';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 /**
  * Mock模式标志
@@ -107,6 +108,7 @@ async function generateRealStylePreviews(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'x-trace-id': generateTraceId(),
       },
       body: JSON.stringify(request),
     });

@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "templates": [
+    {
+      "key": "jeecg-demo-local",
+      "name": "JeecgBoot Demo Module",
+      "type": "git",
+      "repository": "https://github.com/jeecgboot/jeecg-boot.git",
+      "branch": "main",
+      "sub_path": "jeecg-boot/jeecg-boot-module/jeecg-module-demo",
+      "description": "Official JeecgBoot demo module for validation."
+    }
+  ]
+}

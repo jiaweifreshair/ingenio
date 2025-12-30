@@ -28,6 +28,7 @@ import {
 } from '@/lib/api/plan-routing';
 import type { UniaixModel } from '@/lib/api/uniaix';
 import type { PhaseType } from '@/types/requirement-form';
+import type { G3LogEntry } from '@/types/g3';
 
 /**
  * useGenerationFlow Hook配置
@@ -49,6 +50,8 @@ export interface UseGenerationFlowProps {
   routingResult?: PlanRoutingResult | null;
   /** 设置路由结果 */
   setRoutingResult?: (result: PlanRoutingResult | null) => void;
+  /** 设置G3日志 */
+  setG3Logs?: (logs: G3LogEntry[] | ((prev: G3LogEntry[]) => G3LogEntry[])) => void;
 }
 
 /**
@@ -84,6 +87,7 @@ export function useGenerationFlow({
   setShowSuccess,
   routingResult,
   setRoutingResult,
+  setG3Logs,
 }: UseGenerationFlowProps): UseGenerationFlowReturn {
   const router = useRouter();
   const { toast } = useToast();
@@ -218,10 +222,44 @@ export function useGenerationFlow({
         throw new Error(confirmResult.message || '设计确认失败');
       }
 
-      // Step 2: 执行代码生成
+      // Step 2: 执行代码生成 (Phase 1.5: G3 Visual Overlay)
       console.log('[useGenerationFlow] 调用executeCodeGeneration...');
+
+      // G3 Stream Simulation
+      const logStreamPromise = (async () => {
+        if (!setG3Logs) return;
+        setG3Logs([]);
+        try {
+          const res = await fetch('/api/lab/g3-poc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requirement: requirement || "Generating application..." })
+          });
+          if (!res.body) return;
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const evt = JSON.parse(line.slice(6));
+                  if (evt.type === 'LOG') setG3Logs(prev => [...prev, evt.data]);
+                } catch { /* ignore parse errors */ }
+              }
+            }
+          }
+        } catch (e) { console.error("G3 Stream Error", e); }
+      })();
+
       const codeResult = await executeCodeGeneration(routingResult.appSpecId);
       console.log('[useGenerationFlow] 代码生成结果:', codeResult);
+
+      // Ensure stream completes for visual effect
+      if (setG3Logs) await logStreamPromise;
 
       if (codeResult.success) {
         // 显示成功动画

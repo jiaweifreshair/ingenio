@@ -14,6 +14,7 @@
 import { getToken } from '@/lib/auth/token';
 import { getApiBaseUrl } from '@/lib/api/base-url';
 import { normalizeApiResponse } from '@/lib/api/response';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 /**
  * API基础URL（包含/api前缀）
@@ -114,6 +115,7 @@ function buildFetchOptions(options: RequestInit = {}): RequestInit {
   const token = getToken();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'x-trace-id': generateTraceId(),
   };
 
   if (token) {
@@ -222,6 +224,7 @@ export async function uploadAvatar(file: File): Promise<string> {
     // SaToken不需要Bearer前缀，直接使用token值
     headers['Authorization'] = token;
   }
+  headers['x-trace-id'] = generateTraceId();
 
   const response = await fetch(`${API_BASE_URL}/v1/user/avatar`, {
     method: 'POST',

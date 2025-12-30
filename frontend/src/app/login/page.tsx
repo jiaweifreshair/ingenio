@@ -73,7 +73,7 @@ export default function LoginPage(): React.ReactElement {
           </div>
           <div className="text-center">
             <h1 className="text-2xl font-semibold text-white tracking-tight">
-              秒构 AI
+              Ingenio 妙构
             </h1>
             <p className="mt-2 text-sm text-slate-400">
               激发创意，快速构建下一代应用

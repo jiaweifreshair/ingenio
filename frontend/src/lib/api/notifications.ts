@@ -14,6 +14,7 @@ import type {
 import { getApiBaseUrl } from '@/lib/api/base-url';
 import { normalizeApiResponse } from '@/lib/api/response';
 import type { PageResult } from '@/types/project';
+import { generateTraceId } from '@/lib/api/trace-id';
 
 const API_BASE_URL = getApiBaseUrl();
 
@@ -47,6 +48,7 @@ export async function listNotifications(
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        'x-trace-id': generateTraceId(),
         // TODO: 添加认证token
         // 'Authorization': `Bearer ${getToken()}`,
       },
@@ -110,6 +112,7 @@ export async function getUnreadCount(): Promise<number> {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        'x-trace-id': generateTraceId(),
       },
       credentials: 'include',
     });
@@ -155,6 +158,7 @@ export async function markAsRead(id: string): Promise<void> {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
   });
@@ -179,6 +183,7 @@ export async function markAllAsRead(): Promise<void> {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
   });
@@ -203,6 +208,7 @@ export async function deleteNotification(id: string): Promise<void> {
     method: 'DELETE',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
   });
@@ -232,6 +238,7 @@ export async function getNotificationSettings(): Promise<NotificationSettings> {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        'x-trace-id': generateTraceId(),
       },
       credentials: 'include',
     });
@@ -303,6 +310,7 @@ export async function updateNotificationSettings(
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
     },
     credentials: 'include',
     body: JSON.stringify(settings),

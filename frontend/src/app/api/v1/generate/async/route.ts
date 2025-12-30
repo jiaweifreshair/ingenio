@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
     // 构建后端API请求
     const backendRequest = {
       userRequirement: body.userRequirement,
-      model: body.model || 'qwen-max',
+      model: body.model || 'gemini-3-pro-preview',
       skipValidation: body.skipValidation || false,
       qualityThreshold: body.qualityThreshold || 70,
       generatePreview: body.generatePreview || false,

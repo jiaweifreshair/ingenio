@@ -314,14 +314,15 @@ public class IntentClassifier {
                                 }
                             }
                     );
-
         } catch (Exception e) {
-            log.error("IntentClassifier流式启动失败", e);
+            log.error("IntentClassifier流式执行失败", e);
             try {
-                emitter.send(SseEmitter.event().name("error").data("系统内部错误: " + e.getMessage()));
+                emitter.send(SseEmitter.event().name("error").data("意图分类失败: " + e.getMessage()));
+                // SSE场景避免 completeWithError 触发异常派发，使用正常complete关闭连接
                 emitter.complete();
             } catch (IOException ioException) {
                 log.error("发送错误事件失败", ioException);
+                emitter.complete();
             }
         }
     }

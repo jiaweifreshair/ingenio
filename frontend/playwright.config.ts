@@ -38,13 +38,15 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
-  reporter: process.env.CI ? "github" : "html",
+  // 本地默认使用 HTML 报告，但禁用失败后自动启动报告服务，避免脚本/CI 场景卡住不退出
+  reporter: process.env.CI ? "github" : [["html", { open: "never" }]],
 
   // 全局超时配置
   timeout: parseInt(process.env.PLAYWRIGHT_TIMEOUT || "30000", 10),
 
   use: {
-    baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL || "http://localhost:3000",
+    // 默认使用 127.0.0.1，避免 localhost 在部分环境优先解析到 IPv6(::1) 导致连接拒绝
+    baseURL: process.env.PLAYWRIGHT_TEST_BASE_URL || "http://127.0.0.1:3000",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
 
@@ -93,7 +95,8 @@ export default defineConfig({
   webServer: {
     // 绑定到 127.0.0.1，避免在受限环境下监听 0.0.0.0 导致 EPERM
     command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
-    url: "http://localhost:3000",
+    // url 需与 hostname 保持一致，避免 Playwright 通过 localhost(IPv6) 探测时误判不可达
+    url: "http://127.0.0.1:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000,
     // stdout: 'ignore', // 减少日志噪音

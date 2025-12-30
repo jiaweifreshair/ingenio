@@ -9,16 +9,18 @@ import { Toaster } from "@/components/ui/toaster";
  */
 
 export const metadata: Metadata = {
-  title: "秒构AI - 人人可用的应用生成器",
-  description: "为校园而生，用\"选择 + 填空\"在 30 分钟做出可发布的应用",
+  title: "Ingenio 妙构 - AI原生应用孵化器",
+  description: "不仅仅是快，更是精妙。Ingenio (妙构) 专为校园创业与企业交付打造，通过 G3 红蓝博弈引擎，构建高质量、自修复的 Java 全栈应用。",
   keywords: [
     "应用生成器",
     "No-code",
     "AI",
     "校园",
-    "应用开发",
-    "秒构",
+    "企业级",
+    "Java",
+    "Spring Boot",
     "Ingenio",
+    "妙构",
   ],
   authors: [{ name: "Ingenio Team" }],
   creator: "Ingenio Team",

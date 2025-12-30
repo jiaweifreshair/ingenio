@@ -192,6 +192,14 @@ export function AnalysisProgressPanel({
   // 判断当前是否处于等待原型生成状态
   const waitingForPrototype = isWaitingForPrototype(isCompleted, finalResult);
 
+  // 🧠 跟踪 Step 6 的推理内容（DeepSeek R1 等推理模型的思考过程）
+  const step6Messages = messages.filter(m => m.step === 6);
+  const step6Reasoning = step6Messages
+    .filter(m => m.reasoning)
+    .map(m => m.reasoning)
+    .join('');
+  const isStep6Reasoning = step6Messages.some(m => m.isReasoning && m.status === 'RUNNING');
+
   // 自动展开正在运行的步骤，等待原型时收起所有步骤
   useEffect(() => {
     if (waitingForPrototype) {
@@ -246,6 +254,8 @@ export function AnalysisProgressPanel({
         onConfirm={onConfirmPlan || (() => {})}
         onModify={onModifyPlan || (() => {})}
         isGenerating={isLoading || currentPhase === 'style-selection' || currentPhase === 'prototype-preview'}
+        reasoningContent={step6Reasoning || undefined}
+        isReasoning={isStep6Reasoning}
       />
     );
   }

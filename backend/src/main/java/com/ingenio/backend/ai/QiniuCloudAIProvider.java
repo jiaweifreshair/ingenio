@@ -55,15 +55,15 @@ public class QiniuCloudAIProvider implements AIProvider {
     private static final String DEFAULT_BASE_URL = "https://api.qnaigc.com";
 
     /**
-     * 默认模型：通义千问3-235B指令微调版本
+     * 默认模型：智谱AI GLM-4.7
      *
      * 其他可选模型：
-     * - qwen3-235b-a22b-instruct-2507（推荐，综合性能最佳，235B参数）
+     * - z-ai/glm-4.7（当前使用，智谱AI最新模型）
+     * - qwen3-235b-a22b-instruct-2507（通义千问3-235B）
      * - deepseek-v3（数学和代码能力强）
      * - qwen3-coder-480b-a35b-instruct（代码生成专用，480B参数）
-     * - qwen3-32b（轻量级模型，32B参数）
      */
-    private static final String DEFAULT_MODEL = "qwen3-235b-a22b-instruct-2507";
+    private static final String DEFAULT_MODEL = "z-ai/glm-4.7";
 
     /**
      * HTTP客户端配置

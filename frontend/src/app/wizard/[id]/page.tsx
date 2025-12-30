@@ -142,7 +142,7 @@ export default function WizardPage() {
     id: appSpecId,
     config: {
       requirement: '',
-      model: 'qwen-max',
+      model: 'gemini-3-pro-preview',
       qualityThreshold: 70,
       skipValidation: false,
       generatePreview: false,
@@ -151,7 +151,6 @@ export default function WizardPage() {
   });
 
   const [appSpec, setAppSpec] = useState<AppSpecWithPlan | null>(null);
-  // const [localError, setLocalError] = useState<string | null>(null); // Removed unused state
   const [pageLoading, setPageLoading] = useState(true);
   
   // 当前UI展示的步骤索引 (0: Plan, 1: Execute, 2: Validate)
@@ -166,7 +165,6 @@ export default function WizardPage() {
 
       try {
         setPageLoading(true);
-        // setLocalError(null); // Removed
 
         // E2E测试逻辑
         if (appSpecId === 'test-wizard-123') {
@@ -191,7 +189,7 @@ export default function WizardPage() {
               setAppSpec({
                 id: fullAppSpec.id,
                 requirement: fullAppSpec.userRequirement,
-                model: 'qwen-max',
+                model: 'gemini-3-pro-preview',
                 qualityScore: fullAppSpec.qualityScore,
                 planResult: fullAppSpec.planResult,
                 frontendPrototype: fullAppSpec.frontendPrototype as Record<string, unknown>,
@@ -212,7 +210,6 @@ export default function WizardPage() {
               setIsSuccessView(true);
             }
           } catch (error) {
-            // setLocalError('AppSpec不存在，请重新生成'); // Removed
             console.error(error);
             setTask(prev => ({ ...prev, status: 'failed' }));
           }
@@ -220,7 +217,6 @@ export default function WizardPage() {
           setTask(prev => ({ ...prev, status: 'idle' }));
         }
       } catch (err) {
-        // setLocalError(err instanceof Error ? err.message : '加载数据失败'); // Removed
         console.error(err);
         setTask(prev => ({ ...prev, status: 'idle' }));
       } finally {
@@ -234,13 +230,11 @@ export default function WizardPage() {
   // 开始异步生成
   const handleStartGeneration = useCallback(async () => {
     if (!task.config.requirement?.trim()) {
-      // setLocalError('请填写应用需求描述'); // Removed
       alert('请填写应用需求描述');
       return;
     }
 
     try {
-      // setLocalError(null); // Removed
       setTask(prev => ({ ...prev, status: 'generating' }));
 
       const request: AsyncGenerateRequest = {
@@ -263,7 +257,6 @@ export default function WizardPage() {
     } catch (err) {
       console.error('生成任务创建失败:', err);
       setTask(prev => ({ ...prev, status: 'failed' }));
-      // setLocalError(err instanceof Error ? err.message : '创建生成任务失败'); // Removed
       alert(err instanceof Error ? err.message : '创建生成任务失败');
     }
   }, [task.config, setTaskId]);
@@ -361,7 +354,6 @@ export default function WizardPage() {
       result: undefined,
     }));
     setAppSpec(null);
-    // setLocalError(null); // Removed
   }, [_reset]);
 
   // 处理重置
@@ -375,7 +367,6 @@ export default function WizardPage() {
       result: undefined,
     }));
     setAppSpec(null);
-    // setLocalError(null); // Removed
   }, [_reset]);
 
   // 处理暂停
