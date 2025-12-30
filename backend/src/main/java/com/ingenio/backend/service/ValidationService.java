@@ -36,92 +36,101 @@ public class ValidationService {
 
     private final ValidationResultMapper validationResultMapper;
 
+    // Phase 1: 编译验证集成依赖
+    private final CompilationValidator compilationValidator;
+    private final com.ingenio.backend.service.adapter.ValidationRequestAdapter validationRequestAdapter;
+    private final com.ingenio.backend.service.adapter.ValidationResultAdapter validationResultAdapter;
+
     // 线程池用于并行验证
     private final ExecutorService executorService = Executors.newFixedThreadPool(5);
 
     /**
-     * 编译验证
+     * 编译验证（Phase 1重构版：委托CompilationValidator）
+     *
+     * 执行流程：
+     * 1. 适配器转换请求：CompileValidationRequest → CodeGenerationResult
+     * 2. 委托CompilationValidator执行真实编译
+     * 3. 适配器转换结果：CompilationResult → ValidationResponse
+     * 4. 保存验证记录到数据库
      *
      * @param request 编译验证请求
      * @return 验证响应
      */
     @Transactional(rollbackFor = Exception.class)
     public ValidationResponse validateCompile(CompileValidationRequest request) {
-        log.info("开始编译验证 - appSpecId: {}, language: {}", request.getAppSpecId(), request.getLanguage());
+        log.info("开始编译验证（Phase 1重构版） - appSpecId: {}, language: {}",
+                request.getAppSpecId(), request.getLanguage());
 
         Instant startTime = Instant.now();
-        ValidationResultEntity.ValidationResultEntityBuilder builder = ValidationResultEntity.builder()
-                .id(UUID.randomUUID())
-                .appSpecId(request.getAppSpecId())
-                .validationType(ValidationResultEntity.ValidationType.COMPILE.getValue())
-                .status(ValidationResultEntity.Status.RUNNING.getValue())
-                .startedAt(startTime);
 
         try {
-            // 根据语言选择编译器
-            boolean compileSuccess;
-            List<String> errors = new ArrayList<>();
+            // Step 1: 适配器转换请求（CompileValidationRequest → CodeGenerationResult）
+            log.debug("Step 1/4: 适配器转换请求");
+            com.ingenio.backend.dto.CodeGenerationResult codeResult =
+                    validationRequestAdapter.toCodeGenerationResult(request);
 
-            switch (request.getLanguage().toLowerCase()) {
-                case "typescript":
-                    compileSuccess = validateTypeScript(request.getCode(), errors);
-                    break;
-                case "java":
-                    compileSuccess = validateJava(request.getCode(), errors);
-                    break;
-                case "kotlin":
-                    compileSuccess = validateKotlin(request.getCode(), errors);
-                    break;
-                default:
-                    throw new IllegalArgumentException("不支持的编程语言: " + request.getLanguage());
-            }
+            // Step 2: 委托CompilationValidator执行真实编译
+            log.debug("Step 2/4: 委托CompilationValidator执行真实编译");
+            com.ingenio.backend.dto.CompilationResult compilationResult =
+                    compilationValidator.compile(codeResult);
 
-            // 构建验证详情
-            Map<String, Object> details = new HashMap<>();
-            details.put("compileSuccess", compileSuccess);
-            details.put("language", request.getLanguage());
-            details.put("compilerVersion", request.getCompilerVersion());
-            details.put("codeLength", request.getCode().length());
+            // Step 3: 适配器转换结果（CompilationResult → ValidationResponse）
+            log.debug("Step 3/4: 适配器转换结果");
+            ValidationResponse response = validationResultAdapter.toValidationResponse(
+                    compilationResult,
+                    request.getAppSpecId()
+            );
 
-            // 保存验证结果
-            Instant endTime = Instant.now();
-            long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
+            // Step 4: 保存验证记录到数据库
+            log.debug("Step 4/4: 保存验证记录到数据库");
+            saveValidationResult(request.getAppSpecId(), response, startTime);
 
-            builder.status(compileSuccess ? ValidationResultEntity.Status.PASSED.getValue()
-                    : ValidationResultEntity.Status.FAILED.getValue())
-                    .isPassed(compileSuccess)
-                    .validationDetails(details)
-                    .errorMessages(errors)
-                    .warningMessages(new ArrayList<>())
-                    .qualityScore(compileSuccess ? 100 : 0)
-                    .completedAt(endTime)
-                    .durationMs(durationMs)
-                    .createdAt(Instant.now())
-                    .updatedAt(Instant.now());
+            log.info("编译验证完成 - success: {}, errors: {}, warnings: {}, qualityScore: {}, durationMs: {}",
+                    response.getPassed(),
+                    response.getErrors().size(),
+                    response.getWarnings().size(),
+                    response.getQualityScore(),
+                    response.getDurationMs());
 
-            ValidationResultEntity entity = builder.build();
-            validationResultMapper.insert(entity);
-
-            log.info("编译验证完成 - success: {}, errors: {}, durationMs: {}",
-                    compileSuccess, errors.size(), durationMs);
-
-            return ValidationResponse.builder()
-                    .validationId(entity.getId())
-                    .validationType("compile")
-                    .passed(compileSuccess)
-                    .status(entity.getStatus())
-                    .qualityScore(entity.getQualityScore())
-                    .details(details)
-                    .errors(errors)
-                    .warnings(new ArrayList<>())
-                    .durationMs(durationMs)
-                    .completedAt(endTime)
-                    .build();
+            return response;
 
         } catch (Exception e) {
             log.error("编译验证失败", e);
             throw new RuntimeException("编译验证失败: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 保存验证结果到数据库
+     *
+     * @param appSpecId 应用规格ID
+     * @param response 验证响应
+     * @param startTime 开始时间
+     */
+    private void saveValidationResult(UUID appSpecId, ValidationResponse response, Instant startTime) {
+        ValidationResultEntity entity = ValidationResultEntity.builder()
+                .id(response.getValidationId())
+                .appSpecId(appSpecId)
+                .validationType(ValidationResultEntity.ValidationType.COMPILE.getValue())
+                .status(response.getPassed() ?
+                        ValidationResultEntity.Status.PASSED.getValue() :
+                        ValidationResultEntity.Status.FAILED.getValue())
+                .isPassed(response.getPassed())
+                .validationDetails(response.getDetails())
+                .errorMessages(response.getErrors())
+                .warningMessages(response.getWarnings())
+                .qualityScore(response.getQualityScore())
+                .startedAt(startTime)
+                .completedAt(response.getCompletedAt())
+                .durationMs(response.getDurationMs())
+                .createdAt(Instant.now())
+                .updatedAt(Instant.now())
+                .build();
+
+        validationResultMapper.insert(entity);
+
+        log.debug("验证结果已保存: validationId={}, passed={}",
+                entity.getId(), entity.getIsPassed());
     }
 
     /**
