@@ -304,6 +304,12 @@ public class ArchitectAgentImpl implements IArchitectAgent {
     @Override
     public ArchitectResult design(G3JobEntity job, Consumer<G3LogEntry> logConsumer) {
         String requirement = job.getRequirement();
+        
+        // 注入 Scout 模版上下文 (Phase 7 Integration)
+        if (job.getTemplateContext() != null && !job.getTemplateContext().isBlank()) {
+            logConsumer.accept(G3LogEntry.info(getRole(), "检测到Scout模版上下文，已注入Architect Prompt"));
+            requirement = requirement + "\n\n" + job.getTemplateContext();
+        }
 
         try {
             // 1. 获取AI提供商

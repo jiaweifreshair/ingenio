@@ -64,6 +64,12 @@ public class G3JobEntity {
     private String requirement;
 
     /**
+     * Scout推荐模版上下文
+     */
+    @TableField("template_context")
+    private String templateContext;
+
+    /**
      * 任务状态
      * @see Status
      */
@@ -323,11 +329,12 @@ public class G3JobEntity {
     /**
      * 创建新的G3任务
      */
-    public static G3JobEntity create(String requirement, UUID userId, UUID tenantId) {
+    public static G3JobEntity create(String requirement, UUID userId, UUID tenantId, String templateContext) {
         return G3JobEntity.builder()
             .requirement(requirement)
             .userId(userId)
             .tenantId(tenantId)
+            .templateContext(templateContext)
             .status(Status.QUEUED.getValue())
             .currentRound(0)
             .maxRounds(3)
