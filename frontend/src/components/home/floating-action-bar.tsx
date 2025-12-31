@@ -10,9 +10,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-  DropdownMenuSeparator,
-  DropdownMenuCheckboxItem,
-  DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 import {
   type IndustryType,
@@ -58,15 +55,6 @@ export function FloatingActionBar({
   useEffect(() => {
     if (selectedCapabilities !== undefined) setLocalCapabilities(selectedCapabilities);
   }, [selectedCapabilities]);
-
-  const toggleLocalCapability = (capId: AICapabilityType) => {
-    setLocalCapabilities(prev => {
-      const exists = prev.includes(capId);
-      const next = exists ? prev.filter(c => c !== capId) : [...prev, capId];
-      onCapabilitiesChange?.(next);
-      return next;
-    });
-  };
 
   // Scroll detection
   useEffect(() => {
@@ -143,12 +131,6 @@ export function FloatingActionBar({
 
   const handleRemoveMode = () => {
     onModeChange?.(null);
-  };
-
-  const handleRemoveCapability = (capId: AICapabilityType) => {
-    const updated = localCapabilities.filter(c => c !== capId);
-    setLocalCapabilities(updated);
-    onCapabilitiesChange?.(updated);
   };
 
   if (!isVisible) return null;

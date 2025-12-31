@@ -330,10 +330,9 @@ export default function QuickPreviewPage() {
             if (logsRes.ok) {
               const logs = await logsRes.json();
               // 简单的去重显示逻辑（实际应该比较 timestamp）
-              logs.forEach((log: any) => {
-                 // 这里简单处理，只显示最新的或关键的，为了防止日志爆炸，实际项目应用更复杂的日志合并
-                 // 目前为了演示，暂不重复打印，只是通过UI状态展示
-              });
+              // 日志已由后端存储，这里只检查任务状态
+              // 实际项目应使用更复杂的日志合并策略，目前通过UI状态展示进度
+              void logs; // 显式标记变量已处理
               
               // 检查任务是否完成 (后端 API 目前没返回 status，只能通过日志判断或者另外一个 API)
               // 临时方案：检查日志中是否有 "COMPLETED" 或 "FAILED"
@@ -457,7 +456,7 @@ export default function QuickPreviewPage() {
 
       let accumulationState = getInitialOpenLovableAccumulationState();
       
-      const requestBody: any = {
+      const requestBody: { userMessage: string; sandboxId: string; templateContext?: string } = {
         userMessage,
         sandboxId,
       };

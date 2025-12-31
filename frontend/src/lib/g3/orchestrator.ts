@@ -99,13 +99,13 @@ export class G3Orchestrator {
         // 在真实场景中需要处理 Markdown 代码块包裹
         const jsonStr = res.content.replace(/```json/g, '').replace(/```/g, '');
         return JSON.parse(jsonStr);
-    } catch (e) {
-        // Mock fallback
-        return { modules: [], dependencies: [] }; 
+    } catch {
+        // Mock fallback - JSON 解析失败时返回空结构
+        return { modules: [], dependencies: [] };
     }
   }
 
-  private async runPlayer(req: string, design: any, feedback: string[]): Promise<string> {
+  private async runPlayer(req: string, design: ArchitectOutput, feedback: string[]): Promise<string> {
     this.log('PLAYER', 'Writing code...', 'INFO');
     const context = `Design: ${JSON.stringify(design)}\nFeedback: ${feedback.join('\n')}`;
     const prompt = await this.loader.assemblePrompt('PLAYER', req, context);
@@ -122,7 +122,7 @@ ${code}`;
     return res.content;
   }
 
-  private async runExecutor(code: string, tests: string): Promise<{ success: boolean; error?: string }> {
+  private async runExecutor(_code: string, _tests: string): Promise<{ success: boolean; error?: string }> {
     this.log('SYSTEM', 'Running tests in sandbox...', 'INFO');
     
     // Mock Execution Logic

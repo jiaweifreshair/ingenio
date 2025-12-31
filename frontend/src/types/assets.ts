@@ -1,46 +1,63 @@
 /**
- * 能力类型定义
- * 定义系统支持的能力类型
+ * 资产类型定义
+ *
+ * 定义模板、能力等资产的数据结构
+ *
+ * @module types/assets
+ * @author Ingenio Team
+ * @since Phase 1 - G3 Engine MVP
  */
-export type CapabilityType =
-  | 'JAVA_SERVICE'      // 传统 Java 服务 (e.g. 支付, 短信)
-  | 'PYTHON_AGENT'      // 外挂 AgentScope 智能体
-  | 'JEECG_AI_NATIVE';  // JeecgBoot 原生 AI 组件 (e.g. 智能搜索, 表单填充)
 
 /**
- * 能力定义接口
+ * 能力定义
  */
 export interface Capability {
+  /** 能力ID */
   id: string;
+  /** 能力名称 */
   name: string;
+  /** 能力描述 */
   description: string;
-  type: CapabilityType;
+  /** 能力类型 */
+  type: 'JAVA_SERVICE' | 'PYTHON_AGENT' | 'JEECG_AI_NATIVE';
+  /** 是否必需（不可禁用） */
   isRequired?: boolean;
+  /** 默认是否启用 */
   defaultEnabled?: boolean;
-  // 可选：记录 Java 接口签名或 Python 脚本路径
-  meta?: Record<string, unknown>;
 }
 
 /**
- * 模板状态类型
- */
-export type TemplateStatus = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
-
-/**
- * 模板定义接口
+ * 模板定义
  */
 export interface Template {
+  /** 模板ID */
   id: string;
+  /** 模板名称 */
   name: string;
+  /** 模板描述 */
   description: string;
-  previewImage?: string;
-  scene: string;
-  tags: string[];
-  status: TemplateStatus;
-  version: string;
-  usageCount: number;
-  createdBy: string;
-  createdAt: string;
-  publishedAt?: string;
+  /** 包含的能力列表 */
   capabilities: Capability[];
+  /** 应用场景 */
+  scene?: string;
+  /** 模板图标 */
+  icon?: string;
+  /** 模板标签 */
+  tags?: string[];
+  /** 预览图片URL */
+  previewImage?: string;
+  /** 版本号 */
+  version?: string;
+  /** 使用次数 */
+  usageCount?: number;
+  /** 创建者 */
+  createdBy?: string;
+  /** 发布时间 */
+  publishedAt?: string;
+  /** 模板状态 */
+  status?: 'DRAFT' | 'PUBLISHED' | 'DEPRECATED';
+  /** 创建时间 */
+  createdAt?: string;
+  /** 更新时间 */
+  updatedAt?: string;
 }

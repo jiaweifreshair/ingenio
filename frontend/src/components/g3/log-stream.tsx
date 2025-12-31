@@ -2,10 +2,9 @@
 
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { G3LogEntry } from "@/lib/g3/types";
-import { Terminal, ShieldAlert, Code2, Cpu } from "lucide-react";
+import { Terminal } from "lucide-react";
 
 interface LogStreamProps {
   logs: G3LogEntry[];
