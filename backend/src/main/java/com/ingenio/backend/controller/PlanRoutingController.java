@@ -8,6 +8,7 @@ import com.ingenio.backend.service.PlanRoutingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.validation.annotation.Validated;
@@ -272,5 +273,38 @@ public class PlanRoutingController {
         response.put("updatedAt", Instant.now().toString());
 
         return Result.success(response);
+    }
+
+    /**
+     * 选择行业模板（Blueprint Mode入口）
+     *
+     * 说明：
+     * - 前端在用户选择模板后调用此接口
+     * - 后端会加载 IndustryTemplate.blueprintSpec 并写入 AppSpec
+     *
+     * @param appSpecId AppSpec ID
+     * @param request 选择模板请求
+     * @return 更新后的路由结果（metadata中包含 blueprintModeEnabled 等信息）
+     */
+    @PostMapping("/{appSpecId}/select-template")
+    @Operation(summary = "选择行业模板", description = "选择模板并加载 Blueprint 规范（Blueprint Mode）")
+    public Result<PlanRoutingResult> selectTemplate(
+            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId,
+            @RequestBody @Validated SelectTemplateRequest request
+    ) {
+        log.info("收到模板选择请求 - appSpecId: {}, templateId: {}", appSpecId, request.getTemplateId());
+        PlanRoutingResult result = planRoutingService.selectTemplate(appSpecId, request.getTemplateId());
+        return Result.success(result);
+    }
+
+    /**
+     * 选择模板请求体
+     */
+    @Data
+    public static class SelectTemplateRequest {
+        /**
+         * 行业模板ID
+         */
+        private UUID templateId;
     }
 }

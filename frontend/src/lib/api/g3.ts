@@ -228,6 +228,7 @@ export function subscribeToG3Logs(
 
           switch (parsedEvent.event) {
             case 'log':
+            case 'message': // 兼容后端直接返回 Flux<G3LogEntry>（无 event 字段时默认为 message）
               if (parsedEvent.data) {
                 try {
                   const logEntry = JSON.parse(parsedEvent.data) as G3LogEntry;
@@ -282,17 +283,20 @@ export function subscribeToG3Logs(
 function parseSSEEvent(eventText: string): { event: string; data: string } | null {
   const lines = eventText.split('\n');
   let event = 'message'; // 默认事件类型
-  let data = '';
+  const dataLines: string[] = [];
 
   for (const line of lines) {
     if (line.startsWith('event:')) {
       event = line.slice(6).trim();
     } else if (line.startsWith('data:')) {
-      data = line.slice(5).trim();
+      // SSE 允许出现多行 data，这里按规范拼接，避免 JSON 被切断
+      dataLines.push(line.slice(5).trim());
     } else if (line.startsWith(':')) {
       // 注释行，忽略
     }
   }
+
+  const data = dataLines.join('\n');
 
   if (!event && !data) {
     return null;

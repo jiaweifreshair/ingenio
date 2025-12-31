@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * OpenLovable代码生成请求DTO
@@ -87,6 +88,23 @@ public class OpenLovableGenerateRequest {
      */
     private String sandboxId;
 
+    // ==================== Blueprint（前端约束）====================
+
+    /**
+     * Blueprint 前端约束规范（可选）
+     *
+     * 说明：
+     * - 仅包含前端相关信息（如 apiSpec/uiSpec/dataStructure）
+     * - 作为提示词约束注入到 OpenLovable-CN 生成过程
+     */
+    private Map<String, Object> blueprintFrontendSpec;
+
+    /**
+     * 是否启用 Blueprint 模式（可选）
+     * 当 blueprintFrontendSpec 不为空时，建议为 true
+     */
+    private Boolean blueprintModeEnabled;
+
     /**
      * 验证请求参数
      *
@@ -152,6 +170,25 @@ public class OpenLovableGenerateRequest {
         if (customizationRequirement != null && !customizationRequirement.trim().isEmpty()) {
             prompt.append("\n\n定制化要求：\n");
             prompt.append(customizationRequirement);
+        }
+
+        // Blueprint 约束注入（可选）
+        if (Boolean.TRUE.equals(blueprintModeEnabled)
+                && blueprintFrontendSpec != null
+                && !blueprintFrontendSpec.isEmpty()) {
+            prompt.append("\n\n## Blueprint 前端约束（必须遵守）\n");
+            prompt.append("说明：你必须严格遵守以下约束生成前端代码（允许额外优化，但不可违反约束）。\n");
+            try {
+                String json = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .writerWithDefaultPrettyPrinter()
+                        .writeValueAsString(blueprintFrontendSpec);
+                prompt.append("```json\n").append(json).append("\n```\n");
+            } catch (Exception e) {
+                // 降级：避免因序列化失败导致生成流程中断
+                prompt.append("(Blueprint 约束序列化失败，已降级为字符串) ")
+                        .append(blueprintFrontendSpec.toString())
+                        .append("\n");
+            }
         }
 
         return prompt.toString();

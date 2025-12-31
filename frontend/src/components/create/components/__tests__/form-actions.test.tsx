@@ -33,9 +33,9 @@ describe('FormActions', () => {
 
   /**
    * 测试1: 两个按钮渲染
-   * 验证快速预览和完整生成两个按钮都正确渲染
+   * 验证V2.0智能创建和直接生成两个按钮都正确渲染
    */
-  it('应该渲染快速预览和完整生成两个按钮', () => {
+  it('应该渲染V2.0智能创建和直接生成两个按钮', () => {
     const onFullGeneration = vi.fn();
 
     render(
@@ -47,15 +47,15 @@ describe('FormActions', () => {
       />
     );
 
-    expect(screen.getByRole('button', { name: /快速Web预览/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /生成应用/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /V2.0智能创建/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /直接生成/ })).toBeInTheDocument();
   });
 
   /**
-   * 测试2: 快速预览按钮跳转
-   * 验证点击快速预览按钮触发路由跳转
+   * 测试2: V2.0智能创建按钮跳转
+   * 验证点击V2.0智能创建按钮触发路由跳转
    */
-  it('应该在点击快速预览按钮时跳转到预览页面', async () => {
+  it('应该在点击V2.0智能创建按钮时跳转到首页', async () => {
     const user = userEvent.setup();
     const onFullGeneration = vi.fn();
 
@@ -68,22 +68,17 @@ describe('FormActions', () => {
       />
     );
 
-    const quickPreviewButton = screen.getByRole('button', { name: /快速Web预览/ });
-    await user.click(quickPreviewButton);
+    const v2Button = screen.getByRole('button', { name: /V2.0智能创建/ });
+    await user.click(v2Button);
 
-    expect(mockPush).toHaveBeenCalledWith(
-      expect.stringContaining('/preview-quick/')
-    );
-    expect(mockPush).toHaveBeenCalledWith(
-      expect.stringContaining(encodeURIComponent('test requirement'))
-    );
+    expect(mockPush).toHaveBeenCalledWith('/');
   });
 
   /**
-   * 测试3: 完整生成按钮回调
-   * 验证点击完整生成按钮触发onFullGeneration回调
+   * 测试3: 直接生成按钮回调
+   * 验证点击直接生成按钮触发onFullGeneration回调
    */
-  it('应该在点击完整生成按钮时触发onFullGeneration回调', async () => {
+  it('应该在点击直接生成按钮时触发onFullGeneration回调', async () => {
     const user = userEvent.setup();
     const onFullGeneration = vi.fn();
 
@@ -96,8 +91,8 @@ describe('FormActions', () => {
       />
     );
 
-    const fullGenerationButton = screen.getByRole('button', { name: /生成应用/ });
-    await user.click(fullGenerationButton);
+    const directGenerateButton = screen.getByRole('button', { name: /直接生成/ });
+    await user.click(directGenerateButton);
 
     expect(onFullGeneration).toHaveBeenCalledTimes(1);
   });
@@ -126,9 +121,9 @@ describe('FormActions', () => {
 
   /**
    * 测试5: 按钮禁用状态（isValid=false）
-   * 验证表单无效时两个按钮都被禁用
+   * 验证表单无效时直接生成按钮被禁用（V2.0按钮只在loading时禁用）
    */
-  it('应该在isValid为false时禁用两个按钮', () => {
+  it('应该在isValid为false时禁用直接生成按钮', () => {
     const onFullGeneration = vi.fn();
 
     render(
@@ -140,11 +135,12 @@ describe('FormActions', () => {
       />
     );
 
-    const quickPreviewButton = screen.getByRole('button', { name: /快速Web预览/ });
-    const fullGenerationButton = screen.getByRole('button', { name: /生成应用/ });
+    const v2Button = screen.getByRole('button', { name: /V2.0智能创建/ });
+    const directGenerateButton = screen.getByRole('button', { name: /直接生成/ });
 
-    expect(quickPreviewButton).toBeDisabled();
-    expect(fullGenerationButton).toBeDisabled();
+    // V2.0按钮不受isValid影响，只在loading时禁用
+    expect(v2Button).not.toBeDisabled();
+    expect(directGenerateButton).toBeDisabled();
   });
 
   /**
@@ -163,11 +159,11 @@ describe('FormActions', () => {
       />
     );
 
-    const quickPreviewButton = screen.getByRole('button', { name: /快速Web预览/ });
-    const fullGenerationButton = screen.getByRole('button', { name: /AI正在分析你的需求/ });
+    const v2Button = screen.getByRole('button', { name: /V2.0智能创建/ });
+    const loadingButton = screen.getByRole('button', { name: /AI正在分析你的需求/ });
 
-    expect(quickPreviewButton).toBeDisabled();
-    expect(fullGenerationButton).toBeDisabled();
+    expect(v2Button).toBeDisabled();
+    expect(loadingButton).toBeDisabled();
   });
 
   /**

@@ -15,7 +15,9 @@ import com.ingenio.backend.dto.response.Generate7StylesResponse;
 import com.ingenio.backend.dto.response.OpenLovableGenerateResponse;
 import com.ingenio.backend.dto.response.StylePreviewResponse;
 import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.entity.IndustryTemplateEntity;
 import com.ingenio.backend.mapper.AppSpecMapper;
+import com.ingenio.backend.mapper.IndustryTemplateMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -58,6 +60,7 @@ public class PlanRoutingService {
     private final SuperDesignService superDesignService;
     private final OpenLovableService openLovableService;
     private final AppSpecMapper appSpecMapper;
+    private final IndustryTemplateMapper industryTemplateMapper;
     private final ExecuteAgentFactory executeAgentFactory;
 
     /**
@@ -657,6 +660,14 @@ public class PlanRoutingService {
         String designPrompt = buildDesignPromptFromSpec(userRequirement, designSpec);
         log.info("用户需求: {}, 生成的设计prompt长度: {}", userRequirement, designPrompt.length());
 
+        // Blueprint 约束（可选）：透传到 OpenLovable 生成提示词中
+        boolean blueprintModeEnabled = Boolean.TRUE.equals(appSpec.getBlueprintModeEnabled())
+                && appSpec.getBlueprintSpec() != null
+                && !appSpec.getBlueprintSpec().isEmpty();
+        Map<String, Object> blueprintFrontendSpec = blueprintModeEnabled
+                ? extractFrontendBlueprintSpec(appSpec.getBlueprintSpec())
+                : null;
+
         // Step 2: 调用 OpenLovable 服务生成原型
         OpenLovableGenerateRequest openLovableRequest = OpenLovableGenerateRequest.builder()
                 .userRequirement(designPrompt)
@@ -665,6 +676,8 @@ public class PlanRoutingService {
                 .streaming(false)
                 .aiModel("gemini-3-pro-preview")  // 默认优先 Gemini 3 Pro，避免空代码导致预览不可用
                 .timeoutSeconds(90) // 设计分支需要更长时间
+                .blueprintFrontendSpec(blueprintFrontendSpec)
+                .blueprintModeEnabled(blueprintModeEnabled)
                 .build();
 
         long prototypeStartTime = System.currentTimeMillis();
@@ -731,6 +744,112 @@ public class PlanRoutingService {
                 .selectedStyleId(selectedStyleId)
                 .nextAction("请预览交互式原型并确认设计")
                 .requiresUserConfirmation(true)
+                .build();
+    }
+
+    /**
+     * 选择行业模板并加载 Blueprint
+     *
+     * 用途：
+     * - 用户在 Plan 阶段选择模板后，显式绑定模板与 Blueprint 规范
+     * - 后续 OpenLovable / G3 生成可在 Blueprint Mode 下运行（约束注入 + 合规校验）
+     *
+     * @param appSpecId AppSpec ID
+     * @param templateId 行业模板ID
+     * @return 更新后的路由结果
+     */
+    @Transactional
+    public PlanRoutingResult selectTemplate(UUID appSpecId, UUID templateId) {
+        log.info("[PlanRouting] 选择模板 - appSpecId: {}, templateId: {}", appSpecId, templateId);
+
+        if (templateId == null) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "templateId不能为空");
+        }
+
+        AppSpecEntity appSpec = appSpecMapper.selectById(appSpecId);
+        if (appSpec == null) {
+            throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
+        }
+
+        IndustryTemplateEntity template = industryTemplateMapper.selectById(templateId);
+        if (template == null) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "模板不存在");
+        }
+
+        if (Boolean.FALSE.equals(template.getIsActive())) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "模板已禁用");
+        }
+
+        Map<String, Object> blueprintSpec = template.getBlueprintSpec();
+        boolean blueprintModeEnabled = blueprintSpec != null && !blueprintSpec.isEmpty();
+        UUID blueprintId = extractBlueprintId(blueprintSpec);
+        if (blueprintModeEnabled && blueprintId == null && blueprintSpec != null && blueprintSpec.get("id") != null) {
+            log.warn("[PlanRouting] Blueprint id 非 UUID，已忽略: {}", blueprintSpec.get("id"));
+        }
+
+        // 写入 AppSpec（DB字段）
+        appSpec.setSelectedTemplateId(templateId);
+        appSpec.setBlueprintId(blueprintId);
+        appSpec.setBlueprintSpec(blueprintSpec);
+        appSpec.setBlueprintModeEnabled(blueprintModeEnabled);
+        appSpec.setUpdatedAt(Instant.now());
+
+        // 同步写入 metadata（便于排障与回溯）
+        Map<String, Object> updatedMetadata = appSpec.getMetadata() != null
+                ? new HashMap<>(appSpec.getMetadata())
+                : new HashMap<>();
+        updatedMetadata.put("selectedTemplateId", templateId.toString());
+        updatedMetadata.put("selectedTemplateName", template.getName());
+        updatedMetadata.put("blueprintModeEnabled", blueprintModeEnabled);
+        if (blueprintId != null) {
+            updatedMetadata.put("blueprintId", blueprintId.toString());
+        }
+        updatedMetadata.put("blueprintLoadedAt", Instant.now().toString());
+        appSpec.setMetadata(updatedMetadata);
+
+        appSpecMapper.updateById(appSpec);
+
+        RequirementIntent intent = RequirementIntent.DESIGN_FROM_SCRATCH;
+        if (appSpec.getIntentType() != null) {
+            try {
+                intent = RequirementIntent.valueOf(appSpec.getIntentType());
+            } catch (IllegalArgumentException ignored) {
+                // 忽略未知值，保持默认
+            }
+        }
+
+        RoutingBranch branch = switch (intent) {
+            case CLONE_EXISTING_WEBSITE -> RoutingBranch.CLONE;
+            case HYBRID_CLONE_AND_CUSTOMIZE -> RoutingBranch.HYBRID;
+            default -> RoutingBranch.DESIGN;
+        };
+
+        double confidence = appSpec.getConfidenceScore() != null
+                ? appSpec.getConfidenceScore().doubleValue()
+                : 0.0;
+
+        Map<String, Object> resultMetadata = new HashMap<>();
+        resultMetadata.put("selectedTemplateId", templateId.toString());
+        resultMetadata.put("selectedTemplateName", template.getName());
+        resultMetadata.put("blueprintModeEnabled", blueprintModeEnabled);
+        if (blueprintId != null) {
+            resultMetadata.put("blueprintId", blueprintId.toString());
+        }
+
+        log.info("[PlanRouting] ✅ 模板选择完成 - appSpecId: {}, blueprintModeEnabled: {}, blueprintId: {}",
+                appSpecId, blueprintModeEnabled, blueprintId);
+
+        return PlanRoutingResult.builder()
+                .appSpecId(appSpecId)
+                .intent(intent)
+                .confidence(confidence)
+                .branch(branch)
+                .prototypeGenerated(appSpec.getFrontendPrototypeUrl() != null && !appSpec.getFrontendPrototypeUrl().isBlank())
+                .prototypeUrl(appSpec.getFrontendPrototypeUrl())
+                .selectedStyleId(appSpec.getSelectedStyle())
+                .nextAction(blueprintModeEnabled ? "模板已选择，Blueprint 约束已加载" : "模板已选择（未找到Blueprint）")
+                .requiresUserConfirmation(true)
+                .metadata(resultMetadata)
                 .build();
     }
 
@@ -1125,6 +1244,262 @@ public class PlanRoutingService {
             case "natural_flow" -> "自然流动";
             default -> styleCode;
         };
+    }
+
+    /**
+     * 从 BlueprintSpec 中提取 blueprintId（UUID）
+     *
+     * 说明：
+     * - Blueprint JSON 的 id 字段已统一为 UUID 字符串（例如：28f12c4d-db84-...）
+     * - 为兼容历史数据（id 仍为 slug 或其他格式），解析失败时返回 null，不阻塞主流程
+     *
+     * @param blueprintSpec Blueprint 规范（JSONB Map）
+     * @return blueprintId（UUID）或 null
+     */
+    private static UUID extractBlueprintId(Map<String, Object> blueprintSpec) {
+        if (blueprintSpec == null || blueprintSpec.isEmpty()) {
+            return null;
+        }
+
+        Object idObj = blueprintSpec.get("id");
+        if (idObj == null) {
+            return null;
+        }
+
+        String idStr = idObj.toString().trim();
+        if (idStr.isBlank()) {
+            return null;
+        }
+
+        try {
+            return UUID.fromString(idStr);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * 从完整 Blueprint 规范中提取“前端约束子集”（F6 最小版）
+     *
+     * 背景与目的：
+     * - 当前仓库的 Blueprint JSON 仅包含 schema/features（没有 apiSpec/uiSpec）。
+     * - OpenLovable 生成前端原型时，我们只做最小可用约束：由 schema 推导 dataStructure，
+     *   让前端代码至少遵循“字段口径”，避免生成时随意改字段名导致后续对接困难。
+     *
+     * 约束范围：
+     * - 仅返回 {"dataStructure": {...}}，不包含 DDL、features、constraints 等后端侧信息。
+     *
+     * @param fullBlueprint Blueprint 完整规范（JSONB Map）
+     * @return 前端约束 Map（为空表示无法提取）
+     */
+    private Map<String, Object> extractFrontendBlueprintSpec(Map<String, Object> fullBlueprint) {
+        if (fullBlueprint == null || fullBlueprint.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        Map<String, Object> frontendSpec = new LinkedHashMap<>();
+        Map<String, Object> dataStructure = new LinkedHashMap<>();
+
+        Object schemaObj = fullBlueprint.get("schema");
+        if (schemaObj instanceof List<?> tables) {
+            for (Object t : tables) {
+                if (!(t instanceof Map<?, ?> tableMap)) {
+                    continue;
+                }
+
+                Object tableNameObj = tableMap.get("tableName");
+                if (tableNameObj == null) {
+                    // 兼容少量历史口径：table
+                    tableNameObj = tableMap.get("table");
+                }
+                if (tableNameObj == null) {
+                    continue;
+                }
+
+                String tableName = tableNameObj.toString().trim();
+                if (tableName.isBlank()) {
+                    continue;
+                }
+
+                String interfaceName = toTypescriptInterfaceName(tableName);
+                Map<String, Object> fields = new LinkedHashMap<>();
+
+                Object columnsObj = tableMap.get("columns");
+                if (columnsObj instanceof List<?> columns) {
+                    for (Object c : columns) {
+                        if (!(c instanceof Map<?, ?> colMap)) {
+                            continue;
+                        }
+
+                        Object colNameObj = colMap.get("name");
+                        if (colNameObj == null) {
+                            continue;
+                        }
+
+                        String columnName = colNameObj.toString().trim();
+                        if (columnName.isBlank()) {
+                            continue;
+                        }
+
+                        // 兼容复合主键占位写法：{"name":"PRIMARY KEY","type":"COMPOSITE",...}
+                        if ("PRIMARY KEY".equalsIgnoreCase(columnName)) {
+                            continue;
+                        }
+
+                        Object typeObj = colMap.get("type");
+                        String dbType = typeObj != null ? typeObj.toString() : "";
+                        Object commentObj = colMap.get("comment");
+                        String comment = commentObj != null ? commentObj.toString() : "";
+
+                        String tsType = mapDbTypeToTypescriptType(dbType, columnName, comment);
+                        fields.put(columnName, tsType);
+                    }
+                }
+
+                if (!fields.isEmpty()) {
+                    dataStructure.put(interfaceName, fields);
+                }
+            }
+        }
+
+        if (!dataStructure.isEmpty()) {
+            frontendSpec.put("dataStructure", dataStructure);
+        }
+
+        return frontendSpec.isEmpty() ? Collections.emptyMap() : frontendSpec;
+    }
+
+    /**
+     * 将表名转换为 TypeScript 接口名（PascalCase + 轻量单数化）
+     *
+     * 目的：
+     * - 给 OpenLovable 一个更“前端友好”的结构名称（例如 users → User）
+     * - 保持推导过程可解释、可复现（避免引入复杂的 NLP/词形还原依赖）
+     */
+    private static String toTypescriptInterfaceName(String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            return "Unknown";
+        }
+        String normalized = singularizeTableName(tableName.trim());
+        return toPascalCase(normalized);
+    }
+
+    /**
+     * 轻量单数化表名（仅覆盖最常见的英语复数后缀）
+     *
+     * 说明：
+     * - 本项目的 blueprint 表名多为英文复数（users/products/categories/...）
+     * - 这里做最小规则集，避免引入额外依赖与误判
+     */
+    private static String singularizeTableName(String value) {
+        String v = value;
+        if (v == null) {
+            return "";
+        }
+        String lower = v.toLowerCase(Locale.ROOT);
+
+        // categories -> category
+        if (lower.endsWith("ies") && lower.length() > 3) {
+            return v.substring(0, v.length() - 3) + "y";
+        }
+        // users -> user, messages -> message, posts -> post
+        if (lower.endsWith("s") && lower.length() > 1 && !lower.endsWith("ss")) {
+            return v.substring(0, v.length() - 1);
+        }
+        return v;
+    }
+
+    /**
+     * snake_case / kebab-case → PascalCase
+     *
+     * 示例：
+     * - post_tags -> PostTags
+     * - post-tags -> PostTags
+     */
+    private static String toPascalCase(String value) {
+        if (value == null || value.isBlank()) {
+            return "Unknown";
+        }
+        String[] parts = value.split("[_\\-]+");
+        StringBuilder sb = new StringBuilder();
+        for (String part : parts) {
+            if (part == null || part.isBlank()) {
+                continue;
+            }
+            String p = part.trim();
+            sb.append(Character.toUpperCase(p.charAt(0)));
+            if (p.length() > 1) {
+                sb.append(p.substring(1));
+            }
+        }
+        return sb.length() == 0 ? "Unknown" : sb.toString();
+    }
+
+    /**
+     * 将 Blueprint 中的 PostgreSQL 字段类型映射为 TypeScript 类型
+     *
+     * 为什么要做映射：
+     * - OpenLovable 生成 UI 时需要字段的基本类型信息（string/number/boolean）
+     * - 当前阶段不追求 100% 精确，只做“足够约束”的最小推断
+     */
+    private static String mapDbTypeToTypescriptType(String dbType, String columnName, String comment) {
+        if (dbType == null) {
+            return "string";
+        }
+        String t = dbType.trim().toUpperCase(Locale.ROOT);
+
+        if (t.startsWith("UUID")) {
+            return "string";
+        }
+        if (t.startsWith("VARCHAR")
+                || t.startsWith("CHAR")
+                || t.startsWith("TEXT")) {
+            return isStringArrayHint(columnName, comment) ? "string[]" : "string";
+        }
+        if (t.startsWith("DECIMAL")
+                || t.startsWith("NUMERIC")
+                || t.startsWith("INT")
+                || t.startsWith("INTEGER")
+                || t.startsWith("BIGINT")
+                || t.startsWith("SMALLINT")
+                || t.startsWith("FLOAT")
+                || t.startsWith("DOUBLE")) {
+            return "number";
+        }
+        if (t.startsWith("BOOLEAN") || t.startsWith("BOOL")) {
+            return "boolean";
+        }
+        if (t.startsWith("TIMESTAMP") || t.startsWith("DATE") || t.startsWith("TIME")) {
+            // 统一按 string 处理，避免让生成端假设存在 Date 序列化策略
+            return "string";
+        }
+
+        // 默认降级为 string，保证前端生成过程不因未知类型中断
+        return "string";
+    }
+
+    /**
+     * 判断某个字段是否更像“字符串数组”
+     *
+     * 说明：
+     * - Blueprint 当前用 TEXT 表达 JSON 数组（例如 images 字段）
+     * - 这里通过字段名/注释做最小启发式推断，提升原型可用性
+     */
+    private static boolean isStringArrayHint(String columnName, String comment) {
+        String name = columnName != null ? columnName.toLowerCase(Locale.ROOT) : "";
+        String c = comment != null ? comment : "";
+
+        if (name.equals("images")
+                || name.endsWith("_images")
+                || name.endsWith("_urls")
+                || name.equals("image_urls")
+                || name.endsWith("_ids")) {
+            return true;
+        }
+
+        return c.contains("数组")
+                || c.contains("列表")
+                || c.toLowerCase(Locale.ROOT).contains("json");
     }
 
     /**

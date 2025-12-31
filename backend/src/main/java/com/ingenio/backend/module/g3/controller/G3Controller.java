@@ -52,7 +52,10 @@ public class G3Controller {
         UUID jobId = orchestratorService.submitJob(
                 request.getRequirement(),
                 null,  // userId - 后续从认证上下文获取
-                null   // tenantId - 后续从认证上下文获取
+                null,  // tenantId - 后续从认证上下文获取
+                request.getAppSpecId(),
+                request.getTemplateId(),
+                request.getMaxRounds()
         );
 
         return Result.success(new SubmitJobResponse(jobId.toString()));
@@ -172,6 +175,23 @@ public class G3Controller {
     @Data
     public static class SubmitJobRequest {
         private String requirement;
+        /**
+         * AppSpec ID（可选）
+         * 传入后端将自动从 AppSpec 加载 Blueprint/tenantId/userId 等上下文
+         */
+        private UUID appSpecId;
+
+        /**
+         * 行业模板ID（可选）
+         * 传入后端将自动从模板加载 Blueprint（用于快速试跑）
+         */
+        private UUID templateId;
+
+        /**
+         * 最大修复轮次（可选）
+         * 覆盖默认的 ingenio.g3.sandbox.max-rounds 配置
+         */
+        private Integer maxRounds;
     }
 
     @Data

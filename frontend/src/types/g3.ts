@@ -10,18 +10,25 @@
 
 /**
  * G3 角色类型
+ * - PLAYER: 蓝方，负责代码生成
+ * - COACH: 红方，负责代码修复
+ * - EXECUTOR: 裁判，负责编译验证
+ * - ARCHITECT: 架构师，负责契约设计
  */
-export type G3Role = 'PLAYER' | 'COACH' | 'EXECUTOR';
+export type G3Role = 'PLAYER' | 'COACH' | 'EXECUTOR' | 'ARCHITECT';
 
 /**
  * G3 任务状态
+ * 与后端 G3JobEntity.status 保持一致
  */
 export type G3JobStatus =
-  | 'PENDING'
-  | 'RUNNING'
-  | 'COMPLETED'
-  | 'FAILED'
-  | 'CANCELLED';
+  | 'QUEUED'      // 排队中
+  | 'PLANNING'    // 架构设计中
+  | 'CODING'      // 代码生成中
+  | 'TESTING'     // 编译验证中
+  | 'COMPLETED'   // 已完成
+  | 'FAILED'      // 失败
+  | 'CANCELLED';  // 已取消
 
 /**
  * G3 日志条目

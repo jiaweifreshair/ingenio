@@ -188,6 +188,29 @@ public class AppSpecEntity {
     @TableField(value = "intent_classification_result", typeHandler = JacksonTypeHandler.class)
     private Map<String, Object> intentClassificationResult;
 
+    // ==================== Blueprint（蓝图规范）====================
+
+    /**
+     * Blueprint ID（可选）
+     * 来自 blueprintSpec.id，用于快速追溯当前AppSpec绑定的蓝图
+     */
+    @TableField(value = "blueprint_id", typeHandler = UUIDv8TypeHandler.class)
+    private UUID blueprintId;
+
+    /**
+     * Blueprint 完整规范（JSONB）
+     * 用于在运行期注入约束（Blueprint Mode）并做合规性校验
+     */
+    @TableField(value = "blueprint_spec", typeHandler = JacksonTypeHandler.class)
+    private Map<String, Object> blueprintSpec;
+
+    /**
+     * Blueprint 模式是否启用
+     * true 表示生成流程必须遵守 blueprintSpec 中的约束
+     */
+    @TableField("blueprint_mode_enabled")
+    private Boolean blueprintModeEnabled;
+
     // ==================== AppSpec状态枚举 ====================
 
     /**

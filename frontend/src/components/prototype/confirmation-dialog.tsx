@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { AlertTriangle, CheckCircle2 } from 'lucide-react';
 import type { G3LogEntry } from '@/types/g3';
-import { G3LogViewer } from '@/components/generation/G3LogViewer';
+import { G3LogViewerSimple } from '@/components/generation/G3LogViewer';
 
 interface ConfirmationDialogProps {
   isOpen: boolean;
@@ -52,7 +52,7 @@ export function ConfirmationDialog({
               </DialogDescription>
             </DialogHeader>
             <div className="py-2">
-               <G3LogViewer logs={g3Logs} />
+               <G3LogViewerSimple logs={g3Logs} />
             </div>
           </div>
         ) : (

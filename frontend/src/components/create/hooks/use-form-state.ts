@@ -81,7 +81,7 @@ export interface UseFormStateReturn {
 export function useFormState(): UseFormStateReturn {
   // ==================== 状态定义 ====================
   const [requirement, setRequirement] = useState('');
-  const [selectedModel, setSelectedModel] = useState<UniaixModel>(UNIAIX_MODELS.QWEN_TURBO);
+  const [selectedModel, setSelectedModel] = useState<UniaixModel>(UNIAIX_MODELS.GEMINI_3_PRO_PREVIEW);
   const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -106,7 +106,7 @@ export function useFormState(): UseFormStateReturn {
    */
   const resetAll = useCallback(() => {
     setRequirement('');
-    setSelectedModel(UNIAIX_MODELS.QWEN_TURBO);
+    setSelectedModel(UNIAIX_MODELS.GEMINI_3_PRO_PREVIEW);
     setSelectedStyle(null);
     setLoading(false);
     setShowSuccess(false);

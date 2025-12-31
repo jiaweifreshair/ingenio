@@ -197,6 +197,8 @@ public class OpenLovableService {
                     .streaming(request.getStreaming())
                     .aiModel(request.getAiModel())
                     .timeoutSeconds(request.getTimeoutSeconds())
+                    .blueprintFrontendSpec(request.getBlueprintFrontendSpec())
+                    .blueprintModeEnabled(request.getBlueprintModeEnabled())
                     .sandboxId(sandboxId)
                     .build();
 

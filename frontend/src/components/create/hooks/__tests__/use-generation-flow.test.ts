@@ -26,6 +26,7 @@ const mockPush = vi.fn();
 const mockToast = vi.fn();
 const mockConnect = vi.fn();
 const mockRouteRequirement = vi.fn();
+const mockSelectTemplate = vi.fn();
 const mockConfirmDesign = vi.fn();
 const mockExecuteCodeGeneration = vi.fn();
 
@@ -51,6 +52,7 @@ vi.mock('@/hooks/use-analysis-sse', () => ({
 
 vi.mock('@/lib/api/plan-routing', () => ({
   routeRequirement: (...args: unknown[]) => mockRouteRequirement(...args),
+  selectTemplate: (...args: unknown[]) => mockSelectTemplate(...args),
   confirmDesign: (...args: unknown[]) => mockConfirmDesign(...args),
   executeCodeGeneration: (...args: unknown[]) => mockExecuteCodeGeneration(...args),
 }));
@@ -86,6 +88,7 @@ describe('useGenerationFlow', () => {
     mockToast.mockClear();
     mockConnect.mockClear();
     mockRouteRequirement.mockClear();
+    mockSelectTemplate.mockClear();
     mockConfirmDesign.mockClear();
     mockExecuteCodeGeneration.mockClear();
 

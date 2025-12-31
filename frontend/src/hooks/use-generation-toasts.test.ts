@@ -468,10 +468,10 @@ describe("useGenerationToasts Hook集成测试 - use-generation-toasts.ts", () =
         result.current.showAgentCompleteNotification("DataAgent", 5400); // 5.4秒
       });
 
+      // 实现将耗时放在title中，如 "✅ DataAgent完成 (耗时 5.4s)"
       expect(mockToast).toHaveBeenCalledWith(
         expect.objectContaining({
-          title: expect.stringContaining("DataAgent完成"),
-          description: expect.stringContaining("5.4s"),
+          title: "✅ DataAgent完成 (耗时 5.4s)",
         })
       );
     });

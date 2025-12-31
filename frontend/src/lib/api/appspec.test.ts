@@ -97,7 +97,7 @@ describe("AppSpec API - appspec.ts", () => {
 
       const result = await getAppSpec("app-123");
 
-      expect(clientModule.get).toHaveBeenCalledWith("/api/v1/appspecs/app-123");
+      expect(clientModule.get).toHaveBeenCalledWith("/v1/appspecs/app-123");
       expect(result).toEqual(mockResponse);
       expect(result.data).toEqual(mockAppSpec);
       expect(result.success).toBe(true);
@@ -338,7 +338,7 @@ describe("AppSpec API - appspec.ts", () => {
       const result = await updateAppSpec("app-123", updateData);
 
       expect(clientModule.put).toHaveBeenCalledWith(
-        "/api/v1/appspecs/app-123",
+        "/v1/appspecs/app-123",
         updateData
       );
       expect(result.data?.userRequirement).toBe("更新后的需求描述");
@@ -361,7 +361,7 @@ describe("AppSpec API - appspec.ts", () => {
       const result = await updateAppSpec("app-123", partialUpdate);
 
       expect(clientModule.put).toHaveBeenCalledWith(
-        "/api/v1/appspecs/app-123",
+        "/v1/appspecs/app-123",
         partialUpdate
       );
       expect(result.data?.status).toBe("completed");
@@ -390,7 +390,7 @@ describe("AppSpec API - appspec.ts", () => {
 
       const result = await updateAppSpec("app-123", {});
 
-      expect(clientModule.put).toHaveBeenCalledWith("/api/v1/appspecs/app-123", {});
+      expect(clientModule.put).toHaveBeenCalledWith("/v1/appspecs/app-123", {});
       expect(result.success).toBe(true);
     });
 
@@ -435,7 +435,7 @@ describe("AppSpec API - appspec.ts", () => {
 
       const result = await deleteAppSpec("app-123");
 
-      expect(clientModule.del).toHaveBeenCalledWith("/api/v1/appspecs/app-123");
+      expect(clientModule.del).toHaveBeenCalledWith("/v1/appspecs/app-123");
       expect(result.success).toBe(true);
       expect(result.data?.deleted).toBe(true);
     });
@@ -505,7 +505,7 @@ describe("AppSpec API - appspec.ts", () => {
 
       const result = await getAppSpecList();
 
-      expect(clientModule.get).toHaveBeenCalledWith("/api/v1/appspecs");
+      expect(clientModule.get).toHaveBeenCalledWith("/v1/appspecs");
       expect(result.data?.items).toHaveLength(2);
       expect(result.data?.total).toBe(2);
     });
@@ -531,7 +531,7 @@ describe("AppSpec API - appspec.ts", () => {
       await getAppSpecList(options);
 
       expect(clientModule.get).toHaveBeenCalledWith(
-        "/api/v1/appspecs?sortBy=createdAt&sortOrder=desc"
+        "/v1/appspecs?sortBy=createdAt&sortOrder=desc"
       );
     });
 
@@ -556,7 +556,7 @@ describe("AppSpec API - appspec.ts", () => {
       await getAppSpecList(options);
 
       expect(clientModule.get).toHaveBeenCalledWith(
-        "/api/v1/appspecs?page=2&limit=20"
+        "/v1/appspecs?page=2&limit=20"
       );
     });
 
@@ -580,7 +580,7 @@ describe("AppSpec API - appspec.ts", () => {
       await getAppSpecList(options);
 
       expect(clientModule.get).toHaveBeenCalledWith(
-        "/api/v1/appspecs?status=completed"
+        "/v1/appspecs?status=completed"
       );
     });
 
@@ -608,7 +608,7 @@ describe("AppSpec API - appspec.ts", () => {
       await getAppSpecList(options);
 
       expect(clientModule.get).toHaveBeenCalledWith(
-        "/api/v1/appspecs?sortBy=qualityScore&sortOrder=desc&status=completed&page=1&limit=20"
+        "/v1/appspecs?sortBy=qualityScore&sortOrder=desc&status=completed&page=1&limit=20"
       );
     });
 
@@ -785,7 +785,7 @@ describe("AppSpec API - appspec.ts", () => {
 
       const result = await getAppSpec("");
 
-      expect(clientModule.get).toHaveBeenCalledWith("/api/v1/appspecs/");
+      expect(clientModule.get).toHaveBeenCalledWith("/v1/appspecs/");
       expect(result.success).toBe(false);
     });
 

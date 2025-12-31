@@ -248,6 +248,46 @@ public class IndustryTemplateEntity {
     @TableField(value = "workflows", typeHandler = JacksonTypeHandler.class)
     private List<Map<String, Object>> workflows;
 
+    // ==================== 蓝图规范（Blueprint）====================
+
+    /**
+     * 模版蓝图规范定义（JSONB类型）
+     *
+     * 作用：
+     * 1. 约束AI代码生成行为（Blueprint Mode）
+     * 2. 定义核心表结构和API规范
+     * 3. 提供生成约束指令
+     *
+     * 格式：JSON对象
+     * {
+     *   "meta": {
+     *     "templateId": "campus-marketplace",
+     *     "version": "1.0.0",
+     *     "description": "校园二手交易平台"
+     *   },
+     *   "constraints": {
+     *     "coreTables": ["users", "products", "orders"],
+     *     "allowCustomFields": true,
+     *     "disallowRename": true
+     *   },
+     *   "schema": {
+     *     "users": {
+     *       "id": "UUID PRIMARY KEY",
+     *       "email": "VARCHAR(255) NOT NULL UNIQUE",
+     *       "password_hash": "VARCHAR(255) NOT NULL"
+     *     }
+     *   },
+     *   "apis": [
+     *     {"method": "POST", "path": "/api/users", "description": "用户注册"}
+     *   ],
+     *   "features": ["user-auth", "product-crud", "order-management"]
+     * }
+     *
+     * @since V023 Blueprint-Driven Architecture
+     */
+    @TableField(value = "blueprint_spec", typeHandler = JacksonTypeHandler.class)
+    private Map<String, Object> blueprintSpec;
+
     // ==================== 技术栈建议 ====================
 
     /**

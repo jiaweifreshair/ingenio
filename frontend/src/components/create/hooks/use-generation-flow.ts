@@ -22,12 +22,13 @@ import { useToast } from '@/hooks/use-toast';
 import { useAnalysisSse, type AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
 import {
   routeRequirement,
+  selectTemplate,
   confirmDesign,
   executeCodeGeneration,
   type PlanRoutingResult
 } from '@/lib/api/plan-routing';
 import type { UniaixModel } from '@/lib/api/uniaix';
-import type { PhaseType } from '@/types/requirement-form';
+import type { PhaseType, LoadedTemplate } from '@/types/requirement-form';
 import type { G3LogEntry } from '@/types/g3';
 
 /**
@@ -38,6 +39,8 @@ export interface UseGenerationFlowProps {
   requirement: string;
   /** 选中的AI模型 */
   selectedModel: UniaixModel;
+  /** 已加载的模板（可选，用于 F2: selectTemplate） */
+  loadedTemplate?: LoadedTemplate | null;
   /** 设置加载状态 */
   setLoading: (loading: boolean) => void;
   /** 设置显示分析面板 */
@@ -85,6 +88,7 @@ export function useGenerationFlow({
   setShowAnalysis,
   setCurrentPhase,
   setShowSuccess,
+  loadedTemplate,
   routingResult,
   setRoutingResult,
   setG3Logs,
@@ -166,6 +170,30 @@ export function useGenerationFlow({
         if (setRoutingResult) {
           setRoutingResult(result);
         }
+
+        // F2: 如果用户从模板库页面带入 templateId（UUID），则立即绑定并加载 Blueprint
+        const templateId = loadedTemplate?.id;
+        const isUuidTemplateId =
+          typeof templateId === 'string' &&
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(templateId);
+
+        if (templateId && isUuidTemplateId) {
+          try {
+            const updated = await selectTemplate(result.appSpecId, templateId);
+            setRoutingResult?.(updated);
+            toast({
+              title: 'Blueprint 已加载',
+              description: `已绑定行业模板: ${loadedTemplate?.name || templateId}`,
+            });
+          } catch (e) {
+            console.warn('[useGenerationFlow] 选择模板失败（已忽略，不阻塞主流程）:', e);
+            toast({
+              title: '模板绑定失败',
+              description: e instanceof Error ? e.message : '请选择模板后重试',
+              variant: 'destructive',
+            });
+          }
+        }
       } catch (err) {
         console.error('[useGenerationFlow] 路由失败:', err);
         toast({
@@ -178,7 +206,7 @@ export function useGenerationFlow({
         setCurrentPhase('idle');
       }
     },
-    [requirement, setLoading, setShowAnalysis, setCurrentPhase, startAnalysis, toast, setRoutingResult]
+    [requirement, setLoading, setShowAnalysis, setCurrentPhase, startAnalysis, toast, setRoutingResult, loadedTemplate]
   );
 
   /**
@@ -225,7 +253,7 @@ export function useGenerationFlow({
       // Step 2: 执行代码生成 (Phase 1.5: G3 Visual Overlay)
       console.log('[useGenerationFlow] 调用executeCodeGeneration...');
 
-      // G3 Stream Simulation
+      // G3 日志流（用于视觉覆盖层：展示后端 Java G3 的实时日志）
       const logStreamPromise = (async () => {
         if (!setG3Logs) return;
         setG3Logs([]);
@@ -233,22 +261,38 @@ export function useGenerationFlow({
           const res = await fetch('/api/lab/g3-poc', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ requirement: requirement || "Generating application..." })
+            body: JSON.stringify({
+              requirement: requirement || "Generating application...",
+              // 传入 appSpecId 以便后端自动加载 Blueprint 上下文（若已绑定）
+              appSpecId: routingResult.appSpecId,
+            })
           });
           if (!res.body) return;
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
+          let buffer = '';
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n\n');
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                try {
-                  const evt = JSON.parse(line.slice(6));
-                  if (evt.type === 'LOG') setG3Logs(prev => [...prev, evt.data]);
-                } catch { /* ignore parse errors */ }
+            buffer += decoder.decode(value, { stream: true });
+            const events = buffer.split('\n\n');
+            buffer = events.pop() || '';
+
+            for (const eventText of events) {
+              if (!eventText.trim()) continue;
+
+              const dataLines = eventText
+                .split('\n')
+                .filter((line) => line.startsWith('data:'))
+                .map((line) => line.slice(5).trim());
+              const dataStr = dataLines.join('\n').trim();
+              if (!dataStr) continue;
+
+              try {
+                const logEntry = JSON.parse(dataStr) as G3LogEntry;
+                setG3Logs((prev) => [...prev, logEntry]);
+              } catch {
+                // ignore parse errors
               }
             }
           }
@@ -287,7 +331,7 @@ export function useGenerationFlow({
       });
       setLoading(false);
     }
-  }, [routingResult, setLoading, setShowSuccess, router, toast]);
+  }, [routingResult, setLoading, setShowSuccess, router, toast, setG3Logs, requirement]);
 
   return {
     messages,

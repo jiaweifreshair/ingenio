@@ -1,5 +1,5 @@
 {
-  "id": "personal-blog",
+  "id": "f46a9ce0-e682-4a4d-922b-bfd8ba70807d",
   "name": "个人博客系统",
   "description": "简约风格的个人博客系统，支持Markdown文章发布、标签分类、评论互动和关于我页面。",
   "category": "内容媒体",
@@ -18,7 +18,7 @@
       "tableName": "users",
       "comment": "管理员用户表",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
         {"name": "username", "type": "VARCHAR(50)", "constraints": "NOT NULL UNIQUE"},
         {"name": "password", "type": "VARCHAR(100)", "constraints": "NOT NULL"},
         {"name": "nickname", "type": "VARCHAR(50)"},
@@ -29,7 +29,7 @@
       "tableName": "posts",
       "comment": "文章表",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
         {"name": "title", "type": "VARCHAR(200)", "constraints": "NOT NULL"},
         {"name": "slug", "type": "VARCHAR(200)", "constraints": "UNIQUE", "comment": "URL友好的别名"},
         {"name": "summary", "type": "VARCHAR(500)", "comment": "文章摘要"},
@@ -46,7 +46,7 @@
       "tableName": "tags",
       "comment": "标签表",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
         {"name": "name", "type": "VARCHAR(50)", "constraints": "NOT NULL UNIQUE"}
       ]
     },
@@ -54,8 +54,8 @@
       "tableName": "post_tags",
       "comment": "文章标签关联表",
       "columns": [
-        {"name": "post_id", "type": "BIGINT", "constraints": "NOT NULL"},
-        {"name": "tag_id", "type": "BIGINT", "constraints": "NOT NULL"},
+        {"name": "post_id", "type": "UUID", "constraints": "NOT NULL"},
+        {"name": "tag_id", "type": "UUID", "constraints": "NOT NULL"},
         {"name": "PRIMARY KEY", "type": "COMPOSITE", "columns": ["post_id", "tag_id"]}
       ]
     },
@@ -63,8 +63,8 @@
       "tableName": "comments",
       "comment": "评论表",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
-        {"name": "post_id", "type": "BIGINT", "constraints": "NOT NULL"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
+        {"name": "post_id", "type": "UUID", "constraints": "NOT NULL"},
         {"name": "nickname", "type": "VARCHAR(50)", "constraints": "NOT NULL", "comment": "访客昵称"},
         {"name": "email", "type": "VARCHAR(100)", "comment": "访客邮箱"},
         {"name": "content", "type": "VARCHAR(1000)", "constraints": "NOT NULL"},

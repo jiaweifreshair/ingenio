@@ -6,6 +6,9 @@ import com.ingenio.backend.ai.AIProviderFactory;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
+import com.ingenio.backend.service.blueprint.BlueprintComplianceResult;
+import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
+import com.ingenio.backend.service.blueprint.BlueprintValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.yaml.snakeyaml.Yaml;
@@ -32,8 +35,6 @@ import java.util.regex.Pattern;
 public class ArchitectAgentImpl implements IArchitectAgent {
 
     private static final String AGENT_NAME = "ArchitectAgent";
-
-    private final AIProviderFactory aiProviderFactory;
 
     /**
      * OpenAPI契约生成提示词模板
@@ -247,8 +248,22 @@ public class ArchitectAgentImpl implements IArchitectAgent {
         现在请根据需求和契约生成PostgreSQL DDL。
         """;
 
-    public ArchitectAgentImpl(AIProviderFactory aiProviderFactory) {
+    /**
+     * Blueprint 合规性修复的最大尝试次数
+     */
+    private static final int MAX_BLUEPRINT_SCHEMA_ATTEMPTS = 3;
+
+    private final AIProviderFactory aiProviderFactory;
+    private final BlueprintPromptBuilder blueprintPromptBuilder;
+    private final BlueprintValidator blueprintValidator;
+
+    public ArchitectAgentImpl(
+            AIProviderFactory aiProviderFactory,
+            BlueprintPromptBuilder blueprintPromptBuilder,
+            BlueprintValidator blueprintValidator) {
         this.aiProviderFactory = aiProviderFactory;
+        this.blueprintPromptBuilder = blueprintPromptBuilder;
+        this.blueprintValidator = blueprintValidator;
     }
 
     @Override
@@ -311,6 +326,18 @@ public class ArchitectAgentImpl implements IArchitectAgent {
             requirement = requirement + "\n\n" + job.getTemplateContext();
         }
 
+        // 注入 Blueprint 约束（V3）
+        boolean blueprintModeEnabled = Boolean.TRUE.equals(job.getBlueprintModeEnabled())
+                && job.getBlueprintSpec() != null
+                && !job.getBlueprintSpec().isEmpty();
+        if (blueprintModeEnabled) {
+            String blueprintConstraint = blueprintPromptBuilder.buildArchitectConstraint(job.getBlueprintSpec());
+            if (!blueprintConstraint.isBlank()) {
+                logConsumer.accept(G3LogEntry.info(getRole(), "Blueprint Mode 激活 - 注入架构约束"));
+                requirement = requirement + blueprintConstraint;
+            }
+        }
+
         try {
             // 1. 获取AI提供商
             AIProvider aiProvider = aiProviderFactory.getProvider();
@@ -320,41 +347,84 @@ public class ArchitectAgentImpl implements IArchitectAgent {
 
             logConsumer.accept(G3LogEntry.info(getRole(), "开始分析需求: " + truncate(requirement, 50)));
 
-            // 2. 生成OpenAPI契约
-            logConsumer.accept(G3LogEntry.info(getRole(), "正在生成API契约文档..."));
-            String contractPrompt = String.format(CONTRACT_PROMPT_TEMPLATE, requirement);
-            AIProvider.AIResponse contractResponse = aiProvider.generate(contractPrompt,
-                    AIProvider.AIRequest.builder()
-                            .temperature(0.3)  // 降低随机性，保证格式稳定
-                            .maxTokens(8000)
-                            .build());
+            String contractYaml = null;
+            String dbSchemaSql = null;
+            String lastViolationHint = null;
 
-            String contractYaml = extractYamlContent(contractResponse.content());
+            for (int attempt = 1; attempt <= MAX_BLUEPRINT_SCHEMA_ATTEMPTS; attempt++) {
+                String attemptRequirement = requirement;
+                if (lastViolationHint != null && !lastViolationHint.isBlank()) {
+                    attemptRequirement = attemptRequirement
+                            + "\n\n## 上一轮 Blueprint 合规性失败信息（必须修复）\n"
+                            + lastViolationHint
+                            + "\n\n请严格修复上述 Blueprint 违规项后重新生成契约与DDL。";
+                }
 
-            // 验证契约格式
-            if (!validateContract(contractYaml)) {
-                logConsumer.accept(G3LogEntry.warn(getRole(), "契约格式验证失败，尝试修复..."));
-                contractYaml = fixYamlFormat(contractYaml);
+                // 2. 生成OpenAPI契约
+                logConsumer.accept(G3LogEntry.info(getRole(),
+                        "正在生成API契约文档...（attempt " + attempt + "/" + MAX_BLUEPRINT_SCHEMA_ATTEMPTS + "）"));
+                String contractPrompt = String.format(CONTRACT_PROMPT_TEMPLATE, attemptRequirement);
+                AIProvider.AIResponse contractResponse = aiProvider.generate(contractPrompt,
+                        AIProvider.AIRequest.builder()
+                                .temperature(0.3)  // 降低随机性，保证格式稳定
+                                .maxTokens(8000)
+                                .build());
+
+                contractYaml = extractYamlContent(contractResponse.content());
+
+                // 验证契约格式
+                if (!validateContract(contractYaml)) {
+                    logConsumer.accept(G3LogEntry.warn(getRole(), "契约格式验证失败，尝试修复..."));
+                    contractYaml = fixYamlFormat(contractYaml);
+                }
+                logConsumer.accept(G3LogEntry.success(getRole(), "API契约生成完成"));
+
+                // 3. 生成数据库Schema
+                logConsumer.accept(G3LogEntry.info(getRole(), "正在生成数据库Schema..."));
+                String schemaPrompt = String.format(SCHEMA_PROMPT_TEMPLATE, attemptRequirement, contractYaml);
+                AIProvider.AIResponse schemaResponse = aiProvider.generate(schemaPrompt,
+                        AIProvider.AIRequest.builder()
+                                .temperature(0.2)  // 更低的随机性
+                                .maxTokens(4000)
+                                .build());
+
+                dbSchemaSql = extractSqlContent(schemaResponse.content());
+
+                // 验证Schema格式
+                if (!validateSchema(dbSchemaSql)) {
+                    logConsumer.accept(G3LogEntry.warn(getRole(), "Schema格式验证失败，尝试修复..."));
+                    dbSchemaSql = fixSqlFormat(dbSchemaSql);
+                }
+
+                // Blueprint 合规性校验（仅 Blueprint Mode）
+                if (blueprintModeEnabled) {
+                    BlueprintComplianceResult compliance =
+                            blueprintValidator.validateSchemaCompliance(dbSchemaSql, job.getBlueprintSpec());
+                    if (!compliance.passed()) {
+                        String violationsPreview = compliance.violations().stream()
+                                .limit(10)
+                                .reduce("", (acc, v) -> acc + "- " + v + "\n");
+
+                        logConsumer.accept(G3LogEntry.warn(getRole(),
+                                "Blueprint 合规性验证失败（attempt " + attempt + "），准备重试"));
+
+                        lastViolationHint = violationsPreview;
+
+                        if (attempt < MAX_BLUEPRINT_SCHEMA_ATTEMPTS) {
+                            continue;
+                        }
+
+                        logConsumer.accept(G3LogEntry.error(getRole(),
+                                "Blueprint 合规性验证失败，已达到最大尝试次数"));
+                        return ArchitectResult.failure("Blueprint 合规性验证失败: " + compliance.violations());
+                    }
+
+                    logConsumer.accept(G3LogEntry.success(getRole(), "Blueprint 合规性验证通过 ✅"));
+                }
+
+                logConsumer.accept(G3LogEntry.success(getRole(), "数据库Schema生成完成"));
+                break;
             }
-            logConsumer.accept(G3LogEntry.success(getRole(), "API契约生成完成"));
-
-            // 3. 生成数据库Schema
-            logConsumer.accept(G3LogEntry.info(getRole(), "正在生成数据库Schema..."));
-            String schemaPrompt = String.format(SCHEMA_PROMPT_TEMPLATE, requirement, contractYaml);
-            AIProvider.AIResponse schemaResponse = aiProvider.generate(schemaPrompt,
-                    AIProvider.AIRequest.builder()
-                            .temperature(0.2)  // 更低的随机性
-                            .maxTokens(4000)
-                            .build());
-
-            String dbSchemaSql = extractSqlContent(schemaResponse.content());
-
-            // 验证Schema格式
-            if (!validateSchema(dbSchemaSql)) {
-                logConsumer.accept(G3LogEntry.warn(getRole(), "Schema格式验证失败，尝试修复..."));
-                dbSchemaSql = fixSqlFormat(dbSchemaSql);
-            }
-            logConsumer.accept(G3LogEntry.success(getRole(), "数据库Schema生成完成"));
 
             // 4. 返回结果
             logConsumer.accept(G3LogEntry.success(getRole(), "架构设计完成，契约已锁定"));

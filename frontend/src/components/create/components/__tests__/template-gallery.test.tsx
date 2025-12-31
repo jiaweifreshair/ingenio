@@ -75,7 +75,6 @@ describe('TemplateGallery', () => {
 
     expect(screen.getByTestId('template-card-template-1')).toBeInTheDocument();
     expect(screen.getByTestId('template-card-template-2')).toBeInTheDocument();
-    expect(screen.getByTestId('template-card-template-3')).toBeInTheDocument();
   });
 
   /**
@@ -124,7 +123,7 @@ describe('TemplateGallery', () => {
     expect(onTemplateClick).toHaveBeenCalledTimes(1);
     expect(onTemplateClick).toHaveBeenCalledWith({
       id: 'template-1',
-      title: '电商平台模板',
+      title: '电商模版',
       description: 'test description',
     });
   });

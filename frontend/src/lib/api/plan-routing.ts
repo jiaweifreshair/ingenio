@@ -288,6 +288,42 @@ export async function routeRequirement(
 }
 
 /**
+ * 选择行业模板并加载 Blueprint（F2）
+ *
+ * 说明：
+ * - 对应后端 PlanRoutingController#selectTemplate
+ * - 将 templateId 绑定到 appSpec，并由后端写入 blueprintSpec/blueprintModeEnabled
+ *
+ * @param appSpecId - AppSpec ID
+ * @param templateId - 行业模板ID（UUID字符串）
+ * @returns 更新后的路由结果
+ */
+export async function selectTemplate(
+  appSpecId: string,
+  templateId: string
+): Promise<PlanRoutingResult> {
+  console.log('[PlanRouting API] 选择模板并加载 Blueprint:', { appSpecId, templateId });
+
+  if (!appSpecId) {
+    throw new Error('AppSpec ID 不能为空');
+  }
+  if (!templateId) {
+    throw new Error('templateId 不能为空');
+  }
+
+  const response = await post<PlanRoutingResult>(
+    `/v2/plan-routing/${appSpecId}/select-template`,
+    { templateId }
+  );
+
+  if (!response.success || !response.data) {
+    throw new Error(response.error || response.message || '模板选择失败');
+  }
+
+  return response.data;
+}
+
+/**
  * 选择设计风格并生成原型
  * 仅设计分支有效，生成完整的前端原型代码
  *

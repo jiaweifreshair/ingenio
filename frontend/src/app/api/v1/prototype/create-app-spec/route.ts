@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { APIResponse } from '@/lib/api/client';
 
 /**
- * 后端Java服务基准地址
+ * 获取后端Java服务基准地址
  * 说明：后端配置了 context-path=/api，因此这里默认包含 /api 前缀。
+ * 注意：动态读取环境变量以支持测试时的mock
  */
-const BACKEND_API_URL = process.env.BACKEND_API_URL || 'http://localhost:8080/api';
+function getBackendApiUrl(): string {
+  return process.env.BACKEND_API_URL || 'http://localhost:8080/api';
+}
 
 /**
  * POST /api/v1/prototype/create-app-spec
@@ -49,7 +52,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const backendUrl = `${BACKEND_API_URL}/v1/prototype/create-app-spec`;
+    const backendUrl = `${getBackendApiUrl()}/v1/prototype/create-app-spec`;
     const startTime = Date.now();
 
     const response = await fetch(backendUrl, {

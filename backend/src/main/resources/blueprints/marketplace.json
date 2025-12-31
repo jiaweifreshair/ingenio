@@ -1,5 +1,5 @@
 {
-  "id": "campus-marketplace",
+  "id": "28f12c4d-db84-4583-ba26-96426a415c68",
   "name": "校园二手交易平台",
   "description": "专为校园设计的二手物品交易平台，支持学生认证、商品发布、私信沟通和线下交易。",
   "category": "电商",
@@ -18,7 +18,7 @@
       "tableName": "users",
       "comment": "用户表（学生）",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
         {"name": "username", "type": "VARCHAR(50)", "constraints": "NOT NULL UNIQUE", "comment": "用户名"},
         {"name": "password", "type": "VARCHAR(100)", "constraints": "NOT NULL", "comment": "加密密码"},
         {"name": "student_id", "type": "VARCHAR(20)", "constraints": "NOT NULL UNIQUE", "comment": "学号"},
@@ -31,8 +31,8 @@
       "tableName": "products",
       "comment": "商品表",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
-        {"name": "seller_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "卖家ID (FK -> users.id)"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
+        {"name": "seller_id", "type": "UUID", "constraints": "NOT NULL", "comment": "卖家ID (FK -> users.id)"},
         {"name": "title", "type": "VARCHAR(100)", "constraints": "NOT NULL", "comment": "商品标题"},
         {"name": "description", "type": "TEXT", "comment": "商品详情描述"},
         {"name": "price", "type": "DECIMAL(10,2)", "constraints": "NOT NULL", "comment": "价格"},
@@ -46,7 +46,7 @@
       "tableName": "categories",
       "comment": "商品分类表",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
         {"name": "name", "type": "VARCHAR(50)", "constraints": "NOT NULL", "comment": "分类名称"},
         {"name": "icon", "type": "VARCHAR(255)", "comment": "分类图标"}
       ]
@@ -55,10 +55,10 @@
       "tableName": "messages",
       "comment": "私信消息表",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
-        {"name": "sender_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "发送者ID"},
-        {"name": "receiver_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "接收者ID"},
-        {"name": "product_id", "type": "BIGINT", "comment": "关联商品ID (可选)"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
+        {"name": "sender_id", "type": "UUID", "constraints": "NOT NULL", "comment": "发送者ID"},
+        {"name": "receiver_id", "type": "UUID", "constraints": "NOT NULL", "comment": "接收者ID"},
+        {"name": "product_id", "type": "UUID", "comment": "关联商品ID (可选)"},
         {"name": "content", "type": "TEXT", "constraints": "NOT NULL", "comment": "消息内容"},
         {"name": "is_read", "type": "BOOLEAN", "constraints": "DEFAULT FALSE", "comment": "是否已读"},
         {"name": "created_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"}
@@ -68,11 +68,11 @@
       "tableName": "orders",
       "comment": "交易订单表",
       "columns": [
-        {"name": "id", "type": "BIGINT", "constraints": "PRIMARY KEY AUTO_INCREMENT"},
+        {"name": "id", "type": "UUID", "constraints": "PRIMARY KEY DEFAULT gen_random_uuid()"},
         {"name": "order_no", "type": "VARCHAR(32)", "constraints": "NOT NULL UNIQUE", "comment": "订单号"},
-        {"name": "buyer_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "买家ID"},
-        {"name": "seller_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "卖家ID"},
-        {"name": "product_id", "type": "BIGINT", "constraints": "NOT NULL", "comment": "商品ID"},
+        {"name": "buyer_id", "type": "UUID", "constraints": "NOT NULL", "comment": "买家ID"},
+        {"name": "seller_id", "type": "UUID", "constraints": "NOT NULL", "comment": "卖家ID"},
+        {"name": "product_id", "type": "UUID", "constraints": "NOT NULL", "comment": "商品ID"},
         {"name": "amount", "type": "DECIMAL(10,2)", "constraints": "NOT NULL", "comment": "交易金额"},
         {"name": "status", "type": "VARCHAR(20)", "constraints": "DEFAULT 'PENDING'", "comment": "状态: PENDING, PAID, COMPLETED, CANCELLED"},
         {"name": "created_at", "type": "TIMESTAMP", "constraints": "DEFAULT CURRENT_TIMESTAMP"}

@@ -105,13 +105,13 @@ describe('AnalysisPanel', () => {
   });
 
   /**
-   * 测试5: 风格选择阶段显示加载状态
-   * V2.0简化版：风格选择阶段显示"正在生成原型..."加载状态
+   * 测试5: 风格选择阶段也显示AnalysisProgressPanel
+   * V2.0简化版：组件在所有阶段都渲染AnalysisProgressPanel
    */
-  it('应该在style-selection阶段显示原型生成加载状态', () => {
+  it('应该在style-selection阶段继续显示AnalysisProgressPanel', () => {
     render(<AnalysisPanel {...defaultProps} currentPhase="style-selection" />);
 
-    expect(screen.getByText('正在生成原型...')).toBeInTheDocument();
-    expect(screen.queryByTestId('analysis-progress-panel')).not.toBeInTheDocument();
+    // V2.0简化版：组件总是渲染AnalysisProgressPanel
+    expect(screen.getByTestId('analysis-progress-panel')).toBeInTheDocument();
   });
 });

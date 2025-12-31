@@ -6,6 +6,7 @@ import com.ingenio.backend.ai.AIProviderFactory;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
+import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -34,13 +35,66 @@ public class BackendCoderAgentImpl implements ICoderAgent {
     private static final String TARGET_LANGUAGE = "java";
 
     private final AIProviderFactory aiProviderFactory;
+    private final BlueprintPromptBuilder blueprintPromptBuilder;
+
+    /**
+     * 公共代码规范提示词 - 精选自项目 .claude/CLAUDE.md
+     * 这些规范适用于所有生成的Java代码
+     */
+    private static final String CODE_STANDARDS_PROMPT = """
+
+        ## 代码生成核心规范
+
+        ### 代码生成八荣八耻
+        - 以明确定义职责为荣，以模糊职责界限为耻
+        - 以复用可靠模块为荣，以重复造轮子为耻
+        - 以实现验证闭环为荣，以忽略测试验证为耻
+        - 以优化算法架构为荣，以牺牲代码性能为耻
+        - 以注重长期质量为荣，以追求短期快捷为耻
+
+        ### SOLID设计原则（必须遵守）
+        - **S - 单一职责**：一个类只有一个变化原因
+        - **O - 开闭原则**：对扩展开放，对修改关闭
+        - **L - 里氏替换**：子类型必须能替换基类型
+        - **I - 接口隔离**：客户端不依赖不需要的接口
+        - **D - 依赖倒置**：依赖抽象而非实现
+
+        ### Java语言规范
+        - 遵循 Google Java Style Guide
+        - 使用 Lombok 减少样板代码（@Data, @Builder, @RequiredArgsConstructor）
+        - 构造器注入优于字段注入
+        - 使用 Optional 处理可能为空的返回值
+        - 禁止 Magic Number，使用常量定义
+
+        ### 注释规范（强制要求）
+        - **所有类必须有类级JavaDoc**：描述职责和用途
+        - **所有public方法必须有JavaDoc**：描述参数、返回值、异常
+        - **使用中文注释**：便于团队理解
+        - **完整性**：描述"是什么"、"做什么"、"为什么"
+        - **准确性**：注释与代码同步更新
+
+        ### 安全编码规范
+        - **SQL注入防护**：使用参数化查询或MyBatis-Plus的方法
+        - **日志安全**：禁止记录明文密码、Token、敏感信息
+        - **输入校验**：使用 @Validated 进行参数校验
+        - **异常处理**：细粒度异常处理，不吞没异常
+
+        ### 质量标准
+        - 代码编译必须通过（0 errors, 0 warnings）
+        - 遵循分层架构：Controller -> Service -> Mapper -> Entity
+        - 业务逻辑放在Service层，Controller只做请求转发
+        - 使用 @Transactional 管理事务边界
+
+        """;
 
     /**
      * 代码生成提示词模板 - 实体类
      * 优化版本: 添加完整示例、UUID显式生成说明、JSONB字段处理、枚举定义
      */
     private static final String ENTITY_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师。请根据以下数据库Schema生成MyBatis-Plus实体类。
+        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下数据库Schema生成MyBatis-Plus实体类。
+
+        %s
 
         ## 数据库Schema
         ```sql
@@ -213,7 +267,9 @@ public class BackendCoderAgentImpl implements ICoderAgent {
      * 代码生成提示词模板 - Mapper接口
      */
     private static final String MAPPER_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师。请根据以下实体类生成MyBatis-Plus Mapper接口。
+        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下实体类生成MyBatis-Plus Mapper接口。
+
+        %s
 
         ## 实体类定义
         ```java
@@ -240,7 +296,9 @@ public class BackendCoderAgentImpl implements ICoderAgent {
      * 代码生成提示词模板 - Service层
      */
     private static final String SERVICE_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师。请根据以下OpenAPI契约和Mapper接口生成Service层代码。
+        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和Mapper接口生成Service层代码。
+
+        %s
 
         ## OpenAPI契约
         ```yaml
@@ -278,7 +336,9 @@ public class BackendCoderAgentImpl implements ICoderAgent {
      * 代码生成提示词模板 - Controller层
      */
     private static final String CONTROLLER_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师。请根据以下OpenAPI契约和Service接口生成REST Controller。
+        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和Service接口生成REST Controller。
+
+        %s
 
         ## OpenAPI契约
         ```yaml
@@ -309,8 +369,11 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         ```
         """;
 
-    public BackendCoderAgentImpl(AIProviderFactory aiProviderFactory) {
+    public BackendCoderAgentImpl(
+            AIProviderFactory aiProviderFactory,
+            BlueprintPromptBuilder blueprintPromptBuilder) {
         this.aiProviderFactory = aiProviderFactory;
+        this.blueprintPromptBuilder = blueprintPromptBuilder;
     }
 
     @Override
@@ -358,6 +421,10 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         }
 
         try {
+            if (shouldEnableBlueprint(job)) {
+                logConsumer.accept(G3LogEntry.info(getRole(), "Blueprint Mode 激活 - 注入编码约束"));
+            }
+
             AIProvider aiProvider = aiProviderFactory.getProvider();
             if (!aiProvider.isAvailable()) {
                 return CoderResult.failure("AI提供商不可用");
@@ -423,7 +490,10 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
 
-        String prompt = String.format(ENTITY_PROMPT_TEMPLATE, dbSchemaSql);
+        String blueprintConstraint = shouldEnableBlueprint(job)
+                ? blueprintPromptBuilder.buildEntityConstraint(job.getBlueprintSpec())
+                : "";
+        String prompt = String.format(ENTITY_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, dbSchemaSql);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -444,7 +514,10 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
 
-        String prompt = String.format(MAPPER_PROMPT_TEMPLATE, entityCode);
+        String blueprintConstraint = shouldEnableBlueprint(job)
+                ? blueprintPromptBuilder.buildEntityConstraint(job.getBlueprintSpec())
+                : "";
+        String prompt = String.format(MAPPER_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, entityCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -466,7 +539,10 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
 
-        String prompt = String.format(SERVICE_PROMPT_TEMPLATE, contractYaml, mapperCode);
+        String blueprintConstraint = shouldEnableBlueprint(job)
+                ? blueprintPromptBuilder.buildServiceConstraint(job.getBlueprintSpec())
+                : "";
+        String prompt = String.format(SERVICE_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, mapperCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -488,7 +564,10 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
 
-        String prompt = String.format(CONTROLLER_PROMPT_TEMPLATE, contractYaml, serviceCode);
+        String blueprintConstraint = shouldEnableBlueprint(job)
+                ? blueprintPromptBuilder.buildServiceConstraint(job.getBlueprintSpec())
+                : "";
+        String prompt = String.format(CONTROLLER_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, serviceCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -542,6 +621,15 @@ public class BackendCoderAgentImpl implements ICoderAgent {
                 G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
                 generationRound
         );
+    }
+
+    /**
+     * 判断是否启用 Blueprint Mode
+     */
+    private boolean shouldEnableBlueprint(G3JobEntity job) {
+        return Boolean.TRUE.equals(job.getBlueprintModeEnabled())
+                && job.getBlueprintSpec() != null
+                && !job.getBlueprintSpec().isEmpty();
     }
 
     /**

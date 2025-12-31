@@ -28,7 +28,7 @@ describe('useFormState', () => {
     const { result } = renderHook(() => useFormState());
 
     expect(result.current.requirement).toBe('');
-    expect(result.current.selectedModel).toBe(UNIAIX_MODELS.QWEN_MAX);
+    expect(result.current.selectedModel).toBe(UNIAIX_MODELS.GEMINI_3_PRO_PREVIEW);
     expect(result.current.selectedStyle).toBeNull();
     expect(result.current.loading).toBe(false);
     expect(result.current.showSuccess).toBe(false);
@@ -53,16 +53,17 @@ describe('useFormState', () => {
 
   /**
    * 测试3: setSelectedModel更新状态
-   * 验证setSelectedModel正确更新AI模型
+   * 验证setSelectedModel正确更新AI模型（从默认Gemini切换到Qwen）
    */
   it('应该正确更新selectedModel状态', () => {
     const { result } = renderHook(() => useFormState());
 
+    // 默认是 Gemini，切换到 Qwen Max
     act(() => {
-      result.current.setSelectedModel(UNIAIX_MODELS.QWEN_TURBO);
+      result.current.setSelectedModel(UNIAIX_MODELS.QWEN_MAX);
     });
 
-    expect(result.current.selectedModel).toBe(UNIAIX_MODELS.QWEN_TURBO);
+    expect(result.current.selectedModel).toBe(UNIAIX_MODELS.QWEN_MAX);
   });
 
   /**
@@ -125,10 +126,10 @@ describe('useFormState', () => {
   it('应该在调用resetAll时重置所有状态', () => {
     const { result } = renderHook(() => useFormState());
 
-    // 先修改所有状态
+    // 先修改所有状态（从默认Gemini切换到其他模型）
     act(() => {
       result.current.setRequirement('测试需求');
-      result.current.setSelectedModel(UNIAIX_MODELS.QWEN_TURBO);
+      result.current.setSelectedModel(UNIAIX_MODELS.QWEN_MAX);
       result.current.setSelectedStyle('现代极简');
       result.current.setLoading(true);
       result.current.setShowSuccess(true);
@@ -148,7 +149,7 @@ describe('useFormState', () => {
 
     // 验证所有状态已重置
     expect(result.current.requirement).toBe('');
-    expect(result.current.selectedModel).toBe(UNIAIX_MODELS.QWEN_MAX);
+    expect(result.current.selectedModel).toBe(UNIAIX_MODELS.GEMINI_3_PRO_PREVIEW);
     expect(result.current.selectedStyle).toBeNull();
     expect(result.current.loading).toBe(false);
     expect(result.current.showSuccess).toBe(false);
@@ -171,7 +172,7 @@ describe('useFormState', () => {
 
     // 验证其他状态未受影响
     expect(result.current.requirement).toBe('测试需求');
-    expect(result.current.selectedModel).toBe(UNIAIX_MODELS.QWEN_MAX);
+    expect(result.current.selectedModel).toBe(UNIAIX_MODELS.GEMINI_3_PRO_PREVIEW);
     expect(result.current.loading).toBe(false);
     expect(result.current.currentPhase).toBe('idle');
 

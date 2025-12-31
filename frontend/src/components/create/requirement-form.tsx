@@ -108,6 +108,7 @@ export function RequirementForm(): React.ReactElement {
   } = useGenerationFlow({
     requirement,
     selectedModel,
+    loadedTemplate,
     setLoading,
     setShowAnalysis,
     setCurrentPhase,

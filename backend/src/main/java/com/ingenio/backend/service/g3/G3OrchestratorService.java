@@ -3,13 +3,19 @@ package com.ingenio.backend.service.g3;
 import com.ingenio.backend.agent.g3.IArchitectAgent;
 import com.ingenio.backend.agent.g3.ICoachAgent;
 import com.ingenio.backend.agent.g3.ICoderAgent;
+import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.entity.IndustryTemplateEntity;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
+import com.ingenio.backend.mapper.AppSpecMapper;
+import com.ingenio.backend.mapper.IndustryTemplateMapper;
 import com.ingenio.backend.mapper.g3.G3ArtifactMapper;
 import com.ingenio.backend.mapper.g3.G3JobMapper;
 import com.ingenio.backend.mapper.g3.G3ValidationResultMapper;
+import com.ingenio.backend.service.blueprint.BlueprintComplianceResult;
+import com.ingenio.backend.service.blueprint.BlueprintValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -51,6 +57,9 @@ public class G3OrchestratorService {
     private final G3JobMapper jobMapper;
     private final G3ArtifactMapper artifactMapper;
     private final G3ValidationResultMapper validationResultMapper;
+    private final AppSpecMapper appSpecMapper;
+    private final IndustryTemplateMapper industryTemplateMapper;
+    private final BlueprintValidator blueprintValidator;
 
     private final IArchitectAgent architectAgent;
     private final List<ICoderAgent> coderAgents;
@@ -79,17 +88,51 @@ public class G3OrchestratorService {
      */
     @Transactional
     public UUID submitJob(String requirement, UUID userId, UUID tenantId) {
-        log.info("[G3] 提交新任务: requirement={}", truncate(requirement, 50));
+        return submitJob(requirement, userId, tenantId, null, null, null);
+    }
+
+    /**
+     * 提交新的G3任务（Blueprint增强版）
+     *
+     * 支持：
+     * - appSpecId：从 AppSpec 加载 blueprintSpec/tenantId/userId 等上下文
+     * - templateId：直接从行业模板加载 blueprintSpec（用于跳过 PlanRouting 选择步骤的快速试跑）
+     *
+     * @param requirement 需求文本
+     * @param userId      用户ID（可选）
+     * @param tenantId    租户ID（可选）
+     * @param appSpecId   AppSpec ID（可选）
+     * @param templateId  行业模板ID（可选）
+     * @param maxRoundsOverride 最大修复轮次（可选）
+     * @return 任务ID
+     */
+    @Transactional
+    public UUID submitJob(
+            String requirement,
+            UUID userId,
+            UUID tenantId,
+            UUID appSpecId,
+            UUID templateId,
+            Integer maxRoundsOverride) {
+
+        log.info("[G3] 提交新任务: requirement={}, appSpecId={}, templateId={}",
+                truncate(requirement, 50), appSpecId, templateId);
+
+        ResolvedJobContext resolvedContext = resolveJobContext(requirement, userId, tenantId, appSpecId, templateId);
 
         // 创建任务实体（显式生成UUID以兼容MyBatis-Plus）
         G3JobEntity job = G3JobEntity.builder()
                 .id(UUID.randomUUID())  // 显式生成UUID，避免MyBatis-Plus insert时传入null
-                .requirement(requirement)
-                .userId(userId)
-                .tenantId(tenantId)
+                .requirement(resolvedContext.requirement())
+                .userId(resolvedContext.userId())
+                .tenantId(resolvedContext.tenantId())
+                .appSpecId(resolvedContext.appSpecId())
+                .matchedTemplateId(resolvedContext.matchedTemplateId())
+                .blueprintSpec(resolvedContext.blueprintSpec())
+                .blueprintModeEnabled(resolvedContext.blueprintModeEnabled())
                 .status(G3JobEntity.Status.QUEUED.getValue())
                 .currentRound(0)
-                .maxRounds(maxRounds)
+                .maxRounds(maxRoundsOverride != null ? maxRoundsOverride : maxRounds)
                 .logs(new ArrayList<>())
                 .build();
 
@@ -103,6 +146,96 @@ public class G3OrchestratorService {
 
         return job.getId();
     }
+
+    /**
+     * 解析G3任务的上下文信息
+     *
+     * 规则：
+     * 1) appSpecId 优先：可补齐 tenantId/userId/blueprintSpec 等上下文
+     * 2) templateId 次之：若 appSpec 未携带 blueprintSpec，则从模板加载
+     * 3) blueprintModeEnabled：以显式开关优先，其次由 blueprintSpec 是否为空推导
+     */
+    private ResolvedJobContext resolveJobContext(
+            String requirement,
+            UUID userId,
+            UUID tenantId,
+            UUID appSpecId,
+            UUID templateId) {
+
+        String resolvedRequirement = requirement;
+        UUID resolvedUserId = userId;
+        UUID resolvedTenantId = tenantId;
+        UUID resolvedAppSpecId = appSpecId;
+        UUID resolvedTemplateId = null;
+        java.util.Map<String, Object> resolvedBlueprintSpec = null;
+        Boolean resolvedBlueprintModeEnabled = null;
+
+        // 1) AppSpec 上下文
+        if (appSpecId != null) {
+            AppSpecEntity appSpec = appSpecMapper.selectById(appSpecId);
+            if (appSpec == null) {
+                log.warn("[G3] appSpecId不存在，忽略: {}", appSpecId);
+            } else {
+                // requirement 优先使用显式入参；若为空则回退到 specContent.userRequirement
+                if (resolvedRequirement == null || resolvedRequirement.isBlank()) {
+                    Object ur = appSpec.getSpecContent() != null ? appSpec.getSpecContent().get("userRequirement") : null;
+                    resolvedRequirement = ur != null ? ur.toString() : resolvedRequirement;
+                }
+
+                // tenantId/userId 优先使用 appSpec
+                resolvedTenantId = appSpec.getTenantId() != null ? appSpec.getTenantId() : resolvedTenantId;
+                resolvedUserId = appSpec.getCreatedByUserId() != null ? appSpec.getCreatedByUserId() : resolvedUserId;
+
+                // Blueprint
+                resolvedBlueprintSpec = appSpec.getBlueprintSpec();
+                resolvedBlueprintModeEnabled = appSpec.getBlueprintModeEnabled();
+
+                // 模板来源（可选）
+                resolvedTemplateId = appSpec.getSelectedTemplateId();
+            }
+        }
+
+        // 2) 模板上下文（templateId 优先覆盖 matchedTemplateId；blueprintSpec 仅在为空时补齐）
+        if (templateId != null) {
+            IndustryTemplateEntity template = industryTemplateMapper.selectById(templateId);
+            if (template == null) {
+                log.warn("[G3] templateId不存在，忽略: {}", templateId);
+            } else {
+                resolvedTemplateId = templateId;
+                if (resolvedBlueprintSpec == null || resolvedBlueprintSpec.isEmpty()) {
+                    resolvedBlueprintSpec = template.getBlueprintSpec();
+                }
+            }
+        }
+
+        // 3) 推导 blueprintModeEnabled
+        boolean inferredBlueprintModeEnabled =
+                (resolvedBlueprintModeEnabled != null && Boolean.TRUE.equals(resolvedBlueprintModeEnabled))
+                        || (resolvedBlueprintModeEnabled == null && resolvedBlueprintSpec != null && !resolvedBlueprintSpec.isEmpty());
+
+        return new ResolvedJobContext(
+                resolvedRequirement,
+                resolvedUserId,
+                resolvedTenantId,
+                resolvedAppSpecId,
+                resolvedTemplateId,
+                resolvedBlueprintSpec,
+                inferredBlueprintModeEnabled
+        );
+    }
+
+    /**
+     * submitJob 期间解析出的上下文信息
+     */
+    private record ResolvedJobContext(
+            String requirement,
+            UUID userId,
+            UUID tenantId,
+            UUID appSpecId,
+            UUID matchedTemplateId,
+            java.util.Map<String, Object> blueprintSpec,
+            boolean blueprintModeEnabled
+    ) {}
 
     /**
      * 异步执行任务
@@ -200,8 +333,27 @@ public class G3OrchestratorService {
                 validationResultMapper.insert(validationResult);
 
                 if (validationResult.getPassed()) {
-                    validated = true;
                     logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.EXECUTOR, "编译验证通过！"));
+
+                    // Blueprint 合规性验证（F4）
+                    BlueprintComplianceResult blueprintCompliance =
+                            validateBlueprintCompliance(job, artifacts, logConsumer);
+
+                    if (!blueprintCompliance.passed()) {
+                        logConsumer.accept(G3LogEntry.error(G3LogEntry.Role.COACH,
+                                "Blueprint 合规性验证失败，发现 " + blueprintCompliance.violations().size() + " 项违规"));
+
+                        // 逐条输出违规项，确保前端日志视图可读（避免换行被折叠）
+                        for (String violation : blueprintCompliance.violations()) {
+                            logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.COACH, "Blueprint 违规项: " + violation));
+                        }
+
+                        failJob(job, "Blueprint 合规性验证失败", logConsumer);
+                        return;
+                    }
+
+                    logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.COACH, "Blueprint 合规性验证通过 ✅"));
+                    validated = true;
                 } else {
                     logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR,
                             "编译失败: " + validationResult.getErrorCount() + " 个错误"));
@@ -278,6 +430,53 @@ public class G3OrchestratorService {
             // 关闭日志流
             closeLogStream(jobId);
         }
+    }
+
+    /**
+     * Blueprint 合规性验证（F4）
+     *
+     * 说明：
+     * - 当前 Blueprint JSON 主要约束 schema/features，因此最小版校验聚焦：
+     *   1) DDL 是否覆盖 schema（Architect 输出）
+     *   2) Entity 是否覆盖 schema（Coder 输出）
+     */
+    private BlueprintComplianceResult validateBlueprintCompliance(
+            G3JobEntity job,
+            List<G3ArtifactEntity> artifacts,
+            Consumer<G3LogEntry> logConsumer) {
+
+        boolean blueprintModeEnabled = Boolean.TRUE.equals(job.getBlueprintModeEnabled())
+                && job.getBlueprintSpec() != null
+                && !job.getBlueprintSpec().isEmpty();
+
+        if (!blueprintModeEnabled) {
+            return BlueprintComplianceResult.passedResult();
+        }
+
+        BlueprintComplianceResult ddlCompliance =
+                blueprintValidator.validateSchemaCompliance(job.getDbSchemaSql(), job.getBlueprintSpec());
+
+        BlueprintComplianceResult artifactCompliance =
+                blueprintValidator.validateBackendArtifactsCompliance(artifacts, job.getBlueprintSpec());
+
+        if (ddlCompliance.passed() && artifactCompliance.passed()) {
+            return BlueprintComplianceResult.passedResult();
+        }
+
+        List<String> merged = new ArrayList<>();
+        if (!ddlCompliance.passed()) {
+            merged.addAll(ddlCompliance.violations());
+        }
+        if (!artifactCompliance.passed()) {
+            merged.addAll(artifactCompliance.violations());
+        }
+
+        // 兜底：避免返回空 violations 但 passed=false 的异常情况
+        if (merged.isEmpty()) {
+            merged.add("Blueprint 合规性验证失败（原因未知）");
+        }
+
+        return BlueprintComplianceResult.failedResult(merged);
     }
 
     /**

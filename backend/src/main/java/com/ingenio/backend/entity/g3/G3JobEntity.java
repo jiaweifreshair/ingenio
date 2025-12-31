@@ -69,6 +69,29 @@ public class G3JobEntity {
     @TableField("template_context")
     private String templateContext;
 
+    // ==================== Blueprint（蓝图规范）====================
+
+    /**
+     * 匹配/选中的行业模板ID（可选）
+     * 用于追溯当前G3任务使用的模板来源
+     */
+    @TableField(value = "matched_template_id", typeHandler = UUIDv8TypeHandler.class)
+    private UUID matchedTemplateId;
+
+    /**
+     * Blueprint 完整规范（JSONB，可选）
+     * Blueprint Mode 下会被注入到 Agent Prompt，并参与合规性验证
+     */
+    @TableField(value = "blueprint_spec", typeHandler = JacksonTypeHandler.class)
+    private Map<String, Object> blueprintSpec;
+
+    /**
+     * Blueprint 模式是否启用
+     * true 表示必须遵守 blueprintSpec 的约束（schema/constraints/features 等）
+     */
+    @TableField("blueprint_mode_enabled")
+    private Boolean blueprintModeEnabled;
+
     /**
      * 任务状态
      * @see Status
