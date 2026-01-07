@@ -114,49 +114,69 @@ export function useSandboxHeartbeat(options: UseSandboxHeartbeatOptions) {
   const lastHeartbeatTimeRef = useRef<number | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // 使用 ref 追踪最新的 sandboxId 和 interval，避免 effect 因依赖变化而重新运行
+  const sandboxIdRef = useRef(sandboxId);
+  const intervalRef = useRef(interval);
+  const enabledRef = useRef(enabled);
+  const onHeartbeatSuccessRef = useRef(onHeartbeatSuccess);
+  const onHeartbeatErrorRef = useRef(onHeartbeatError);
+
+  // 同步更新 refs（每次渲染时）
+  sandboxIdRef.current = sandboxId;
+  intervalRef.current = interval;
+  enabledRef.current = enabled;
+  onHeartbeatSuccessRef.current = onHeartbeatSuccess;
+  onHeartbeatErrorRef.current = onHeartbeatError;
+
+  // 仅在 enabled 变化或组件卸载时运行的 effect
   useEffect(() => {
-    // 严格验证：如果未启用、无sandboxId、或sandboxId为空字符串，则不启动心跳
-    if (!enabled || !sandboxId || sandboxId.trim() === '') {
+    // 如果未启用，不启动心跳
+    if (!enabled) {
       return;
     }
 
-    console.log(`[Sandbox心跳] 启动心跳监控: ${sandboxId}, 间隔: ${interval}ms`);
-
-    // 创建 AbortController
+    // 创建 AbortController（仅在 effect 开始时创建一次）
     abortControllerRef.current = new AbortController();
 
-    // 立即发送第一次心跳
-    (async () => {
+    /**
+     * 发送心跳的核心函数
+     * 使用 ref 读取最新的 sandboxId，避免闭包问题
+     */
+    const doHeartbeat = async () => {
+      const currentSandboxId = sandboxIdRef.current;
+      
+      // 严格验证：无sandboxId或为空字符串，则跳过本次心跳
+      if (!currentSandboxId || currentSandboxId.trim() === '') {
+        return;
+      }
+
       try {
-        await sendHeartbeat(sandboxId, abortControllerRef.current?.signal);
+        await sendHeartbeat(currentSandboxId, abortControllerRef.current?.signal);
         lastHeartbeatTimeRef.current = Date.now();
-        onHeartbeatSuccess?.();
+        onHeartbeatSuccessRef.current?.();
       } catch (error) {
         // 只有在不是 AbortError 时才调用错误回调
         if (!(error instanceof Error && error.name === 'AbortError')) {
-          onHeartbeatError?.(error as Error);
+          onHeartbeatErrorRef.current?.(error as Error);
         }
       }
-    })();
+    };
 
-    // 设置定时心跳
-    intervalIdRef.current = setInterval(async () => {
-      try {
-        await sendHeartbeat(sandboxId, abortControllerRef.current?.signal);
-        lastHeartbeatTimeRef.current = Date.now();
-        onHeartbeatSuccess?.();
-      } catch (error) {
-        // 只有在不是 AbortError 时才调用错误回调
-        if (!(error instanceof Error && error.name === 'AbortError')) {
-          onHeartbeatError?.(error as Error);
-        }
-      }
-    }, interval);
+    // 立即发送第一次心跳（如果有 sandboxId）
+    if (sandboxIdRef.current && sandboxIdRef.current.trim() !== '') {
+      console.log(`[Sandbox心跳] 启动心跳监控: ${sandboxIdRef.current}, 间隔: ${intervalRef.current}ms`);
+      doHeartbeat();
+    }
 
-    // 清理函数
+    // 设置定时心跳（使用 ref 读取最新的 interval）
+    intervalIdRef.current = setInterval(() => {
+      doHeartbeat();
+    }, intervalRef.current);
+
+    // 清理函数：仅在 enabled 变为 false 或组件卸载时执行
     return () => {
       if (intervalIdRef.current) {
-        console.log(`[Sandbox心跳] 停止心跳监控: ${sandboxId}`);
+        console.log(`[Sandbox心跳] 停止心跳监控: ${sandboxIdRef.current}`);
         clearInterval(intervalIdRef.current);
         intervalIdRef.current = null;
       }
@@ -167,7 +187,7 @@ export function useSandboxHeartbeat(options: UseSandboxHeartbeatOptions) {
         abortControllerRef.current = null;
       }
     };
-  }, [sandboxId, interval, enabled, onHeartbeatSuccess, onHeartbeatError]);
+  }, [enabled]); // 关键修改：仅依赖 enabled，sandboxId 变化不会触发 cleanup
 
   return {
     /** 最后一次心跳时间（时间戳） */

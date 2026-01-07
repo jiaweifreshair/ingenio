@@ -52,7 +52,16 @@ public class CoachAgentImpl implements ICoachAgent {
             "class .* is public, should be declared", // 类声明问题
             "'\\)' expected",               // 缺少右括号
             "'\\{' expected",               // 缺少左花括号
-            "illegal start of expression"   // 表达式语法错误
+            "illegal start of expression",  // 表达式语法错误
+
+            // Maven / 构建类错误（用于尝试修复 pom.xml）
+            "could not resolve dependencies",
+            "the following artifacts could not be resolved",
+            "non-resolvable parent pom",
+            "failed to read artifact descriptor",
+            "could not find artifact",
+            "could not transfer artifact",
+            "failed to execute goal"
     );
 
     /**
@@ -63,8 +72,42 @@ public class CoachAgentImpl implements ICoachAgent {
             "StackOverflowError",           // 栈溢出
             "Could not find or load main class", // 主类问题
             "java.lang.UnsupportedClassVersionError", // JDK版本问题
-            "Access denied"                 // 权限问题
+            "Access denied",                // 权限问题
+            "connection refused",
+            "operation not permitted",
+            "unknown host",
+            "timed out"
     );
+
+    /**
+     * pom.xml 修复提示词模板（XML）
+     */
+    private static final String FIX_POM_XML_PROMPT_TEMPLATE = """
+        你是一个资深的 Maven 构建工程师。请修复 pom.xml 导致的构建失败问题。
+
+        ## 当前 pom.xml
+        ```xml
+        %s
+        ```
+
+        ## Maven 构建失败输出（摘要）
+        ```
+        %s
+        ```
+
+        ## 目标
+        - 让 `mvn compile` 能通过
+        - 只做必要的最小改动
+        - 保持 Spring Boot 3.4.x + Java 17
+
+        ## 可用策略（按需选择）
+        1) 依赖解析失败：补充 `<repositories>` / `<pluginRepositories>`（优先加入阿里云公共仓库镜像 + Maven Central）
+        2) Lombok/注解处理失败：补充 `maven-compiler-plugin` 的 annotationProcessorPaths 或相关配置
+        3) 插件解析失败：补充 pluginRepositories 或明确 plugin 版本
+
+        ## 输出格式要求
+        ⚠️ 只输出修复后的完整 pom.xml（纯 XML），不要输出任何解释文字、不要输出 ``` 标记。
+        """;
 
     /**
      * 修复提示词模板
@@ -350,6 +393,14 @@ public class CoachAgentImpl implements ICoachAgent {
      * 生成修复代码
      */
     private String generateFix(G3ArtifactEntity artifact, String compilerOutput, AIProvider aiProvider) {
+        String fileName = artifact.getFileName() != null ? artifact.getFileName() : "";
+        String filePath = artifact.getFilePath() != null ? artifact.getFilePath() : "";
+
+        // pom.xml 走专用 XML 修复流程
+        if ("pom.xml".equalsIgnoreCase(fileName) || filePath.endsWith("/pom.xml") || "pom.xml".equalsIgnoreCase(filePath)) {
+            return generatePomFix(artifact, compilerOutput, aiProvider);
+        }
+
         String prompt = String.format(FIX_PROMPT_TEMPLATE, artifact.getContent(), compilerOutput);
 
         AIProvider.AIResponse response = aiProvider.generate(prompt,
@@ -370,6 +421,28 @@ public class CoachAgentImpl implements ICoachAgent {
         }
 
         return fixedCode;
+    }
+
+    /**
+     * 生成 pom.xml 修复内容
+     */
+    private String generatePomFix(G3ArtifactEntity artifact, String compilerOutput, AIProvider aiProvider) {
+        String prompt = String.format(FIX_POM_XML_PROMPT_TEMPLATE, artifact.getContent(), compilerOutput);
+
+        AIProvider.AIResponse response = aiProvider.generate(prompt,
+                AIProvider.AIRequest.builder()
+                        .temperature(0.1)
+                        .maxTokens(6000)
+                        .build());
+
+        String fixedXml = cleanMarkdown(response.content());
+
+        if (!isValidPomXml(fixedXml)) {
+            log.warn("[{}] 生成的 pom.xml 结构无效", AGENT_NAME);
+            return null;
+        }
+
+        return fixedXml;
     }
 
     /**
@@ -397,8 +470,8 @@ public class CoachAgentImpl implements ICoachAgent {
     private String cleanMarkdown(String code) {
         if (code == null) return "";
 
-        // 移除代码块标记
-        code = code.replaceAll("```java\\s*", "");
+        // 移除代码块标记（兼容 ```java / ```xml / ```）
+        code = code.replaceAll("```[a-zA-Z]*\\s*", "");
         code = code.replaceAll("```\\s*", "");
 
         return code.trim();
@@ -426,6 +499,16 @@ public class CoachAgentImpl implements ICoachAgent {
         }
 
         return hasPackage && hasClass && braceCount == 0;
+    }
+
+    /**
+     * 验证 pom.xml 基本结构
+     */
+    private boolean isValidPomXml(String xml) {
+        if (xml == null || xml.isBlank()) return false;
+        String trimmed = xml.trim();
+        if (!trimmed.startsWith("<")) return false;
+        return trimmed.contains("<project") && trimmed.contains("</project>");
     }
 
     /**

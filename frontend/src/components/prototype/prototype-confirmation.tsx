@@ -14,7 +14,7 @@
  */
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -29,12 +29,14 @@ import {
   Eye,
   Code,
   LayoutTemplate,
+  Copy,
 } from 'lucide-react';
 
 import type { PlanRoutingResult } from '@/lib/api/plan-routing';
 import { updatePrototypeStatus } from '@/lib/api/plan-routing';
 import type { Template } from '@/types/template';
 import type { G3LogEntry } from '@/types/g3';
+import type { SandboxInfo } from '@/lib/openlovable/sandbox-lifecycle';
 import { useOpenLovablePreview } from '@/hooks/use-openlovable-preview';
 import { cn } from '@/lib/utils';
 import { PrototypePreview } from './prototype-preview';
@@ -74,6 +76,31 @@ export function PrototypeConfirmation({
 }: PrototypeConfirmationProps): React.ReactElement {
   const { toast } = useToast();
   
+  // CLONE 分支兼容：后端可能直接返回 prototypeUrl，但前端仍需要 sandboxId 才能执行“刷新预览/心跳保活”等操作
+  const initialSandboxInfo = useMemo<SandboxInfo | null>(() => {
+    if (!routingResult.prototypeUrl) return null;
+    try {
+      const url = new URL(routingResult.prototypeUrl);
+      const hostname = url.hostname || '';
+
+      // 兼容 e2b URL：`https://5173-<sandboxId>.e2b.app` / `https://<sandboxId>.e2b.app`
+      const firstLabel = hostname.split('.')[0] || '';
+      const candidate = (firstLabel.split('-').pop() || '').trim();
+      if (!candidate || !/^[a-z0-9]+$/i.test(candidate)) return null;
+
+      return {
+        success: true,
+        sandboxId: candidate,
+        url: routingResult.prototypeUrl,
+        provider: 'e2b',
+        message: '',
+        createdAt: Date.now(),
+      };
+    } catch {
+      return null;
+    }
+  }, [routingResult.prototypeUrl]);
+
   // OpenLovable Hook
   const {
     stage,
@@ -90,7 +117,7 @@ export function PrototypeConfirmation({
     startGeneration,
     sendIterationMessage,
     reloadPreview,
-  } = useOpenLovablePreview();
+  } = useOpenLovablePreview(initialSandboxInfo);
 
   // 状态管理
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
@@ -218,6 +245,14 @@ export function PrototypeConfirmation({
     }
   };
 
+  /**
+   * 在新窗口打开预览链接（用于 iframe 受限/白屏时兜底）
+   */
+  const handleOpenPreview = () => {
+    if (!effectivePreviewUrl) return;
+    window.open(effectivePreviewUrl, '_blank', 'noopener,noreferrer');
+  };
+
   // ========== 渲染子组件 ==========
 
   // 左侧面板：交互与日志
@@ -248,7 +283,7 @@ export function PrototypeConfirmation({
   const RightPanel = (
     <div className="h-full flex flex-col bg-muted/10">
       {/* 工具栏 */}
-      <div className="flex-none h-14 border-b bg-background/80 backdrop-blur-sm px-4 flex items-center justify-between sticky top-0 z-10">
+      <div className="flex-none h-14 border-b bg-background/80 backdrop-blur-sm px-4 flex items-center justify-between relative z-[60]">
         <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)} className="w-auto">
           <TabsList className="h-9">
             <TabsTrigger value="preview" className="text-xs px-3">
@@ -289,14 +324,20 @@ export function PrototypeConfirmation({
             onClick={handleRefresh}
             disabled={loading || isReloading || !effectivePreviewUrl}
             title="刷新预览"
+            data-testid="refresh-preview-button"
           >
             <RefreshCw className={cn('h-4 w-4', isReloading && 'animate-spin')} />
           </Button>
 
           {effectivePreviewUrl && (
-            <Button variant="ghost" size="icon" onClick={handleCopyLink} title="复制链接">
-              <ExternalLink className="h-4 w-4" />
-            </Button>
+            <>
+              <Button variant="ghost" size="icon" onClick={handleCopyLink} title="复制链接">
+                <Copy className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" onClick={handleOpenPreview} title="新窗口打开">
+                <ExternalLink className="h-4 w-4" />
+              </Button>
+            </>
           )}
 
           <Button variant="ghost" size="icon" onClick={() => setIsFullscreen(!isFullscreen)} title={isFullscreen ? "退出全屏" : "全屏预览"}>
@@ -310,6 +351,7 @@ export function PrototypeConfirmation({
             disabled={loading || !canConfirm}
             className="bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-sm hover:opacity-90 transition-opacity"
             size="sm"
+            data-testid="confirm-design-button"
           >
             {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
             确认设计
@@ -364,8 +406,8 @@ export function PrototypeConfirmation({
 
   return (
     <div className={cn(
-      "bg-background w-full overflow-hidden transition-all duration-300",
-      isFullscreen ? "fixed inset-0 z-50" : "h-[calc(100vh-100px)] border rounded-xl shadow-lg"
+      "bg-background w-full overflow-hidden transition-all duration-300 relative",
+      isFullscreen ? "fixed inset-0 z-50" : "h-[calc(100vh-100px)] border rounded-xl shadow-lg z-[55]"
     )} data-testid="prototype-confirmation-panel">
       
       <ConfirmationDialog

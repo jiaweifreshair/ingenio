@@ -17,11 +17,14 @@ import java.io.IOException;
 
 /**
  * 从 Sa-Token session 中提取租户ID，并将其放入 TenantContextHolder。
- * 此过滤器必须在 Sa-Token 的认证过滤器之后执行。
- * 通过设置为 Ordered.HIGHEST_PRECEDENCE + 10 来确保顺序。
+ *
+ * 重要说明：
+ * - 本过滤器依赖 Sa-Token 的 Web 上下文（SaHolder/StpUtil）才能读取登录态与 Session。
+ * - 若过滤器顺序早于 Sa-Token 的上下文初始化阶段，会触发 InvalidContextException 并导致请求 500。
+ * - 因此这里将顺序放在较靠后的位置，并对“无上下文/非 Web 请求”做兜底，保证公开接口也能正常访问。
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE + 10)
+@Order(Ordered.LOWEST_PRECEDENCE - 20)
 public class TenantContextFilter implements Filter {
 
     /**
@@ -40,13 +43,15 @@ public class TenantContextFilter implements Filter {
             String tenantId = null;
             try {
                 // 核心保护代码块: 尝试从 Sa-Token 获取会话信息
-                // 在非Web上下文（如某些内部调用或Actuator）中，此代码会抛出 NotWebContextException
+                // 在非Web上下文（如某些内部调用或Actuator）中，此代码可能抛出 NotWebContextException/InvalidContextException
                 if (StpUtil.isLogin()) {
                     tenantId = StpUtil.getSession().getString(TENANT_ID_SESSION_KEY);
                 }
             } catch (cn.dev33.satoken.exception.NotWebContextException e) {
                 // 优雅地处理异常：记录一个debug日志（可选），然后继续执行
                 // 这意味着当前不是一个需要用户登录的Web请求，因此没有租户ID是正常的
+            } catch (cn.dev33.satoken.exception.InvalidContextException e) {
+                // Sa-Token 上下文未就绪（通常是过滤器顺序或异步线程导致），直接回退到默认租户，避免请求失败
             }
 
             // 如果会话中没有，则使用配置文件中的默认值作为兜底

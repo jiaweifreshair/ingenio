@@ -24,13 +24,28 @@ spring:
     password: ${DB_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
     # HikariCP连接池配置
+    # 优化：增加连接池大小，添加连接验证，防止连接池耗尽导致500错误
     hikari:
-      maximum-pool-size: 20
-      minimum-idle: 5
+      # 最大连接数：从20增加到50，支持更高并发
+      maximum-pool-size: 50
+      # 最小空闲连接：从5增加到10，保证基础吞吐
+      minimum-idle: 10
+      # 连接超时：30秒（获取连接的最大等待时间）
       connection-timeout: 30000
+      # 空闲超时：10分钟（空闲连接被回收前的最大存活时间）
       idle-timeout: 600000
+      # 连接最大生命周期：30分钟（防止数据库端连接超时）
       max-lifetime: 1800000
+      # 连接池名称（便于监控识别）
       pool-name: IngenioHikariCP
+      # 连接验证SQL：每次从池中获取连接时验证有效性
+      connection-test-query: SELECT 1
+      # 验证超时：5秒（验证连接有效性的超时时间）
+      validation-timeout: 5000
+      # 泄漏检测阈值：60秒（连接被借出超过此时间则警告可能泄漏）
+      leak-detection-threshold: 60000
+      # 初始化失败快速失败：连接池初始化失败时立即抛出异常
+      initialization-fail-timeout: 1
 
   # Spring AI OpenAI配置（UniAix，替代原DashScope）
   ai:
@@ -46,8 +61,10 @@ spring:
       chat:
         enabled: true
         options:
-          # 使用七牛云AI可用模型：deepseek/deepseek-v3.2-251201, qwen3-max-preview
-          model: deepseek/deepseek-v3.2-251201
+          # 七牛云AI可用模型：
+          # - Qwen: qwen3-max-preview, qwen3-plus-preview, qwen-max, qwen-plus
+          # - DeepSeek: deepseek/deepseek-v3.2-251201
+          model: qwen3-max-preview
           temperature: 0.3
           max-tokens: 4096
       embedding:
@@ -236,15 +253,15 @@ ingenio:
   agent:
     version: V2
     plan:
-      model: deepseek/deepseek-v3.2-251201
+      model: qwen3-max-preview
       temperature: 0.7
       max-tokens: 4000
     execute:
-      model: deepseek/deepseek-v3.2-251201
+      model: qwen3-max-preview
       temperature: 0.3
       max-tokens: 8000
     validate:
-      model: deepseek/deepseek-v3.2-251201
+      model: qwen3-max-preview
       temperature: 0.5
       max-tokens: 2000
   codegen:
@@ -269,6 +286,19 @@ ingenio:
       running-ttl-hours: 1
       completed-ttl-hours: 24
       redis-enabled: true
+  # AI调用速率限制配置
+  # 防止触发七牛云API的RPM（Requests Per Minute）限制
+  ai:
+    rate-limit:
+      # 每分钟最大请求数（RPM）
+      # 设置为30，留有足够余量（七牛云通常限制60 RPM）
+      rpm: ${AI_RATE_LIMIT_RPM:30}
+      # 最大并发请求数
+      # 避免同时发起过多请求导致瞬时流量过大
+      concurrent: ${AI_RATE_LIMIT_CONCURRENT:3}
+      # 两次调用之间的最小间隔（毫秒）
+      # 默认2秒，避免请求过于密集
+      min-interval-ms: ${AI_RATE_LIMIT_MIN_INTERVAL_MS:2000}
   # G3引擎配置（Generate-Check-Fix自修复引擎）
   g3:
     engine-url: ${G3_ENGINE_URL:http://localhost:8000}

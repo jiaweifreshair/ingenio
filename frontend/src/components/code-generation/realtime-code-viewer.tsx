@@ -151,14 +151,42 @@ const getFileIcon = (fileName: string, isCompleted?: boolean, isGenerating?: boo
 };
 
 /**
+ * 验证文件路径是否有效
+ * 过滤掉包含XML标签碎片的无效路径
+ */
+const isValidFilePath = (path: string): boolean => {
+  if (!path || typeof path !== 'string') return false;
+  
+  // 过滤包含XML标签碎片的路径
+  if (path.includes('<file') || path.includes('</file>') || path.includes('path="') || path.includes("path='")) {
+    return false;
+  }
+  
+  // 过滤以 < 或 > 开头或结尾的路径
+  if (path.startsWith('<') || path.startsWith('>') || path.endsWith('<') || path.endsWith('>')) {
+    return false;
+  }
+  
+  // 过滤包含明显HTML/XML字符的路径
+  if (path.includes('">') || path.includes("'>")) {
+    return false;
+  }
+  
+  return true;
+};
+
+/**
  * 构建文件树
  */
 const buildFileTree = (files: GeneratedFile[]): FileTreeNode[] => {
   const root: FileTreeNode[] = [];
   const pathMap = new Map<string, FileTreeNode>();
 
+  // 过滤掉无效路径的文件
+  const validFiles = files.filter(file => isValidFilePath(file.path));
+
   // 按路径排序
-  const sortedFiles = [...files].sort((a, b) => a.path.localeCompare(b.path));
+  const sortedFiles = [...validFiles].sort((a, b) => a.path.localeCompare(b.path));
 
   for (const file of sortedFiles) {
     const parts = file.path.split('/').filter(Boolean);

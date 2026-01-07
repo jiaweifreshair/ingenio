@@ -37,7 +37,7 @@ import java.util.UUID;
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
-@TableName(value = "industry_templates")
+@TableName(value = "industry_templates", autoResultMap = true)
 public class IndustryTemplateEntity {
 
     /**

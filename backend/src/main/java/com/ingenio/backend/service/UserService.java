@@ -15,7 +15,12 @@ import com.ingenio.backend.entity.UserEntity;
 import com.ingenio.backend.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.mybatis.spring.MyBatisSystemException;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -89,7 +94,19 @@ public class UserService {
 
     /**
      * 用户登录
+     *
+     * 添加重试机制：当数据库连接暂时不可用时，最多重试3次
+     * 重试间隔：1秒 → 2秒 → 4秒（指数退避）
      */
+    @Retryable(
+        retryFor = {
+            CannotGetJdbcConnectionException.class,
+            DataAccessResourceFailureException.class,
+            MyBatisSystemException.class
+        },
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 1000, multiplier = 2)
+    )
     public AuthResponse login(LoginRequest request) {
         // 1. 查询用户（支持用户名或邮箱登录）
         UserEntity user = userMapper.selectOne(
@@ -143,7 +160,18 @@ public class UserService {
 
     /**
      * 获取当前用户信息
+     *
+     * 添加重试机制：当数据库连接暂时不可用时，最多重试3次
      */
+    @Retryable(
+        retryFor = {
+            CannotGetJdbcConnectionException.class,
+            DataAccessResourceFailureException.class,
+            MyBatisSystemException.class
+        },
+        maxAttempts = 3,
+        backoff = @Backoff(delay = 1000, multiplier = 2)
+    )
     public UserEntity getCurrentUser() {
         String userId = StpUtil.getLoginIdAsString();
         return userMapper.findByIdWithCast(userId).orElse(null);

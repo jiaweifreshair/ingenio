@@ -18,13 +18,16 @@ import com.ingenio.backend.service.blueprint.BlueprintComplianceResult;
 import com.ingenio.backend.service.blueprint.BlueprintValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,6 +56,14 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class G3OrchestratorService {
+
+    /**
+     * 自引用，用于通过Spring代理调用@Async方法
+     * 解决自调用时@Async注解不生效的问题
+     */
+    @Autowired
+    @Lazy
+    private G3OrchestratorService self;
 
     private final G3JobMapper jobMapper;
     private final G3ArtifactMapper artifactMapper;
@@ -141,8 +152,8 @@ public class G3OrchestratorService {
 
         log.info("[G3] 任务创建成功: jobId={}", job.getId());
 
-        // 触发异步执行
-        runJobAsync(job.getId());
+        // 触发异步执行（通过self调用以确保@Async生效）
+        self.runJobAsync(job.getId());
 
         return job.getId();
     }
@@ -315,6 +326,11 @@ public class G3OrchestratorService {
                 artifactMapper.insert(artifact);
             }
 
+            // 生成/补齐构建脚手架产物（pom.xml、UUIDv8TypeHandler），确保：
+            // 1) 前端“结果展示”能看到完整工程文件
+            // 2) 编译失败时能定位到可修复文件（尤其是 pom.xml）
+            artifacts = ensureBuildScaffoldArtifacts(job, artifacts, logConsumer);
+
             logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.PLAYER,
                     "代码生成完成: " + artifacts.size() + " 个文件"));
 
@@ -323,6 +339,7 @@ public class G3OrchestratorService {
 
             boolean validated = false;
             int round = 0;
+            int fixAttempts = 0;
 
             while (!validated && round < maxRounds) {
                 logConsumer.accept(G3LogEntry.info(G3LogEntry.Role.EXECUTOR,
@@ -371,14 +388,20 @@ public class G3OrchestratorService {
                             .collect(Collectors.toList());
 
                     if (errorArtifacts.isEmpty()) {
+                        // 兜底：根据 ValidationResult 的 parsedErrors/stdout/stderr 构造可修复目标（至少包含 pom.xml）
+                        errorArtifacts = buildFallbackErrorArtifacts(job, artifacts, validationResult, logConsumer);
+                    }
+
+                    if (errorArtifacts.isEmpty()) {
                         logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.COACH,
-                                "无法定位错误文件，停止修复"));
+                                "无法定位错误文件，停止修复（请查看 Maven 输出片段）"));
                         break;
                     }
 
                     // 调用Coach修复
+                    fixAttempts++;
                     logConsumer.accept(G3LogEntry.info(G3LogEntry.Role.COACH,
-                            "开始修复 " + errorArtifacts.size() + " 个错误文件..."));
+                            "开始修复 " + errorArtifacts.size() + " 个错误文件...（attempt " + fixAttempts + "/" + maxRounds + "）"));
 
                     ICoachAgent.CoachResult coachResult = coachAgent.fix(
                             job,
@@ -415,7 +438,8 @@ public class G3OrchestratorService {
             if (validated) {
                 completeJob(job, logConsumer);
             } else {
-                failJob(job, "编译验证未通过，已尝试 " + round + " 轮修复", logConsumer);
+                int attempts = Math.max(fixAttempts, round);
+                failJob(job, "编译验证未通过，已尝试 " + attempts + " 次修复", logConsumer);
             }
 
         } catch (Exception e) {
@@ -430,6 +454,166 @@ public class G3OrchestratorService {
             // 关闭日志流
             closeLogStream(jobId);
         }
+    }
+
+    /**
+     * 当无法从产物标记中定位错误文件时，尝试根据验证结果构造“可修复目标”。
+     *
+     * 优先级：
+     * 1) parsedErrors 指向的文件（若存在对应产物）
+     * 2) pom.xml（构建失败但无 Java 编译错误时的常见入口）
+     *
+     * 目的：
+     * - 避免出现“编译失败: 0 个错误 → 无法定位错误文件 → 已尝试 0 轮修复”的体验断裂
+     * - 让 Coach 至少拿到构建失败摘要，从而尝试修复 pom/repository/插件配置
+     */
+    private List<G3ArtifactEntity> buildFallbackErrorArtifacts(
+            G3JobEntity job,
+            List<G3ArtifactEntity> artifacts,
+            G3ValidationResultEntity validationResult,
+            Consumer<G3LogEntry> logConsumer
+    ) {
+        List<G3ArtifactEntity> result = new ArrayList<>();
+
+        String buildSummary = extractBuildFailureSummary(
+                validationResult.getStdout(),
+                validationResult.getStderr()
+        );
+
+        // 1) parsedErrors → 关联产物
+        if (validationResult.getParsedErrors() != null && !validationResult.getParsedErrors().isEmpty()) {
+            for (G3ValidationResultEntity.ParsedError err : validationResult.getParsedErrors()) {
+                if (err == null || err.getFile() == null) continue;
+                String file = err.getFile();
+                String fileName = file.contains("/") ? file.substring(file.lastIndexOf('/') + 1) : file;
+
+                artifacts.stream()
+                        .filter(a -> file.equals(a.getFilePath()) || fileName.equals(a.getFileName()))
+                        .findFirst()
+                        .ifPresent(a -> {
+                            if (!Boolean.TRUE.equals(a.getHasErrors())) {
+                                a.markError(buildSummary);
+                            }
+                            result.add(a);
+                        });
+            }
+        }
+
+        // 2) 兜底：pom.xml
+        if (result.isEmpty()) {
+            G3ArtifactEntity pom = artifacts.stream()
+                    .filter(a -> "pom.xml".equals(a.getFileName()))
+                    .findFirst()
+                    .orElse(null);
+
+            if (pom == null) {
+                // 若尚未纳入产物（历史版本兼容），临时生成一份 pom 并标记错误
+                String pomContent = sandboxService.generatePomXml("com.ingenio.generated", "g3-generated-app", "1.0.0-SNAPSHOT");
+                pom = G3ArtifactEntity.create(
+                        job.getId(),
+                        "pom.xml",
+                        pomContent,
+                        G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
+                        job.getCurrentRound()
+                );
+                pom.markError(buildSummary);
+                artifactMapper.insert(pom);
+                artifacts.add(pom);
+                logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.COACH, "兜底：已生成 pom.xml 作为修复目标"));
+            } else if (!Boolean.TRUE.equals(pom.getHasErrors())) {
+                pom.markError(buildSummary);
+            }
+
+            result.add(pom);
+        }
+
+        // 输出摘要，帮助前端快速定位（避免需要打开对话框）
+        logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.COACH, "构建失败摘要: " + truncate(buildSummary.replace("\n", " | "), 220)));
+
+        return result;
+    }
+
+    /**
+     * 提取 Maven 构建失败摘要（控制长度，避免日志过大）
+     */
+    private String extractBuildFailureSummary(String stdout, String stderr) {
+        String output = (stdout == null ? "" : stdout) + "\n" + (stderr == null ? "" : stderr);
+        output = output.replace("\r", "");
+        if (output.isBlank()) return "构建失败（输出为空）";
+
+        String[] lines = output.split("\n");
+        StringBuilder sb = new StringBuilder();
+        int limit = 80;
+        int count = 0;
+        for (String raw : lines) {
+            if (raw == null) continue;
+            String line = raw.trim();
+            if (line.isEmpty()) continue;
+            if (line.startsWith("[ERROR]") || line.contains("BUILD FAILURE") || line.contains("Failed to execute goal")) {
+                sb.append(line).append("\n");
+                count++;
+                if (count >= limit) break;
+            }
+        }
+        if (sb.isEmpty()) {
+            int tail = Math.min(60, lines.length);
+            for (int i = Math.max(0, lines.length - tail); i < lines.length; i++) {
+                String line = lines[i].trim();
+                if (!line.isEmpty()) {
+                    sb.append(line).append("\n");
+                }
+            }
+        }
+        String summary = sb.toString();
+        return summary.length() > 8000 ? summary.substring(0, 8000) + "\n... (已截断)" : summary;
+    }
+
+    /**
+     * 确保构建脚手架文件存在并纳入产物列表
+     *
+     * 说明：
+     * - 之前 pom.xml/UUIDv8TypeHandler 由 SandboxService 在校验阶段临时生成，仅用于沙箱编译，
+     *   但不会入库，导致前端无法展示“生成结果”，也会造成编译失败时无法定位错误文件。
+     * - 这里将其提前固化为产物，纳入 G3 的可追溯与可修复闭环。
+     */
+    private List<G3ArtifactEntity> ensureBuildScaffoldArtifacts(
+            G3JobEntity job,
+            List<G3ArtifactEntity> artifacts,
+            Consumer<G3LogEntry> logConsumer
+    ) {
+        List<G3ArtifactEntity> enriched = new ArrayList<>(artifacts);
+
+        boolean hasPom = enriched.stream().anyMatch(a -> "pom.xml".equals(a.getFileName()));
+        if (!hasPom) {
+            String pomContent = sandboxService.generatePomXml("com.ingenio.generated", "g3-generated-app", "1.0.0-SNAPSHOT");
+            G3ArtifactEntity pomArtifact = G3ArtifactEntity.create(
+                    job.getId(),
+                    "pom.xml",
+                    pomContent,
+                    G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
+                    job.getCurrentRound()
+            );
+            artifactMapper.insert(pomArtifact);
+            enriched.add(pomArtifact);
+            logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.EXECUTOR, "pom.xml已纳入产物列表"));
+        }
+
+        boolean hasTypeHandler = enriched.stream().anyMatch(a -> a.getFileName().contains("UUIDv8TypeHandler"));
+        if (!hasTypeHandler) {
+            String typeHandlerContent = sandboxService.generateUUIDv8TypeHandlerContent();
+            G3ArtifactEntity typeHandlerArtifact = G3ArtifactEntity.create(
+                    job.getId(),
+                    "src/main/java/com/ingenio/backend/config/UUIDv8TypeHandler.java",
+                    typeHandlerContent,
+                    G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
+                    job.getCurrentRound()
+            );
+            artifactMapper.insert(typeHandlerArtifact);
+            enriched.add(typeHandlerArtifact);
+            logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.EXECUTOR, "UUIDv8TypeHandler已纳入产物列表"));
+        }
+
+        return enriched;
     }
 
     /**
@@ -494,7 +678,33 @@ public class G3OrchestratorService {
     }
 
     /**
+     * 获取单个产物（包含完整内容）
+     *
+     * @param jobId      任务ID
+     * @param artifactId 产物ID
+     * @return 产物实体（若不存在或不属于该任务则返回 null）
+     */
+    public G3ArtifactEntity getArtifact(UUID jobId, UUID artifactId) {
+        G3ArtifactEntity artifact = artifactMapper.selectById(artifactId);
+        if (artifact == null) return null;
+        if (!jobId.equals(artifact.getJobId())) return null;
+        return artifact;
+    }
+
+    /**
+     * SSE 心跳间隔（秒）
+     * 每隔此时间发送一次心跳事件，防止 SSE 连接因空闲而超时
+     * 注意：设置为15秒以避免某些代理/网关的30秒空闲超时
+     */
+    private static final int HEARTBEAT_INTERVAL_SECONDS = 15;
+
+    /**
      * 订阅任务日志流
+     *
+     * 实现心跳机制以防止 SSE 连接超时：
+     * 1. 每 30 秒发送一次心跳事件
+     * 2. 当任务完成（COMPLETED/FAILED）时停止心跳
+     * 3. 前端应过滤掉心跳消息（level=heartbeat）
      */
     public Flux<G3LogEntry> subscribeToLogs(UUID jobId) {
         Sinks.Many<G3LogEntry> sink = activeLogStreams.computeIfAbsent(
@@ -502,15 +712,43 @@ public class G3OrchestratorService {
                 k -> Sinks.many().multicast().onBackpressureBuffer()
         );
 
-        // 发送历史日志
-        G3JobEntity job = jobMapper.selectById(jobId);
-        if (job != null && job.getLogs() != null) {
-            for (G3LogEntry entry : job.getLogs()) {
-                sink.tryEmitNext(entry);
-            }
-        }
+        // 创建心跳 Flux（每 30 秒发送一次）
+        Flux<G3LogEntry> heartbeatFlux = Flux.interval(Duration.ofSeconds(HEARTBEAT_INTERVAL_SECONDS))
+                .map(tick -> G3LogEntry.heartbeat())
+                .takeUntil(entry -> isJobCompleted(jobId));
 
-        return sink.asFlux();
+        // 历史日志：直接从数据库读取并输出到当前订阅者
+        //
+        // 注意：不能通过 multicast sink 在订阅前 tryEmitNext 历史日志：
+        // - multicast sink 在无订阅者时会丢弃事件（FAIL_ZERO_SUBSCRIBER）
+        // - 这会导致“页面订阅到 SSE 但看不到任何执行日志”的问题
+        Flux<G3LogEntry> historyFlux = Flux.defer(() -> {
+            G3JobEntity job = jobMapper.selectById(jobId);
+            if (job == null || job.getLogs() == null || job.getLogs().isEmpty()) {
+                return Flux.empty();
+            }
+            return Flux.fromIterable(job.getLogs());
+        });
+
+        // 实时日志：仅包含订阅之后产生的日志
+        Flux<G3LogEntry> liveFlux = sink.asFlux();
+
+        return Flux.merge(historyFlux, liveFlux, heartbeatFlux)
+                .doOnCancel(() -> log.debug("[G3] SSE 连接已取消: jobId={}", jobId))
+                .doOnComplete(() -> log.debug("[G3] SSE 流已完成: jobId={}", jobId));
+    }
+
+    /**
+     * 检查任务是否已完成（COMPLETED 或 FAILED）
+     */
+    private boolean isJobCompleted(UUID jobId) {
+        G3JobEntity job = jobMapper.selectById(jobId);
+        if (job == null) {
+            return true; // 任务不存在，视为完成
+        }
+        String status = job.getStatus();
+        return G3JobEntity.Status.COMPLETED.getValue().equals(status)
+                || G3JobEntity.Status.FAILED.getValue().equals(status);
     }
 
     /**

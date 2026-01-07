@@ -1,5 +1,6 @@
 package com.ingenio.backend.entity.g3;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -12,11 +13,15 @@ import java.io.Serializable;
  * 嵌入在G3JobEntity的logs字段中（JSONB数组）
  *
  * 与前端 types/g3.ts 中的 G3LogEntry 保持一致
+ *
+ * 注意：使用 @JsonIgnoreProperties 忽略未知字段，
+ * 以兼容旧版数据库记录中可能存在的额外字段
  */
 @Data
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class G3LogEntry implements Serializable {
 
     private static final long serialVersionUID = 1L;
@@ -49,12 +54,14 @@ public class G3LogEntry implements Serializable {
      * - COACH: 修复教练（Coach Agent）
      * - EXECUTOR: 执行器（Sandbox/Compiler）
      * - ARCHITECT: 架构师（Architect Agent）
+     * - SYSTEM: 系统消息（心跳、连接状态等）
      */
     public enum Role {
         PLAYER("PLAYER", "代码生成器"),
         COACH("COACH", "修复教练"),
         EXECUTOR("EXECUTOR", "执行器"),
-        ARCHITECT("ARCHITECT", "架构师");
+        ARCHITECT("ARCHITECT", "架构师"),
+        SYSTEM("SYSTEM", "系统");
 
         private final String value;
         private final String description;
@@ -89,7 +96,8 @@ public class G3LogEntry implements Serializable {
         INFO("info", "信息"),
         WARN("warn", "警告"),
         ERROR("error", "错误"),
-        SUCCESS("success", "成功");
+        SUCCESS("success", "成功"),
+        HEARTBEAT("heartbeat", "心跳");
 
         private final String value;
         private final String description;
@@ -163,5 +171,25 @@ public class G3LogEntry implements Serializable {
             .message(message)
             .level(Level.SUCCESS.getValue())
             .build();
+    }
+
+    /**
+     * 创建心跳日志（用于保持 SSE 连接活跃）
+     * 前端应过滤掉心跳消息，不在 UI 中显示
+     */
+    public static G3LogEntry heartbeat() {
+        return G3LogEntry.builder()
+            .timestamp(java.time.Instant.now().toString())
+            .role(Role.SYSTEM.getValue())
+            .message("heartbeat")
+            .level(Level.HEARTBEAT.getValue())
+            .build();
+    }
+
+    /**
+     * 判断是否为心跳消息
+     */
+    public boolean isHeartbeat() {
+        return Level.HEARTBEAT.getValue().equals(this.level);
     }
 }

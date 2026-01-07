@@ -17,8 +17,8 @@ import { getApiBaseUrl } from './base-url';
 import { getToken } from '@/lib/auth/token';
 import type {
   G3LogEntry,
-  G3Artifact,
-  G3ArtifactDetail,
+  G3ArtifactSummary,
+  G3ArtifactContent,
   G3Contract,
   SubmitG3JobRequest,
   SubmitG3JobResponse,
@@ -55,6 +55,8 @@ export interface G3JobStatusResponse {
  * G3 SSE事件回调类型
  */
 export interface G3SSECallbacks {
+  /** SSE 连接建立（HTTP 200 且可读流就绪） */
+  onOpen?: (info: { status: number; contentType: string | null }) => void;
   /** 收到日志事件 */
   onLog?: (entry: G3LogEntry) => void;
   /** 收到心跳事件 */
@@ -99,8 +101,8 @@ export async function getG3JobStatus(
  */
 export async function getG3Artifacts(
   jobId: string
-): Promise<APIResponse<G3Artifact[]>> {
-  return get<G3Artifact[]>(`/v1/g3/jobs/${jobId}/artifacts`);
+): Promise<APIResponse<G3ArtifactSummary[]>> {
+  return get<G3ArtifactSummary[]>(`/v1/g3/jobs/${jobId}/artifacts`);
 }
 
 /**
@@ -113,8 +115,8 @@ export async function getG3Artifacts(
 export async function getG3ArtifactContent(
   jobId: string,
   artifactId: string
-): Promise<APIResponse<G3ArtifactDetail>> {
-  return get<G3ArtifactDetail>(`/v1/g3/jobs/${jobId}/artifacts/${artifactId}/content`);
+): Promise<APIResponse<G3ArtifactContent>> {
+  return get<G3ArtifactContent>(`/v1/g3/jobs/${jobId}/artifacts/${artifactId}/content`);
 }
 
 /**
@@ -139,13 +141,34 @@ export async function checkG3Health(): Promise<APIResponse<G3HealthStatus>> {
 }
 
 /**
- * 订阅G3任务日志流（SSE）
+ * SSE重连配置
+ */
+interface SSEReconnectConfig {
+  /** 最大重连次数 */
+  maxRetries: number;
+  /** 基础重连间隔（毫秒） */
+  baseDelay: number;
+  /** 最大重连间隔（毫秒） */
+  maxDelay: number;
+}
+
+/** 默认重连配置 */
+const DEFAULT_RECONNECT_CONFIG: SSEReconnectConfig = {
+  maxRetries: 10,
+  baseDelay: 2000,
+  maxDelay: 30000,
+};
+
+/**
+ * 订阅G3任务日志流（SSE）- 支持自动重连
  *
  * 使用Server-Sent Events实时接收任务执行日志。
+ * 当连接意外断开时，会自动检查任务状态并重连。
  * 返回一个取消函数，调用后可关闭连接。
  *
  * @param jobId - 任务ID
  * @param callbacks - 事件回调
+ * @param reconnectConfig - 重连配置（可选）
  * @returns 取消订阅函数
  *
  * @example
@@ -162,28 +185,63 @@ export async function checkG3Health(): Promise<APIResponse<G3HealthStatus>> {
  */
 export function subscribeToG3Logs(
   jobId: string,
-  callbacks: G3SSECallbacks
+  callbacks: G3SSECallbacks,
+  reconnectConfig: Partial<SSEReconnectConfig> = {}
 ): () => void {
+  const config = { ...DEFAULT_RECONNECT_CONFIG, ...reconnectConfig };
   const baseUrl = getApiBaseUrl();
-  const token = getToken();
   const url = `${baseUrl}/v1/g3/jobs/${jobId}/logs`;
 
-  // 创建EventSource连接
-  // 注意：标准EventSource不支持自定义headers，需要在URL中传递token或使用cookie
-  // 这里使用fetch+ReadableStream实现SSE以支持Authorization header
-  const controller = new AbortController();
+  let isCancelled = false;
+  let retryCount = 0;
+  let currentController: AbortController | null = null;
 
-  const headers: Record<string, string> = {
-    'Accept': 'text/event-stream',
-    'Cache-Control': 'no-cache',
-  };
-
-  if (token) {
-    headers['Authorization'] = token;
+  /**
+   * 检查任务是否已完成
+   */
+  async function isJobFinished(): Promise<boolean> {
+    try {
+      const response = await getG3JobStatus(jobId);
+      if (response.success && response.data) {
+        const status = response.data.status;
+        return status === 'COMPLETED' || status === 'FAILED';
+      }
+    } catch (e) {
+      console.warn('[G3 SSE] 检查任务状态失败:', e);
+    }
+    return false;
   }
 
-  // 异步启动SSE连接
-  (async () => {
+  /**
+   * 计算重连延迟（指数退避）
+   */
+  function getRetryDelay(): number {
+    const delay = Math.min(
+      config.baseDelay * Math.pow(2, retryCount),
+      config.maxDelay
+    );
+    return delay;
+  }
+
+  /**
+   * 启动SSE连接
+   */
+  async function connect(): Promise<void> {
+    if (isCancelled) return;
+
+    const token = getToken();
+    const controller = new AbortController();
+    currentController = controller;
+
+    const headers: Record<string, string> = {
+      'Accept': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+    };
+
+    if (token) {
+      headers['Authorization'] = token;
+    }
+
     try {
       const response = await fetch(url, {
         method: 'GET',
@@ -193,15 +251,23 @@ export function subscribeToG3Logs(
       });
 
       if (!response.ok) {
-        callbacks.onError?.(`连接失败: HTTP ${response.status}`);
-        return;
+        callbacks.onError?.(`SSE连接失败: HTTP ${response.status}`);
+        throw new Error(`HTTP ${response.status}`);
       }
 
       const reader = response.body?.getReader();
       if (!reader) {
-        callbacks.onError?.('无法读取响应流');
-        return;
+        callbacks.onError?.('SSE连接失败: 无法读取响应流');
+        throw new Error('无法读取响应流');
       }
+
+      callbacks.onOpen?.({
+        status: response.status,
+        contentType: response.headers.get('content-type'),
+      });
+
+      // 连接成功，重置重试计数
+      retryCount = 0;
 
       const decoder = new TextDecoder();
       let buffer = '';
@@ -210,15 +276,21 @@ export function subscribeToG3Logs(
         const { done, value } = await reader.read();
 
         if (done) {
-          callbacks.onClose?.();
+          // 流正常结束，检查是否需要重连
+          if (!isCancelled) {
+            await handleDisconnect();
+          }
           break;
         }
 
         buffer += decoder.decode(value, { stream: true });
 
+        // 兼容 CRLF（\r\n）分隔：统一去掉 \r，避免无法命中 '\n\n' 分隔符导致“看起来没有流式输出”
+        buffer = buffer.replace(/\r/g, '');
+
         // 解析SSE事件（以双换行分隔）
         const events = buffer.split('\n\n');
-        buffer = events.pop() || ''; // 最后一个可能是不完整的事件
+        buffer = events.pop() || '';
 
         for (const eventText of events) {
           if (!eventText.trim()) continue;
@@ -228,11 +300,15 @@ export function subscribeToG3Logs(
 
           switch (parsedEvent.event) {
             case 'log':
-            case 'message': // 兼容后端直接返回 Flux<G3LogEntry>（无 event 字段时默认为 message）
+            case 'message':
               if (parsedEvent.data) {
                 try {
                   const logEntry = JSON.parse(parsedEvent.data) as G3LogEntry;
-                  callbacks.onLog?.(logEntry);
+                  if (logEntry.level === 'heartbeat') {
+                    callbacks.onHeartbeat?.();
+                  } else {
+                    callbacks.onLog?.(logEntry);
+                  }
                 } catch {
                   console.warn('[G3 SSE] 解析日志数据失败:', parsedEvent.data);
                 }
@@ -249,28 +325,76 @@ export function subscribeToG3Logs(
 
             case 'complete':
               callbacks.onComplete?.();
+              isCancelled = true; // 任务完成，停止重连
               break;
 
             default:
-              // 忽略未知事件类型
               break;
           }
         }
       }
     } catch (error) {
-      // 忽略AbortError（正常取消）
+      // 忽略主动取消
       if (error instanceof DOMException && error.name === 'AbortError') {
         return;
       }
 
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      callbacks.onError?.(`SSE连接错误: ${errorMessage}`);
+      if (!isCancelled) {
+        const errorMessage = error instanceof Error ? error.message : '未知错误';
+        console.warn(`[G3 SSE] 连接错误: ${errorMessage}, 准备重连...`);
+        callbacks.onError?.(`SSE连接错误: ${errorMessage}，准备重连...`);
+        await handleDisconnect();
+      }
     }
-  })();
+  }
+
+  /**
+   * 处理断开连接，决定是否重连
+   */
+  async function handleDisconnect(): Promise<void> {
+    if (isCancelled) {
+      callbacks.onClose?.();
+      return;
+    }
+
+    // 检查任务是否已完成
+    const finished = await isJobFinished();
+    if (finished) {
+      console.log('[G3 SSE] 任务已完成，停止重连');
+      callbacks.onClose?.();
+      return;
+    }
+
+    // 检查重试次数
+    if (retryCount >= config.maxRetries) {
+      console.warn('[G3 SSE] 达到最大重连次数，停止重连');
+      callbacks.onError?.('SSE连接多次失败，已停止重试');
+      callbacks.onClose?.();
+      return;
+    }
+
+    // 重连
+    retryCount++;
+    const delay = getRetryDelay();
+    console.log(`[G3 SSE] ${delay}ms 后进行第 ${retryCount} 次重连...`);
+    callbacks.onError?.(`SSE断开：${delay}ms 后重连（第 ${retryCount}/${config.maxRetries} 次）`);
+
+    await new Promise(resolve => setTimeout(resolve, delay));
+
+    if (!isCancelled) {
+      connect();
+    }
+  }
+
+  // 启动连接
+  connect();
 
   // 返回取消函数
   return () => {
-    controller.abort();
+    isCancelled = true;
+    if (currentController) {
+      currentController.abort();
+    }
   };
 }
 

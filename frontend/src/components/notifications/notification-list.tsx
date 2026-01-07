@@ -43,7 +43,7 @@ export function NotificationList({
   /**
    * 渲染加载状态
    */
-  if (isLoading && notifications.records.length === 0) {
+  if (isLoading && (!notifications?.records || notifications.records.length === 0)) {
     return (
       <div className="flex items-center justify-center py-12">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -54,7 +54,7 @@ export function NotificationList({
   /**
    * 渲染空状态
    */
-  if (notifications.records.length === 0) {
+  if (!notifications?.records || notifications.records.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 text-center">
         {filters.unreadOnly ? (

@@ -59,6 +59,12 @@
             <artifactId>spring-boot-starter-aop</artifactId>
         </dependency>
 
+        <!-- Spring Retry（数据库操作重试机制，防止瞬时连接失败） -->
+        <dependency>
+            <groupId>org.springframework.retry</groupId>
+            <artifactId>spring-retry</artifactId>
+        </dependency>
+
         <!-- WebSocket支持 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

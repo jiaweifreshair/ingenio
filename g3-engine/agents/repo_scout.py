@@ -107,6 +107,10 @@ class RepoScoutAgent:
                 target_url = f"{base_url}/chat/completions"
                 self.logger.info(f"🤖 Calling AI Endpoint: {target_url} (Model: {model})")
                 
+                # Compatibility Fix: Merge system prompt into user prompt
+                # Some OpenAI-compatible Gemini proxies do not support the 'system' role correctly.
+                combined_prompt = f"{system_prompt}\n\n--- User Request ---\n{user_prompt}"
+
                 resp = await client.post(
                     target_url,
                     headers={
@@ -116,8 +120,7 @@ class RepoScoutAgent:
                     json={
                         "model": model,
                         "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt}
+                            {"role": "user", "content": combined_prompt}
                         ],
                         "temperature": 0.2
                     },

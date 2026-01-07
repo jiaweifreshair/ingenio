@@ -12,14 +12,18 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
+import com.ingenio.backend.service.openlovable.OpenLovableResponseSanitizer;
+
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.HashSet;
@@ -146,77 +150,49 @@ public class OpenLovableController {
             }
 
             // 2.1 默认模型：优先走 Gemini 3 Pro（OpenLovable-CN 的 gemini- 前缀模型）
-            // 若上游未配置 Gemini GCA，会在上游服务内部自动回退到其它可用模型。
+            // 若前端未指定 model，这里不强制设置默认值，交由 OpenLovable-CN 依据自身配置决定（避免代理层默认值与上游可用模型不一致）。
             Object modelObj = adaptedRequest.get("model");
             boolean hasValidModel = modelObj instanceof String && !((String) modelObj).isBlank();
             if (!hasValidModel) {
-                adaptedRequest.put("model", "gemini-3-pro-preview");
-                log.debug("参数适配: 默认模型 -> gemini-3-pro-preview");
+                adaptedRequest.remove("model");
+                log.debug("参数适配: 未指定model，交由 OpenLovable-CN 选择默认模型");
             }
 
             // 3. 将sandboxId包装到context对象中
             if (adaptedRequest.containsKey("sandboxId")) {
-                String sandboxId = (String) adaptedRequest.remove("sandboxId");
-                Map<String, Object> context = new java.util.HashMap<>();
-                context.put("sandboxId", sandboxId);
-                adaptedRequest.put("context", context);
-                log.debug("参数适配: sandboxId -> context.sandboxId ({})", sandboxId);
+                Object sandboxIdObj = adaptedRequest.remove("sandboxId");
+                if (sandboxIdObj instanceof String sandboxId && !sandboxId.isBlank() && !"pending".equalsIgnoreCase(sandboxId)) {
+                    Map<String, Object> context = new HashMap<>();
+                    context.put("sandboxId", sandboxId);
+                    adaptedRequest.put("context", context);
+                    log.debug("参数适配: sandboxId -> context.sandboxId ({})", sandboxId);
+                } else {
+                    log.debug("参数适配: sandboxId为空或pending，已跳过向上游传递（避免误用占位ID）");
+                }
             }
 
             log.debug("适配后请求体: {}", adaptedRequest);
 
             StreamingResponseBody stream = outputStream -> {
                 try {
-                    // 使用HttpURLConnection进行SSE流式转发
-                    URL targetUrl = new URL(url);
-                    HttpURLConnection connection = (HttpURLConnection) targetUrl.openConnection();
-                    connection.setRequestMethod("POST");
-                    connection.setRequestProperty("Content-Type", "application/json");
-                    connection.setRequestProperty("Accept", "text/event-stream");
-                    connection.setDoOutput(true);
-                    connection.setDoInput(true);
-                    // 设置超时：V2.2推理模型优化
-                    // readTimeout是指两次read()之间的最大间隔，SSE流持续有数据时不会触发
-                    // 🔧 修复：推理模型（如 DeepSeek R1）需要较长时间思考
-                    // 设置为5分钟作为兜底，支持复杂推理任务
-                    connection.setConnectTimeout(30000);   // 连接超时30秒
-                    connection.setReadTimeout(300000);     // 读取超时5分钟（300秒）- V2.2推理模型优化
+                    // 第一次转发：按原始请求走上游
+                    ForwardSseResult first = forwardGenerateSse(url, adaptedRequest, outputStream, true);
 
-                    // 转发适配后的请求体（JSON格式）
-                    String jsonBody = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(adaptedRequest);
-                    connection.getOutputStream().write(jsonBody.getBytes(StandardCharsets.UTF_8));
-                    connection.getOutputStream().flush();
+                    // 🔧 修复：上游偶发返回 complete 但 generatedCode 为空，且没有任何 stream/content 增量
+                    // 这种情况下前端会判定“AI生成的代码为空”。这里在代理层做一次自动重试（模型回退），避免用户手动重试。
+                    if (!first.hasAnyCode()) {
+                        String notice = "data: {\"type\":\"status\",\"message\":\"⚠️ 上游返回空代码，正在自动重试（模型回退: deepseek-r1）...\"}\n\n";
+                        outputStream.write(notice.getBytes(StandardCharsets.UTF_8));
+                        outputStream.flush();
 
-                    // 读取SSE流式响应
-                    // 注意：SSE标准要求事件以空行（\n\n）分隔
-                    // BufferedReader.readLine()会消除换行符，需要正确恢复SSE格式
-                    try (InputStream inputStream = connection.getInputStream();
-                         BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+                        Map<String, Object> retryRequest = new HashMap<>(adaptedRequest);
+                        retryRequest.put("model", "deepseek-r1");
 
-                        String line;
-                        while ((line = reader.readLine()) != null) {
-                            // V2.1优化：在流式转发时检测complete事件，修复空的main.jsx
-                            // 这样在generate阶段就能一次性输出完整代码，无需等到apply阶段
-                            if (line.startsWith("data: ") && line.contains("\"type\":\"complete\"")) {
-                                line = fixMainJsxInCompleteEvent(line);
-                            }
-
-                            // 转发SSE消息，确保正确的SSE格式
-                            if (line.isEmpty()) {
-                                // 空行代表事件结束，写入空行
-                                outputStream.write("\n".getBytes(StandardCharsets.UTF_8));
-                            } else {
-                                // 数据行或注释行，添加换行符
-                                outputStream.write((line + "\n").getBytes(StandardCharsets.UTF_8));
-                            }
-                            outputStream.flush();
-                            if (!line.isEmpty() && !line.startsWith(":")) {
-                                log.debug("转发SSE消息: {}", line.substring(0, Math.min(line.length(), 100)));
-                            }
+                        ForwardSseResult second = forwardGenerateSse(url, retryRequest, outputStream, false);
+                        if (!second.hasAnyCode()) {
+                            log.warn("OpenLovable 两次生成均返回空代码，请检查上游模型/密钥配置或 OpenLovable 日志");
                         }
                     }
-
-                    log.info("AI代码生成流式响应完成");
 
                 } catch (Exception e) {
                     log.error("流式响应转发失败", e);
@@ -475,6 +451,16 @@ public class OpenLovableController {
             if (fixedResponse != null && !fixedResponse.equals(aiResponse)) {
                 log.info("已移除空文件: 原长度={} 新长度={}", aiResponse.length(), fixedResponse.length());
                 aiResponse = fixedResponse;
+            }
+
+            // V2.2增强：保护沙箱基础配置，避免 AI 覆盖关键配置导致预览白屏
+            OpenLovableResponseSanitizer.SanitizeResult sanitizeResult =
+                    OpenLovableResponseSanitizer.sanitizeForSandboxApply(aiResponse);
+            if (sanitizeResult.removedPaths() != null && !sanitizeResult.removedPaths().isEmpty()) {
+                log.info("已过滤 {} 个高风险配置文件，防止破坏沙箱模板: {}",
+                        sanitizeResult.removedPaths().size(),
+                        sanitizeResult.removedPaths());
+                aiResponse = sanitizeResult.sanitizedResponse();
             }
 
             // 基础校验：OpenLovable apply 依赖 <file path="...">...</file> 结构
@@ -1081,6 +1067,125 @@ public class OpenLovableController {
             log.warn("修复complete事件失败: {}", e.getMessage());
             return sseDataLine;
         }
+    }
+
+    /**
+     * OpenLovable SSE 转发结果（用于判断上游是否真正产出了可部署的代码）。
+     *
+     * 为什么需要：
+     * - 上游偶发会发送 type=complete 但 generatedCode 为空，且没有任何 stream/content 增量。
+     * - 前端在 done 时会根据累积状态判断“代码为空”，导致无法部署。
+     * - 代理层需要识别该场景并触发一次自动重试（模型回退），提高一次性成功率。
+     */
+    private static final class ForwardSseResult {
+        private final boolean hasDelta;
+        private final boolean hasCompleteCode;
+
+        private ForwardSseResult(boolean hasDelta, boolean hasCompleteCode) {
+            this.hasDelta = hasDelta;
+            this.hasCompleteCode = hasCompleteCode;
+        }
+
+        /** 是否已拿到任何可用于 apply 的代码输出。 */
+        private boolean hasAnyCode() {
+            return hasDelta || hasCompleteCode;
+        }
+    }
+
+    /**
+     * 转发 OpenLovable 的 generate SSE，并在转发过程中统计是否出现“可部署代码”。
+     *
+     * 统计规则：
+     * - 只要出现过 type=stream/type=content 的增量事件，即认为上游输出了代码（hasDelta=true）。
+     * - 若 type=complete 的 generatedCode 非空且包含 <file 标签，则认为上游输出了最终代码（hasCompleteCode=true）。
+     *
+     * @param url OpenLovable generate SSE 上游地址
+     * @param requestBody 适配后的请求体
+     * @param outputStream 代理输出流（返回给前端的 SSE）
+     * @param suppressEmptyComplete 是否在“无增量且 complete.generatedCode 为空”时抑制该 complete 事件（避免前端误判已完成）
+     * @return 转发统计结果
+     */
+    private ForwardSseResult forwardGenerateSse(
+            String url,
+            Map<String, Object> requestBody,
+            OutputStream outputStream,
+            boolean suppressEmptyComplete
+    ) throws IOException {
+        boolean hasDelta = false;
+        boolean hasCompleteCode = false;
+
+        URL targetUrl = new URL(url);
+        HttpURLConnection connection = (HttpURLConnection) targetUrl.openConnection();
+        connection.setRequestMethod("POST");
+        connection.setRequestProperty("Content-Type", "application/json");
+        connection.setRequestProperty("Accept", "text/event-stream");
+        connection.setDoOutput(true);
+        connection.setDoInput(true);
+        connection.setConnectTimeout(30000);
+        connection.setReadTimeout(300000);
+
+        String jsonBody = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(requestBody);
+        connection.getOutputStream().write(jsonBody.getBytes(StandardCharsets.UTF_8));
+        connection.getOutputStream().flush();
+
+        // 读取SSE流式响应（以空行分隔事件），逐行转发给前端
+        try (InputStream inputStream = connection.getInputStream();
+             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+
+            String line;
+            while ((line = reader.readLine()) != null) {
+                boolean shouldForward = true;
+
+                if (line.startsWith("data: ")) {
+                    // 轻量统计：避免对每个 chunk 做 JSON 解析
+                    if (line.contains("\"type\":\"stream\"") || line.contains("\"type\":\"content\"")) {
+                        hasDelta = true;
+                    }
+
+                    if (line.contains("\"type\":\"complete\"")) {
+                        // V2.1优化：在 generate 阶段修复空 main.jsx（避免写入沙箱后报错）
+                        line = fixMainJsxInCompleteEvent(line);
+
+                        // 解析 complete 事件，判断是否真正包含可部署代码
+                        String jsonStr = line.substring(6).trim();
+                        try {
+                            com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                            Map<String, Object> eventData = mapper.readValue(jsonStr, Map.class);
+                            Object generatedCodeObj = eventData.get("generatedCode");
+                            String generatedCode = generatedCodeObj instanceof String ? (String) generatedCodeObj : "";
+                            if (generatedCode != null && !generatedCode.trim().isEmpty() && generatedCode.contains("<file")) {
+                                hasCompleteCode = true;
+                            } else if (!hasDelta && suppressEmptyComplete) {
+                                // 无增量且 complete 无有效代码：抑制该 complete，后续在外层触发自动重试
+                                shouldForward = false;
+                            }
+                        } catch (Exception parseError) {
+                            // 解析失败时不影响转发，但也不将其计为“有效完整代码”
+                            log.warn("解析OpenLovable complete事件失败，将继续转发原始数据: {}", parseError.getMessage());
+                        }
+                    }
+                }
+
+                if (shouldForward) {
+                    if (line.isEmpty()) {
+                        outputStream.write("\n".getBytes(StandardCharsets.UTF_8));
+                    } else {
+                        outputStream.write((line + "\n").getBytes(StandardCharsets.UTF_8));
+                    }
+                    outputStream.flush();
+                    if (!line.isEmpty() && !line.startsWith(":")) {
+                        log.debug("转发SSE消息: {}", line.substring(0, Math.min(line.length(), 100)));
+                    }
+                } else if (line.isEmpty()) {
+                    // 即使抑制 data 行，也保留空行以维持 SSE 事件边界（客户端会忽略空事件）
+                    outputStream.write("\n".getBytes(StandardCharsets.UTF_8));
+                    outputStream.flush();
+                }
+            }
+        }
+
+        log.info("AI代码生成流式响应完成");
+        return new ForwardSseResult(hasDelta, hasCompleteCode);
     }
 
     /**

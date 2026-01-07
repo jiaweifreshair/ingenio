@@ -120,7 +120,7 @@ export interface UseOpenLovablePreviewReturn {
 /**
  * OpenLovable快速预览Hook
  */
-export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
+export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = null): UseOpenLovablePreviewReturn {
   // 状态
   const [stage, setStage] = useState<GenerationStage>('idle');
   const [sandboxInfo, setSandboxInfo] = useState<SandboxInfo | null>(null);
@@ -141,6 +141,16 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
 
   // 预览URL
   const previewUrl = sandboxInfo?.url || null;
+
+  // 兼容：支持由外部注入初始 sandboxInfo（例如 CLONE 分支直接返回 prototypeUrl）
+  const hasInitializedSandboxRef = useRef(false);
+  useEffect(() => {
+    if (hasInitializedSandboxRef.current) return;
+    if (sandboxInfo) return;
+    if (!initialSandboxInfo) return;
+    hasInitializedSandboxRef.current = true;
+    setSandboxInfo(initialSandboxInfo);
+  }, [initialSandboxInfo, sandboxInfo]);
 
   /**
    * 添加日志
@@ -837,6 +847,9 @@ export function useOpenLovablePreview(): UseOpenLovablePreviewReturn {
       }
 
       addLog('✅ 开发服务器重启成功，预览即将刷新');
+
+      // 🔥 关键修复：刷新成功后设置stage为complete，确保"确认设计"按钮可用
+      setStage('complete');
 
       // 重启后再同步一次URL，处理上游可能返回新部署地址的情况
       const postRestartStatus = await requestOpenLovableSandboxStatus(API_BASE_URL, targetSandbox.sandboxId, token);

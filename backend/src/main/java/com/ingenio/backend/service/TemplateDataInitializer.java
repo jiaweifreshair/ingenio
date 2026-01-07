@@ -5,8 +5,10 @@ import com.ingenio.backend.mapper.IndustryTemplateMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.core.annotation.Order;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -14,47 +16,28 @@ import java.util.*;
 
 /**
  * 行业模板数据初始化器
- *
- * Phase X.4 Task 5: 初始化40+行业模板数据
- *
- * 功能特性：
- * 1. 自动初始化40+个行业模板数据
- * 2. 幂等性设计：基于name去重，避免重复插入
- * 3. 7大类别覆盖：电商/教育/社交/生活服务/企业管理/金融科技/内容媒体
- * 4. 每个模板包含完整的元数据：关键词、参考URL、复杂度、特性等
- *
- * 使用方式：
- * - 应用启动时自动执行（CommandLineRunner）
- * - 仅在数据库为空或缺少模板时插入
- * - 可通过日志查看初始化结果
- *
- * 数据分布：
- * - 电商类: 8个模板
- * - 教育类: 6个模板
- * - 社交类: 6个模板
- * - 生活服务类: 7个模板
- * - 企业管理类: 5个模板
- * - 金融科技类: 4个模板
- * - 内容媒体类: 5个模板
- * 总计: 41个模板
- *
- * @author Claude
- * @since 2025-11-16 (Phase X.4 Task 5)
+ * ...
  */
 @Slf4j
 @Component
-@Order(100) // 确保在其他初始化器之后执行
+@Order(100)
 @RequiredArgsConstructor
 public class TemplateDataInitializer implements CommandLineRunner {
 
     private final IndustryTemplateMapper templateMapper;
+    
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Override
     public void run(String... args) {
         log.info("======= 开始初始化行业模板数据 =======");
+        
+        // 确保 ProductShot 表存在（应对 Flyway 迁移失败的情况）
+        initProductShotTable();
 
         try {
-            // 统计当前模板数量
+            // ... existing logic ...
             long currentCount = templateMapper.selectCount(null);
             log.info("当前数据库中已有 {} 个模板", currentCount);
 
@@ -94,6 +77,36 @@ public class TemplateDataInitializer implements CommandLineRunner {
         } catch (Exception e) {
             log.error("模板数据初始化失败", e);
             // 不抛出异常，避免影响应用启动
+        }
+    }
+
+    private void initProductShotTable() {
+        try {
+            log.info("检查并创建 product_shots 表...");
+            jdbcTemplate.execute("""
+                CREATE TABLE IF NOT EXISTS product_shots (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    user_id UUID NOT NULL,
+                    original_image_url VARCHAR(1024) NOT NULL,
+                    mask_image_url VARCHAR(1024),
+                    result_image_url VARCHAR(1024),
+                    prompt TEXT,
+                    status VARCHAR(32),
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """);
+            
+            // 尝试创建索引（如果不存在）
+            try {
+                jdbcTemplate.execute("CREATE INDEX IF NOT EXISTS idx_product_shots_user_id ON product_shots(user_id)");
+            } catch (Exception e) {
+                // 忽略索引已存在错误
+            }
+            
+            log.info("✅ product_shots 表初始化完成");
+        } catch (Exception e) {
+            log.error("product_shots 表初始化失败", e);
         }
     }
 
@@ -183,8 +196,76 @@ public class TemplateDataInitializer implements CommandLineRunner {
         // 7. 内容媒体类 (5个模板)
         templates.addAll(getMediaTemplates());
 
+        // 8. ProductShot Pilot (1个)
+        templates.addAll(getProductShotTemplates());
+
         return templates;
     }
+
+    /**
+     * ProductShot Pilot 专用模板
+     */
+    private List<IndustryTemplateEntity> getProductShotTemplates() {
+        List<IndustryTemplateEntity> templates = new ArrayList<>();
+
+        Map<String, Object> blueprintSpec = new HashMap<>();
+        
+        // Schema
+        List<Map<String, Object>> schema = new ArrayList<>();
+        Map<String, Object> table = new HashMap<>();
+        table.put("tableName", "product_shots");
+        
+        List<Map<String, Object>> columns = new ArrayList<>();
+        columns.add(Map.of("name", "id", "type", "UUID", "constraints", "PRIMARY KEY DEFAULT gen_random_uuid()"));
+        columns.add(Map.of("name", "user_id", "type", "UUID", "constraints", "NOT NULL"));
+        columns.add(Map.of("name", "original_image_url", "type", "VARCHAR(1024)", "constraints", "NOT NULL"));
+        columns.add(Map.of("name", "mask_image_url", "type", "VARCHAR(1024)"));
+        columns.add(Map.of("name", "result_image_url", "type", "VARCHAR(1024)"));
+        columns.add(Map.of("name", "prompt", "type", "TEXT"));
+        columns.add(Map.of("name", "status", "type", "VARCHAR(32)"));
+        columns.add(Map.of("name", "created_at", "type", "TIMESTAMP", "constraints", "DEFAULT CURRENT_TIMESTAMP"));
+        columns.add(Map.of("name", "updated_at", "type", "TIMESTAMP", "constraints", "DEFAULT CURRENT_TIMESTAMP"));
+        
+        table.put("columns", columns);
+        schema.add(table);
+        blueprintSpec.put("schema", schema);
+        
+        // Features
+        blueprintSpec.put("features", Arrays.asList(
+            "Product Image Upload to MinIO",
+            "Background Removal (Integration with Replicate/rembg)",
+            "Scene Generation (Integration with Replicate/Flux.1-Pro)",
+            "Gallery View of Generated Shots"
+        ));
+        
+        // Constraints
+        Map<String, String> constraints = new HashMap<>();
+        constraints.put("techStack", "Spring Boot + React");
+        constraints.put("apiStyle", "RESTful");
+        constraints.put("thirdParty", "Replicate API");
+        blueprintSpec.put("constraints", constraints);
+
+        templates.add(IndustryTemplateEntity.builder()
+                .id(UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"))
+                .name("ProductShot AI (SaaS)")
+                .description("AI-powered product photography generator. Upload product images, remove background automatically, and generate professional scenes using Flux.1-Pro.")
+                .category("SaaS")
+                .subcategory("AI Tools")
+                .keywords(Arrays.asList("AI", "Image Generation", "Product Photography", "Replicate", "SaaS"))
+                .referenceUrl("https://replicate.com")
+                .complexityScore(8)
+                .usageCount(0)
+                .rating(new BigDecimal("5.0"))
+                .isActive(true)
+                .blueprintSpec(blueprintSpec)
+                .entities(createEntities("ProductShot", "User", "Image"))
+                .features(Arrays.asList("Image Upload", "Background Removal", "Scene Generation"))
+                .workflows(createWorkflows("Upload Image", "Remove Background", "Generate Scene", "Download"))
+                .build());
+
+        return templates;
+    }
+
 
     /**
      * 电商类模板 (8个)

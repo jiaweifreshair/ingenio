@@ -140,6 +140,9 @@ export function useG3Logs(jobId: string | null): UseG3LogsReturn {
 
     // 订阅SSE日志流
     const cancel = subscribeToG3Logs(jobId, {
+      onOpen: () => {
+        setIsConnected(true);
+      },
       onLog: (entry) => {
         setLogs((prev) => [...prev, entry]);
         setIsLoading(false);

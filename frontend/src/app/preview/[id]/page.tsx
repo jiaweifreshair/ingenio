@@ -10,7 +10,7 @@
  */
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -33,30 +33,10 @@ import { cn } from '@/lib/utils';
 // 设备类型定义（简化版）
 type DeviceType = 'mobile' | 'tablet' | 'desktop';
 
-// AppSpec数据结构
-interface AppSpec {
-  id: string;
-  version: string;
-  tenantId: string;
-  createdAt: string;
-  updatedAt: string;
-  pages: Array<{
-    id: string;
-    name: string;
-    path: string;
-    components: string[];
-  }>;
-  dataModels: Array<{
-    id: string;
-    name: string;
-    fields: string[];
-  }>;
-  flows: Array<{
-    id: string;
-    name: string;
-    steps: string[];
-  }>;
-}
+import { LivePreviewIframe } from '@/components/code-generation/live-preview-iframe';
+import type { AppSpec } from '@/lib/api/appspec';
+import { getAppSpec } from '@/lib/api/appspec';
+
 
 export default function PreviewPage() {
   const params = useParams();
@@ -71,61 +51,88 @@ export default function PreviewPage() {
 
   const { toast } = useToast();
 
-  useEffect(() => {
-    if (!appSpecId) return;
+  const fetchAppSpec = useCallback(async () => {
+    try {
+      // Don't set loading to true on refresh to avoid flashing if data exists
+      if (!appSpec) setLoading(true);
+      setError(null);
 
-    const fetchAppSpec = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        // Handle demo IDs with static data
-        if (appSpecId.startsWith('demo-')) {
-          // Simulate network delay
-          await new Promise(resolve => setTimeout(resolve, 500));
-          
-          const demoData: Record<string, AppSpec> = {
+      // Handle demo IDs with static data
+      if (appSpecId.startsWith('demo-')) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const demoData: Record<string, AppSpec> = {
             'demo-signup': {
               id: 'demo-signup',
               version: '1.0.0',
               tenantId: 'demo',
+              userId: 'demo-user',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-              pages: [
-                { id: 'p1', name: '活动列表', path: '/activities', components: ['ActivityList', 'SearchBar'] },
-                { id: 'p2', name: '报名详情', path: '/signup/:id', components: ['DetailView', 'SignupForm'] },
-                { id: 'p3', name: '我的报名', path: '/my-signups', components: ['UserDashboard'] },
-              ],
-              dataModels: [
-                { id: 'm1', name: 'Activity', fields: ['title', 'date', 'location'] },
-                { id: 'm2', name: 'Registration', fields: ['userId', 'activityId', 'status'] },
-              ],
-              flows: [],
+              userRequirement: 'Demo Signup',
+              status: 'published',
+              isValid: true,
+              qualityScore: 100,
+              generatedAt: new Date().toISOString(),
+              durationMs: 0,
+              specContent: {
+                pages: [
+                  { id: 'p1', name: '活动列表', path: '/activities', components: ['ActivityList', 'SearchBar'] },
+                  { id: 'p2', name: '报名详情', path: '/signup/:id', components: ['DetailView', 'SignupForm'] },
+                  { id: 'p3', name: '我的报名', path: '/my-signups', components: ['UserDashboard'] },
+                ],
+                dataModels: [
+                  { id: 'm1', name: 'Activity', fields: ['title', 'date', 'location'] },
+                  { id: 'm2', name: 'Registration', fields: ['userId', 'activityId', 'status'] },
+                ],
+                flows: [],
+              },
+              planResult: { modules: [], complexityScore: 0, reasoning: '', suggestedTechStack: [], estimatedHours: 0, recommendations: '' },
+              validateResult: { isValid: true, qualityScore: 100, issues: [], suggestions: [] },
             },
             'demo-survey': {
               id: 'demo-survey',
               version: '1.0.0',
               tenantId: 'demo',
+              userId: 'demo-user',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-              pages: [
-                { id: 'p1', name: '问卷列表', path: '/surveys', components: ['SurveyList'] },
-                { id: 'p2', name: '填写问卷', path: '/fill/:id', components: ['Questionnaire'] },
-                { id: 'p3', name: '结果统计', path: '/stats/:id', components: ['ChartDashboard'] },
-              ],
-              dataModels: [
-                { id: 'm1', name: 'Survey', fields: ['title', 'description', 'questions'] },
-                { id: 'm2', name: 'Response', fields: ['surveyId', 'answers'] },
-              ],
-              flows: [],
+              userRequirement: 'Demo Survey',
+              status: 'published',
+              isValid: true,
+              qualityScore: 100,
+              generatedAt: new Date().toISOString(),
+              durationMs: 0,
+              specContent: {
+                pages: [
+                  { id: 'p1', name: '问卷列表', path: '/surveys', components: ['SurveyList'] },
+                  { id: 'p2', name: '填写问卷', path: '/fill/:id', components: ['Questionnaire'] },
+                  { id: 'p3', name: '结果统计', path: '/stats/:id', components: ['ChartDashboard'] },
+                ],
+                dataModels: [
+                  { id: 'm1', name: 'Survey', fields: ['title', 'description', 'questions'] },
+                  { id: 'm2', name: 'Response', fields: ['surveyId', 'answers'] },
+                ],
+                flows: [],
+              },
+              planResult: { modules: [], complexityScore: 0, reasoning: '', suggestedTechStack: [], estimatedHours: 0, recommendations: '' },
+              validateResult: { isValid: true, qualityScore: 100, issues: [], suggestions: [] },
             },
             'demo-shop': {
               id: 'demo-shop',
               version: '1.0.0',
               tenantId: 'demo',
+              userId: 'demo-user',
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString(),
-              pages: [
+              userRequirement: 'Demo Shop',
+              status: 'published',
+              isValid: true,
+              qualityScore: 100,
+              generatedAt: new Date().toISOString(),
+              durationMs: 0,
+              specContent: {
+                 pages: [
                 { id: 'p1', name: '商品首页', path: '/home', components: ['Banner', 'ProductGrid'] },
                 { id: 'p2', name: '商品详情', path: '/product/:id', components: ['ProductDetail', 'AddToCart'] },
                 { id: 'p3', name: '购物车', path: '/cart', components: ['CartList', 'Checkout'] },
@@ -135,73 +142,51 @@ export default function PreviewPage() {
                 { id: 'm2', name: 'Order', fields: ['userId', 'items', 'total', 'status'] },
               ],
               flows: [],
+              },
+              planResult: { modules: [], complexityScore: 0, reasoning: '', suggestedTechStack: [], estimatedHours: 0, recommendations: '' },
+              validateResult: { isValid: true, qualityScore: 100, issues: [], suggestions: [] },
             },
-          };
+        };
 
-          const data = demoData[appSpecId];
-          if (data) {
-            setAppSpec(data);
-            return;
-          }
-          // If demo ID not found in map, fall through to API or error
+        const data = demoData[appSpecId];
+        if (data) {
+          setAppSpec(data);
+          return;
         }
-
-        // 调用真实API获取AppSpec数据
-        const { getAppSpec } = await import('@/lib/api/appspec');
-        const response = await getAppSpec(appSpecId);
-
-        if (response.success && response.data) {
-          // 转换后端数据格式为前端所需格式
-          const backendAppSpec = response.data;
-
-          // 解析specContent JSON字符串
-          let parsedContent: {
-            pages?: Array<{ id: string; name: string; path: string; components: string[] }>;
-            dataModels?: Array<{ id: string; name: string; fields: string[] }>;
-            flows?: Array<{ id: string; name: string; steps: string[] }>;
-          } = {};
-
-          try {
-            parsedContent = typeof backendAppSpec.specContent === 'string'
-              ? JSON.parse(backendAppSpec.specContent)
-              : backendAppSpec.specContent || {};
-          } catch (parseErr) {
-            console.warn('Failed to parse specContent:', parseErr);
-          }
-
-          setAppSpec({
-            id: backendAppSpec.id,
-            version: backendAppSpec.version || '1.0.0',
-            tenantId: backendAppSpec.tenantId,
-            createdAt: backendAppSpec.createdAt,
-            updatedAt: backendAppSpec.updatedAt,
-            pages: parsedContent.pages || [],
-            dataModels: parsedContent.dataModels || [],
-            flows: parsedContent.flows || [],
-          });
-        } else {
-          throw new Error(response.error || '获取AppSpec失败');
-        }
-      } catch (err) {
-        console.error('Failed to fetch AppSpec:', err);
-        setError(err instanceof Error ? err.message : '加载失败');
-      } finally {
-        setLoading(false);
       }
-    };
 
+      // 调用真实API获取AppSpec数据
+      const response = await getAppSpec(appSpecId);
+
+      if (response.success && response.data) {
+        setAppSpec(response.data);
+      } else {
+        // Only throw if we don't have data yet (on initial load)
+        if (!appSpec) throw new Error(response.error || '获取AppSpec失败');
+      }
+    } catch (err) {
+      console.error('Failed to fetch AppSpec:', err);
+      if (!appSpec) setError(err instanceof Error ? err.message : '加载失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [appSpecId, appSpec]);
+
+  // Initial load
+  useEffect(() => {
     fetchAppSpec();
-  }, [appSpecId]);
+  }, [fetchAppSpec]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await fetchAppSpec();
     setIsRefreshing(false);
     toast({
       title: '刷新成功',
       description: '预览内容已更新',
     });
   };
+
 
   const handlePublish = () => {
     // 直接导航到发布页面，不弹窗
@@ -254,8 +239,34 @@ export default function PreviewPage() {
     );
   }
 
+  // Helper to safely access pages from specContent or older flat structure
+  const getPages = () => {
+     if (!appSpec) return [];
+     // @ts-expect-error - Handle legacy structure if needed, or structured specContent
+     return (appSpec.specContent?.pages || appSpec.pages || []) as Array<{ id: string; name: string; path: string; components: string[] }>;
+  };
+  
+   const getDataModels = () => {
+     if (!appSpec) return [];
+     // @ts-expect-error - Handle legacy structure if needed, or structured specContent
+     return (appSpec.specContent?.dataModels || appSpec.dataModels || []) as Array<{ id: string; name: string; fields: string[] }>;
+  };
+
+  const pages = getPages();
+  const dataModels = getDataModels();
+
   // 应用内容（被预览框架包裹的部分）
-  const appContent = (
+  // 如果有真实预览URL，则显示iframe，否则显示原来的mock内容
+  const appContent = appSpec.frontendPrototypeUrl ? (
+    <LivePreviewIframe 
+       previewUrl={appSpec.frontendPrototypeUrl}
+       isGenerating={false}
+       showDeviceSwitcher={false} // Switcher is handled by parent
+       showRefreshButton={false}
+       className="w-full h-full border-0"
+       initialDevice={selectedDevice === 'mobile' ? 'mobile' : selectedDevice === 'tablet' ? 'tablet' : 'desktop'}
+    />
+  ) : (
     <div className="h-full flex flex-col bg-background">
       {/* 模拟Header */}
       <header className="bg-primary text-primary-foreground p-4">
@@ -278,7 +289,7 @@ export default function PreviewPage() {
           </section>
 
           <section className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {appSpec.pages.map((page) => (
+            {pages.map((page) => (
               <div key={page.id} className="p-4 border rounded-lg">
                 <h4 className="font-semibold mb-2">{page.name}</h4>
                 <p className="text-sm text-muted-foreground">路径: {page.path}</p>
@@ -391,11 +402,11 @@ export default function PreviewPage() {
                   <Separator />
                   <div>
                     <span className="text-muted-foreground">页面数:</span>
-                    <span className="ml-2 font-medium">{appSpec.pages.length}</span>
+                    <span className="ml-2 font-medium">{pages.length}</span>
                   </div>
                   <div>
                     <span className="text-muted-foreground">数据模型:</span>
-                    <span className="ml-2 font-medium">{appSpec.dataModels.length}</span>
+                    <span className="ml-2 font-medium">{dataModels.length}</span>
                   </div>
                 </div>
               </CardContent>
@@ -433,7 +444,11 @@ export default function PreviewPage() {
             </div>
 
             {/* 预览容器 */}
-            <div className="flex-1 flex justify-center items-start overflow-auto">
+            <div className={cn(
+               "flex-1 flex justify-center overflow-auto",
+               // Only align items-start if we have a fixed height container, otherwise stretch
+               appSpec.frontendPrototypeUrl ? "items-stretch" : "items-start"
+            )}>
               <div
                 data-device-preview
                 className={cn(
@@ -443,6 +458,8 @@ export default function PreviewPage() {
                     'w-[375px]': selectedDevice === 'mobile',
                     'w-[768px]': selectedDevice === 'tablet',
                     'w-full max-w-[1200px]': selectedDevice === 'desktop',
+                    // 如果是真实预览，允许在桌面模式下更灵活
+                    'h-[800px]': !!appSpec.frontendPrototypeUrl && selectedDevice === 'desktop'
                   }
                 )}
               >
@@ -457,7 +474,7 @@ export default function PreviewPage() {
               <CardContent className="pt-6">
                 <h3 className="font-semibold mb-4">页面结构</h3>
                 <div className="space-y-2">
-                  {appSpec.pages.map((page) => (
+                  {pages.map((page) => (
                     <div
                       key={page.id}
                       data-page-item
@@ -477,7 +494,7 @@ export default function PreviewPage() {
                 <div>
                   <h4 className="font-semibold text-sm mb-2">数据模型</h4>
                   <div className="space-y-1">
-                    {appSpec.dataModels.map((model) => (
+                    {dataModels.map((model) => (
                       <div key={model.id} className="text-xs text-muted-foreground">
                         • {model.name} ({model.fields.length} 字段)
                       </div>

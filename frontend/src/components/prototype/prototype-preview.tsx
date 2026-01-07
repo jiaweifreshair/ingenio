@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 
@@ -24,6 +24,7 @@ export function PrototypePreview({
   streamedCode = '',
 }: PrototypePreviewProps) {
   const [iframeLoaded, setIframeLoaded] = useState(false);
+  const [iframeError, setIframeError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const codeScrollRef = useRef<HTMLDivElement>(null);
 
@@ -37,7 +38,24 @@ export function PrototypePreview({
   // Reset loaded state when key changes (reload)
   useEffect(() => {
     setIframeLoaded(false);
+    setIframeError(null);
   }, [iframeKey]);
+
+  // 为避免浏览器缓存导致 iframe 停留在旧的错误页/空白页，刷新时增加 cache bust 参数
+  const iframeSrc = useMemo(() => {
+    if (!previewUrl) return null;
+    if (iframeKey <= 0) return previewUrl;
+
+    try {
+      const url = new URL(previewUrl);
+      url.searchParams.set('t', Date.now().toString());
+      return url.toString();
+    } catch {
+      const hasQuery = previewUrl.includes('?');
+      const separator = hasQuery ? '&' : '?';
+      return `${previewUrl}${separator}t=${Date.now()}`;
+    }
+  }, [previewUrl, iframeKey]);
 
   return (
     <div className={`relative h-full w-full ${className}`}>
@@ -46,13 +64,38 @@ export function PrototypePreview({
           <iframe
             key={iframeKey}
             ref={iframeRef}
-            src={previewUrl}
+            src={iframeSrc || previewUrl}
             className="w-full h-full border-0"
             title="原型预览"
-            onLoad={() => setIframeLoaded(true)}
+            sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
+            onLoad={() => {
+              setIframeLoaded(true);
+              setIframeError(null);
+            }}
+            onError={() => {
+              setIframeLoaded(false);
+              setIframeError('预览加载失败：可能是沙箱服务未启动、网络受限或被浏览器策略拦截。');
+            }}
             allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone; midi"
             data-testid="prototype-preview-iframe"
           />
+
+          {/* iframe 加载失败提示（提供新窗口打开作为兜底） */}
+          {iframeError && !isGenerating && (
+            <div className="absolute inset-0 z-30 bg-background/90 dark:bg-zinc-950/90 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center">
+              <p className="text-sm text-muted-foreground mb-3">{iframeError}</p>
+              {previewUrl && (
+                <a
+                  href={previewUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm text-primary underline underline-offset-4"
+                >
+                  在新窗口打开预览
+                </a>
+              )}
+            </div>
+          )}
 
           {/* 生成中遮罩 (带代码流) */}
           {isGenerating && (
@@ -84,7 +127,7 @@ export function PrototypePreview({
           )}
 
           {/* 预览就绪标记 */}
-          {stage === 'complete' && iframeLoaded && (
+          {stage === 'complete' && iframeLoaded && !iframeError && (
             <Badge className="absolute top-2 right-2 bg-green-100 text-green-700 border-green-200">
               <CheckCircle2 className="h-3 w-3 mr-1" />
               预览就绪

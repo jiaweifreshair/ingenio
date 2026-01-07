@@ -4,6 +4,7 @@ import cn.hutool.jwt.JWT;
 import cn.hutool.jwt.signers.JWTSignerUtil;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ingenio.backend.common.filter.AdminServiceJwtFilter;
+import com.ingenio.backend.common.security.AdminServiceJwtGenerator;
 import com.ingenio.backend.common.security.AdminServiceJwtVerifier;
 import com.ingenio.backend.config.AdminServiceJwtProperties;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,10 +50,14 @@ class AdminStatusControllerAuthStandaloneTest {
         properties.setClockSkewSeconds(0);
 
         AdminServiceJwtVerifier verifier = new AdminServiceJwtVerifier(properties);
+        AdminServiceJwtGenerator generator = new AdminServiceJwtGenerator(properties);
         AdminServiceJwtFilter filter = new AdminServiceJwtFilter(verifier, new ObjectMapper());
 
+        // 创建 Controller，注入依赖
+        AdminStatusController controller = new AdminStatusController(generator, properties);
+
         mockMvc = MockMvcBuilders
-            .standaloneSetup(new AdminStatusController())
+            .standaloneSetup(controller)
             .addFilters(filter)
             .build();
     }

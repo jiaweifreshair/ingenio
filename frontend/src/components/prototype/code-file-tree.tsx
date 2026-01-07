@@ -58,12 +58,42 @@ function getFileIcon(_path: string, type: FileNode['type']) {
 }
 
 /**
+ * 验证文件路径是否有效
+ * 过滤掉包含XML标签碎片的无效路径
+ */
+function isValidFilePath(path: string): boolean {
+  if (!path || typeof path !== 'string') return false;
+  
+  // 过滤包含XML标签碎片的路径
+  if (path.includes('<file') || path.includes('</file>') || path.includes('path="') || path.includes('path=\'')) {
+    return false;
+  }
+  
+  // 过滤以 < 或 > 开头或结尾的路径
+  if (path.startsWith('<') || path.startsWith('>') || path.endsWith('<') || path.endsWith('>')) {
+    return false;
+  }
+  
+  // 过滤包含明显HTML/XML字符的路径
+  if (path.includes('">') || path.includes('">')) {
+    return false;
+  }
+  
+  // 路径应该看起来像文件路径（至少包含一个点或斜杠）
+  // 但也允许简单的文件名如 "README"
+  return true;
+}
+
+/**
  * 构建文件树结构
  */
 function buildFileTree(files: FileNode[]): TreeNode[] {
   const root: TreeNode[] = [];
 
-  files.forEach((file) => {
+  // 过滤掉无效路径的文件
+  const validFiles = files.filter(file => isValidFilePath(file.path));
+
+  validFiles.forEach((file) => {
     const parts = file.path.split('/');
     let currentLevel = root;
 

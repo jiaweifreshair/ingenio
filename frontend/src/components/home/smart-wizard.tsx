@@ -115,7 +115,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
 
   // API超时计时器
   const apiTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const API_TIMEOUT_MS = 180000;
+  const API_TIMEOUT_MS = 300000;
   
   // 状态标记
   const hasStartedRef = useRef(false);
@@ -225,12 +225,16 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
       const startPrototypePhase = () => {
         console.log('[SmartWizard] 切换到原型确认步骤, appSpecId:', routingResult.appSpecId);
         
-        // 更新 routingResult，设置默认风格
-        setRoutingResult(prev => prev ? ({
+        // 更新 routingResult：设置默认风格，但不要覆盖 CLONE 分支已生成的原型状态
+        setRoutingResult(prev => {
+          if (!prev) return null;
+          const hasPrototype = !!prev.prototypeUrl || !!prev.prototypeGenerated;
+          return {
             ...prev,
-            selectedStyleId: 'modern_minimal',
-            prototypeGenerated: false
-        }) : null);
+            selectedStyleId: prev.selectedStyleId || 'modern_minimal',
+            prototypeGenerated: hasPrototype,
+          };
+        });
         
         setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
         setLoading(false);
@@ -255,11 +259,15 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
         console.log('[SmartWizard] 兜底：SSE超时，强制切换步骤');
         hasTriggeredTransitionRef.current = true;
         
-        setRoutingResult(prev => prev ? ({
+        setRoutingResult(prev => {
+          if (!prev) return null;
+          const hasPrototype = !!prev.prototypeUrl || !!prev.prototypeGenerated;
+          return {
             ...prev,
-            selectedStyleId: 'modern_minimal',
-            prototypeGenerated: false
-        }) : null);
+            selectedStyleId: prev.selectedStyleId || 'modern_minimal',
+            prototypeGenerated: hasPrototype,
+          };
+        });
         
         setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
         setLoading(false);
@@ -270,9 +278,9 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
 
   // API整体超时处理
   useEffect(() => {
-    if (currentStep === WizardStep.ANALYZING && !routingResult) {
+    if (currentStep === WizardStep.ANALYZING && !routingResult && !error) {
       apiTimeoutRef.current = setTimeout(() => {
-        if (!routingResult && currentStep === WizardStep.ANALYZING) {
+        if (!routingResult && currentStep === WizardStep.ANALYZING && !error) {
           console.error('[SmartWizard] API超时');
           toast({
             title: '请求超时',
@@ -287,7 +295,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     return () => {
       if (apiTimeoutRef.current) clearTimeout(apiTimeoutRef.current);
     };
-  }, [currentStep, routingResult, toast]);
+  }, [currentStep, routingResult, error, toast]);
 
   // 清除超时计时器
   useEffect(() => {
@@ -310,12 +318,17 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     console.log('[SmartWizard] 用户确认技术方案，跳转到原型预览');
     hasTriggeredTransitionRef.current = true;
 
-    // 更新routingResult，设置默认风格
-    setRoutingResult(prev => prev ? ({
-      ...prev,
-      selectedStyleId: 'modern_minimal',
-      prototypeGenerated: false
-    }) : null);
+    // 更新 routingResult：设置默认风格，但不要错误覆盖 CLONE 分支的 prototypeGenerated 状态
+    // - CLONE 分支可能已由后端直接生成 prototypeUrl，此时强制置 false 会导致“确认设计”按钮被禁用
+    setRoutingResult(prev => {
+      if (!prev) return null;
+      const hasPrototype = !!prev.prototypeUrl || !!prev.prototypeGenerated;
+      return {
+        ...prev,
+        selectedStyleId: prev.selectedStyleId || 'modern_minimal',
+        prototypeGenerated: hasPrototype,
+      };
+    });
 
     setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
     setLoading(false);
@@ -410,7 +423,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
 
       case WizardStep.EXECUTE:
         return (
-          <div className="h-[650px] -m-6 md:-m-8">
+          <div className="h-[calc(100vh-240px)] min-h-[760px] -m-6 md:-m-8">
             {/* G3 Console embedded with full height */}
             <G3Console 
                 initialRequirement={requirement}

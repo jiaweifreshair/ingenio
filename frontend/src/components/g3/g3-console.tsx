@@ -2,15 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { G3LogEntry as LocalG3LogEntry, G3Task } from "@/lib/g3/types";
-import { createAndMonitorG3Job } from "@/lib/api/g3";
+import { createAndMonitorG3Job, getG3Artifacts, getG3JobStatus } from "@/lib/api/g3";
 import { G3LogEntry as ApiG3LogEntry } from "@/types/g3";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import { LogStream } from "./log-stream";
-import { AgentCard } from "./agent-card";
-import { Play, ShieldCheck, Sword, Hammer, Loader2 } from "lucide-react";
+import { G3ConsoleView } from "./g3-console-view";
 import { toast } from "@/hooks/use-toast";
+import { G3ResultDialog } from "./g3-result-dialog";
+import type { G3JobStatusResponse } from "@/lib/api/g3";
+import type { G3ArtifactSummary } from "@/types/g3";
 
 interface G3ConsoleProps {
   initialRequirement?: string;
@@ -33,7 +31,6 @@ function convertApiLogToLocal(apiLog: ApiG3LogEntry): LocalG3LogEntry {
 }
 
 export function G3Console({ initialRequirement, autoStart = false, onComplete, className }: G3ConsoleProps) {
-  console.log('[DEBUG] G3Console Rendering, autoStart:', autoStart);
   const [isRunning, setIsRunning] = useState(false);
   const [requirement, setRequirement] = useState(initialRequirement || "创建一个请假系统，需要审批流");
   const [logs, setLogs] = useState<LocalG3LogEntry[]>([]);
@@ -41,6 +38,16 @@ export function G3Console({ initialRequirement, autoStart = false, onComplete, c
   const [round, setRound] = useState(0);
   const [jobId, setJobId] = useState<string | null>(null);
   const cancelRef = useRef<(() => void) | null>(null);
+  const jobIdRef = useRef<string | null>(null);
+  const startInFlightRef = useRef(false);
+  const autoStartOnceRef = useRef(false);
+  const [finalStatus, setFinalStatus] = useState<'COMPLETED' | 'FAILED' | null>(null);
+
+  // 结果展示：任务状态 + 产物列表
+  const [jobInfo, setJobInfo] = useState<G3JobStatusResponse | null>(null);
+  const [artifacts, setArtifacts] = useState<G3ArtifactSummary[]>([]);
+  const [resultLoading, setResultLoading] = useState(false);
+  const [resultError, setResultError] = useState<string | null>(null);
 
   // 处理日志条目
   const handleLogEntry = useCallback((apiLog: ApiG3LogEntry) => {
@@ -65,19 +72,84 @@ export function G3Console({ initialRequirement, autoStart = false, onComplete, c
     if (localLog.content.includes("任务完成") || localLog.content.includes("COMPLETED")) {
       setIsRunning(false);
       setActiveRole(null);
+      setFinalStatus('COMPLETED');
       toast({ title: "G3 引擎执行成功", description: "代码已交付" });
+    }
+
+    // 检测失败状态
+    if (
+      localLog.content.includes("任务失败") ||
+      localLog.content.includes("FAILED") ||
+      localLog.content.includes("❌ G3任务失败")
+    ) {
+      setIsRunning(false);
+      setActiveRole(null);
+      setFinalStatus('FAILED');
+      toast({ title: "G3 引擎执行失败", description: localLog.content, variant: "destructive" });
+    }
+  }, []);
+
+  /**
+   * 拉取任务“结果视图”（状态 + 产物列表）
+   *
+   * 说明：
+   * - 由 SSE complete 事件触发（后端会在流结束时补发 complete）
+   * - 也可在 UI 中手动刷新
+   */
+  const refreshResult = useCallback(async () => {
+    const id = jobIdRef.current;
+    if (!id) return;
+
+    setResultLoading(true);
+    setResultError(null);
+
+    try {
+      const [statusResp, artifactsResp] = await Promise.all([
+        getG3JobStatus(id),
+        getG3Artifacts(id),
+      ]);
+
+      if (statusResp.success && statusResp.data) {
+        setJobInfo(statusResp.data);
+      }
+
+      if (artifactsResp.success && artifactsResp.data) {
+        setArtifacts(artifactsResp.data as G3ArtifactSummary[]);
+      }
+
+      if (!statusResp.success || !artifactsResp.success) {
+        const msg =
+          statusResp.error ||
+          statusResp.message ||
+          artifactsResp.error ||
+          artifactsResp.message ||
+          "拉取结果失败";
+        setResultError(msg);
+      }
+    } catch (e) {
+      setResultError(e instanceof Error ? e.message : "拉取结果失败");
+    } finally {
+      setResultLoading(false);
     }
   }, []);
 
   const handleStart = useCallback(async () => {
-    console.log('[DEBUG] handleStart called - using backend API');
     if (!requirement.trim()) return;
+    if (startInFlightRef.current) return;
+    if (isRunning) return;
+
+    startInFlightRef.current = true;
 
     setIsRunning(true);
     setLogs([]);
     setRound(0);
     setActiveRole(null);
     setJobId(null);
+    jobIdRef.current = null;
+    setFinalStatus(null);
+    setJobInfo(null);
+    setArtifacts([]);
+    setResultError(null);
 
     // 添加启动日志
     setLogs([{
@@ -89,17 +161,42 @@ export function G3Console({ initialRequirement, autoStart = false, onComplete, c
     }]);
 
     try {
+      // 若已有连接，先取消，避免重复订阅导致“提交两次任务/日志串线”
+      if (cancelRef.current) {
+        cancelRef.current();
+        cancelRef.current = null;
+      }
+
       const { cancel } = await createAndMonitorG3Job(requirement, {
         onSubmitted: (id) => {
           console.log('[G3Console] Job submitted:', id);
           setJobId(id);
+          jobIdRef.current = id;
           setLogs(prev => [...prev, {
             timestamp: Date.now(),
             role: 'SYSTEM',
             step: 'INIT',
             content: `✅ 任务已提交，ID: ${id.substring(0, 8)}...`,
             level: 'SUCCESS',
+          }, {
+            timestamp: Date.now(),
+            role: 'SYSTEM',
+            step: 'SSE',
+            content: '🌊 正在订阅实时日志流...',
+            level: 'INFO',
           }]);
+        },
+        onOpen: (info) => {
+          setLogs((prev) => [
+            ...prev,
+            {
+              timestamp: Date.now(),
+              role: "SYSTEM",
+              step: "SSE",
+              content: `🌊 SSE已连接 (HTTP ${info.status}${info.contentType ? `, ${info.contentType}` : ""})`,
+              level: "INFO",
+            },
+          ]);
         },
         onSubmitError: (error) => {
           console.error('[G3Console] Submit error:', error);
@@ -118,11 +215,12 @@ export function G3Console({ initialRequirement, autoStart = false, onComplete, c
           console.log('[G3Console] Job completed');
           setIsRunning(false);
           setActiveRole(null);
+          refreshResult();
           // 构造 G3Task 对象供回调使用
           const task: G3Task = {
-            id: jobId || 'unknown',
+            id: jobIdRef.current || 'unknown',
             requirement,
-            status: 'COMPLETED',
+            status: finalStatus === 'FAILED' ? 'FAILED' : 'COMPLETED',
             rounds: round,
             maxRounds: 3,
             artifacts: { codeFiles: {}, testFiles: {}, logs: [] },
@@ -152,8 +250,10 @@ export function G3Console({ initialRequirement, autoStart = false, onComplete, c
       console.error('[G3Console] Unexpected error:', e);
       setIsRunning(false);
       toast({ title: "G3 引擎异常", description: String(e), variant: "destructive" });
+    } finally {
+      startInFlightRef.current = false;
     }
-  }, [requirement, onComplete, handleLogEntry, jobId, round, isRunning]);
+  }, [requirement, onComplete, handleLogEntry, refreshResult, round, isRunning, finalStatus]);
 
   // 清理：组件卸载时取消 SSE 连接
   useEffect(() => {
@@ -166,108 +266,34 @@ export function G3Console({ initialRequirement, autoStart = false, onComplete, c
 
   // Auto Start Effect
   useEffect(() => {
-    if (autoStart && !isRunning && logs.length === 0) {
+    // Next.js dev 模式下 React StrictMode 会导致 effect 执行两次，这里用 ref 防止重复启动
+    if (autoStart && !autoStartOnceRef.current && !isRunning && logs.length === 0) {
+      autoStartOnceRef.current = true;
       handleStart();
     }
   }, [autoStart, isRunning, logs.length, handleStart]);
 
   return (
-    <div className={`flex flex-col h-[600px] w-full bg-slate-950 text-slate-200 p-6 rounded-xl border border-slate-800 shadow-2xl overflow-hidden ${className}`}>
-      
-      {/* Header / Control Panel */}
-      <div className="flex items-center gap-4 mb-6">
-        <div className="flex items-center gap-2 mr-auto">
-          <div className="p-2 bg-blue-600 rounded-lg">
-            <Sword className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold tracking-tight text-white">G3 Battle Console</h2>
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <span className="flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> Security-First</span>
-              <span>•</span>
-              <span className="flex items-center gap-1"><Hammer className="w-3 h-3" /> Auto-Fix</span>
-            </div>
-          </div>
-        </div>
-
-        {/* In embedded mode, input is read-only or hidden */}
-        {!autoStart && (
-          <div className="flex-1 max-w-lg">
-              <Input 
-                  value={requirement}
-                  onChange={e => setRequirement(e.target.value)}
-                  disabled={isRunning}
-                  className="bg-slate-900 border-slate-700 text-slate-200 placeholder:text-slate-600 font-mono text-sm"
-                  placeholder="Enter mission objective..."
-              />
-          </div>
-        )}
-
-        {/* Start Button (Hidden in auto-start mode) */}
-        {!autoStart && (
-          <Button 
-              onClick={handleStart} 
-              disabled={isRunning}
-              className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold shadow-lg shadow-blue-900/20"
-          >
-              {isRunning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Play className="w-4 h-4 mr-2" />}
-              {isRunning ? "ENGAGED" : "START ENGINE"}
-          </Button>
-        )}
-        
-        {autoStart && isRunning && (
-           <Badge variant="outline" className="bg-blue-900/20 text-blue-400 border-blue-500/30 animate-pulse">
-              AUTONOMOUS MODE
-           </Badge>
-        )}
-      </div>
-
-      {/* Main Battle Field */}
-      <div className="grid grid-cols-12 gap-6 flex-1 min-h-0">
-        
-        {/* Left: Agents Status */}
-        <div className="col-span-3 flex flex-col gap-4">
-            <AgentCard 
-                role="ARCHITECT"
-                name="Architect"
-                description="Deconstructs requirements into specs."
-                status={activeRole === 'ARCHITECT' ? 'WORKING' : 'IDLE'}
-            />
-            <AgentCard 
-                role="PLAYER"
-                name="Blue Team"
-                description="Builds features using secure templates."
-                status={activeRole === 'PLAYER' ? 'WORKING' : 'IDLE'}
-            />
-            <AgentCard 
-                role="COACH"
-                name="Red Team"
-                description="Attacks code with IDOR & Injection."
-                status={activeRole === 'COACH' ? 'WORKING' : 'IDLE'}
-            />
-        </div>
-
-        {/* Center: Battle Log */}
-        <div className="col-span-9 flex flex-col gap-4">
-            {/* Status Bar */}
-            <div className="flex items-center justify-between px-4 py-2 bg-slate-900/50 rounded-lg border border-slate-800">
-                <div className="flex items-center gap-4">
-                    <span className="text-xs uppercase text-slate-500 font-bold">Current Phase</span>
-                    <Badge variant="outline" className="bg-slate-800 border-slate-700 text-slate-300">
-                        {round > 0 ? `ROUND ${round}` : "STANDBY"}
-                    </Badge>
-                </div>
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <div className={`w-2 h-2 rounded-full ${isRunning ? "bg-green-500 animate-pulse" : "bg-slate-600"}`} />
-                    System Status: {isRunning ? "ONLINE" : "READY"}
-                </div>
-            </div>
-
-            {/* Terminal */}
-            <LogStream logs={logs} className="flex-1" />
-        </div>
-
-      </div>
-    </div>
+    <G3ConsoleView
+      logs={logs}
+      activeRole={activeRole}
+      round={round}
+      isRunning={isRunning}
+      requirement={requirement}
+      onRequirementChange={setRequirement}
+      onStart={handleStart}
+      autoStart={autoStart}
+      rightTopSlot={
+        <G3ResultDialog
+          jobId={jobId}
+          jobInfo={jobInfo}
+          artifacts={artifacts}
+          isLoading={resultLoading}
+          error={resultError}
+          onRefresh={refreshResult}
+        />
+      }
+      className={className}
+    />
   );
 }

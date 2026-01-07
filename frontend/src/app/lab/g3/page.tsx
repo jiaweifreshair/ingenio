@@ -5,7 +5,7 @@ export default function G3LabPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col">
       {/* <TopNav /> */}
-      <main className="flex-1 container mx-auto px-4 py-12 flex flex-col items-center justify-center">
+      <main className="flex-1 container mx-auto px-4 py-10 flex flex-col items-center justify-start">
         <div className="w-full max-w-6xl space-y-8">
             <div className="text-center space-y-4">
                 <h1 className="text-4xl font-bold text-white tracking-tighter">

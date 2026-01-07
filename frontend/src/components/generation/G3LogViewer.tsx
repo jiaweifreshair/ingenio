@@ -9,10 +9,15 @@ import type { G3LogEntry } from '@/types/g3';
 import { Button } from '@/components/ui/button';
 
 interface G3LogViewerProps {
-  requirement?: string;
+  /** 需求描述（必填） */
+  requirement: string;
+  /** 行业模板 ID（可选，用于加载 Blueprint） */
+  templateId?: string;
+  /** 是否禁用启动按钮 */
+  disabled?: boolean;
 }
 
-export function G3LogViewer({ requirement = "Build a Product Image Upload Component" }: G3LogViewerProps) {
+export function G3LogViewer({ requirement, templateId, disabled = false }: G3LogViewerProps) {
   const [logs, setLogs] = useState<G3LogEntry[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -35,7 +40,11 @@ export function G3LogViewer({ requirement = "Build a Product Image Upload Compon
       const response = await fetch('/api/lab/g3-poc', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ requirement }),
+        body: JSON.stringify({
+          requirement,
+          // 如果提供了 templateId，后端会从模板加载 Blueprint
+          ...(templateId && { templateId }),
+        }),
       });
 
       if (!response.body) throw new Error('No response body');
@@ -66,6 +75,11 @@ export function G3LogViewer({ requirement = "Build a Product Image Upload Compon
 
           try {
             const logEntry = JSON.parse(dataStr) as G3LogEntry;
+            // 过滤掉心跳消息，不在 UI 中显示
+            if (logEntry.level === 'heartbeat') {
+              console.debug('[G3LogViewer] 收到心跳消息，保持连接活跃');
+              continue;
+            }
             setLogs((prev) => [...prev, logEntry]);
           } catch (e) {
             console.warn('[G3LogViewer] 解析日志失败:', e, dataStr);
@@ -128,8 +142,8 @@ export function G3LogViewer({ requirement = "Build a Product Image Upload Compon
               size="sm"
               variant={isRunning ? 'secondary' : 'default'}
               onClick={startGeneration}
-              disabled={isRunning}
-              className="h-8 text-xs font-mono bg-indigo-600 hover:bg-indigo-500 text-white border-none"
+              disabled={isRunning || disabled || !requirement?.trim()}
+              className="h-8 text-xs font-mono bg-indigo-600 hover:bg-indigo-500 text-white border-none disabled:opacity-50"
             >
               {isRunning ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Play className="w-3 h-3 mr-1" />}
               {isRunning ? '执行中...' : '启动任务'}

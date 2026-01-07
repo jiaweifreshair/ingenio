@@ -31,13 +31,21 @@ spring:
   ai:
     openai:
       # ⚠️ 请通过环境变量注入密钥，禁止在代码/配置中硬编码真实 sk-... 值
+      # 推荐：QINIU_CLOUD_API_KEY（七牛云 OpenAI 兼容接口）
+      # 兼容：SPRING_AI_OPENAI_API_KEY / QINIU_AI_API_KEY / DEEPSEEK_API_KEY
       api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-placeholder}}}}
+      # 注意：Spring AI 的 base-url 不要包含 /v1（例如 https://api.qnaigc.com）
       base-url: ${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:https://api.qnaigc.com}}
       chat:
         enabled: true
         options:
-          # 使用通义千问3-235B模型（七牛云可用）
-          model: qwen3-235b-a22b-instruct-2507
+          # 使用 deepseek-v3 模型（七牛云推荐，RPM限制更宽松）
+          # 可选模型（按RPM限制从宽到严排序）：
+          # - deepseek-v3：代码和推理能力强，RPM限制相对宽松
+          # - qwen-max：通义千问旗舰模型，适合复杂任务
+          # - qwen-plus：性价比高，RPM限制宽松
+          # - qwen3-235b-a22b-instruct-2507：235B大模型，RPM限制严格（2-5 RPM）
+          model: deepseek-v3
           temperature: 0.3
           max-tokens: 4096
       embedding:
@@ -118,6 +126,16 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
+# JeecgBoot多模态AI网关配置
+# 架构说明：Ingenio -> JeecgBoot -> 七牛云AI
+jeecgboot:
+  api:
+    base-url: ${JEECGBOOT_API_URL:http://localhost:7008}
+    token: ${JEECGBOOT_API_TOKEN:}
+    connect-timeout: 60000    # 连接超时：60秒
+    read-timeout: 300000      # 读取超时：5分钟（AI生成可能较慢）
+    write-timeout: 60000      # 写入超时：60秒
+
 # Ingenio配置
 ingenio:
   codegen:
@@ -126,6 +144,18 @@ ingenio:
   # 租户配置
   tenant:
     default-tenant-id: 00000000-0000-0000-0000-000000000001
+
+  # AI速率限制配置
+  # 参考 open-lovable-cn 的实现：使用更合理的重试机制
+  # deepseek-v3 模型的 RPM 限制相对宽松（约 30-60 RPM）
+  ai:
+    rate-limit:
+      # 每分钟最大请求数：30 RPM（deepseek-v3 的限制约 60 RPM，留余量）
+      rpm: 30
+      # 最大并发请求数：3（避免同时发起过多请求）
+      concurrent: 3
+      # 两次调用之间的最小间隔：2秒
+      min-interval-ms: 2000
 
   # Open-Lovable集成配置
   # Docker部署：3001端口（docker-compose映射3001:3000）

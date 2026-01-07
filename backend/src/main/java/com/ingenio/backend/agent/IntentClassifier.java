@@ -1,6 +1,7 @@
 package com.ingenio.backend.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.ingenio.backend.agent.dto.ComplexityScore;
 import com.ingenio.backend.agent.dto.IntentClassificationResult;
 import com.ingenio.backend.agent.dto.RequirementIntent;
@@ -405,16 +406,15 @@ public class IntentClassifier {
             // 提取JSON部分
             String jsonContent = extractJson(response);
 
-            // 使用ObjectMapper解析JSON
-            @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> jsonMap = objectMapper.readValue(jsonContent, java.util.Map.class);
+            // 使用JsonNode解析，避免AI返回对象结构时触发Map强制类型转换异常
+            JsonNode root = objectMapper.readTree(jsonContent);
 
             // 构建IntentClassificationResult
             IntentClassificationResult.IntentClassificationResultBuilder builder =
                     IntentClassificationResult.builder();
 
             // 解析intent
-            String intentCode = (String) jsonMap.get("intent");
+            String intentCode = readIntentCode(root.get("intent"));
             RequirementIntent intent = RequirementIntent.fromCode(intentCode);
             if (intent == null) {
                 throw new IllegalArgumentException("无效的意图代码: " + intentCode);
@@ -422,32 +422,20 @@ public class IntentClassifier {
             builder.intent(intent);
 
             // 解析confidence
-            Object confidenceObj = jsonMap.get("confidence");
-            Double confidence = null;
-            if (confidenceObj instanceof Number) {
-                confidence = ((Number) confidenceObj).doubleValue();
-            } else if (confidenceObj instanceof String) {
-                confidence = Double.parseDouble((String) confidenceObj);
-            }
+            Double confidence = readDouble(root.get("confidence"));
             builder.confidence(confidence);
 
             // 解析其他字段
-            builder.reasoning((String) jsonMap.get("reasoning"));
-            builder.customizationRequirement((String) jsonMap.get("customizationRequirement"));
-            builder.suggestedNextAction((String) jsonMap.get("suggestedNextAction"));
+            builder.reasoning(readText(root.get("reasoning")));
+            builder.customizationRequirement(readText(root.get("customizationRequirement")));
+            builder.suggestedNextAction(readText(root.get("suggestedNextAction")));
 
             // 解析数组字段
-            @SuppressWarnings("unchecked")
-            List<String> referenceUrls = (List<String>) jsonMap.get("referenceUrls");
-            builder.referenceUrls(referenceUrls != null ? referenceUrls : new ArrayList<>());
+            builder.referenceUrls(readStringList(root.get("referenceUrls")));
 
-            @SuppressWarnings("unchecked")
-            List<String> extractedKeywords = (List<String>) jsonMap.get("extractedKeywords");
-            builder.extractedKeywords(extractedKeywords != null ? extractedKeywords : new ArrayList<>());
+            builder.extractedKeywords(readStringList(root.get("extractedKeywords")));
 
-            @SuppressWarnings("unchecked")
-            List<String> warnings = (List<String>) jsonMap.get("warnings");
-            builder.warnings(warnings != null ? warnings : new ArrayList<>());
+            builder.warnings(readStringList(root.get("warnings")));
 
             // 保存提示词和原始响应（用于调试）
             builder.promptUsed(promptUsed);
@@ -459,6 +447,148 @@ public class IntentClassifier {
             log.error("解析IntentClassifier响应失败: response={}, error={}", response, e.getMessage());
             throw new BusinessException(ErrorCode.SYSTEM_ERROR, "解析AI响应失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 读取意图代码（兼容AI返回的多种结构）
+     *
+     * <p>兼容情况：</p>
+     * <ul>
+     *   <li>字符串：{"intent":"clone"}</li>
+     *   <li>对象：{"intent":{"code":"clone"}} 或 {"intent":{"value":"clone"}}</li>
+     * </ul>
+     *
+     * @param intentNode intent字段节点
+     * @return 标准化后的意图代码
+     */
+    private String readIntentCode(JsonNode intentNode) {
+        if (intentNode == null || intentNode.isNull()) {
+            return null;
+        }
+
+        if (intentNode.isTextual() || intentNode.isNumber() || intentNode.isBoolean()) {
+            return intentNode.asText();
+        }
+
+        if (intentNode.isObject()) {
+            // 常见字段兜底：code/value/intent/name
+            String[] candidates = {"code", "value", "intent", "name"};
+            for (String key : candidates) {
+                JsonNode candidate = intentNode.get(key);
+                if (candidate != null && !candidate.isNull() && candidate.isValueNode()) {
+                    return candidate.asText();
+                }
+            }
+        }
+
+        throw new IllegalArgumentException("intent字段不是可识别的字符串结构: " + intentNode);
+    }
+
+    /**
+     * 读取文本字段（兼容AI返回对象/数组导致的类型不一致）
+     *
+     * <p>说明：当AI返回对象结构时，为避免解析失败，这里会优先取常见文本字段，
+     * 若无法识别则退化为JSON字符串（toString）。</p>
+     *
+     * @param node 字段节点
+     * @return 文本值或JSON字符串，可能为null
+     */
+    private String readText(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+
+        if (node.isTextual() || node.isNumber() || node.isBoolean()) {
+            return node.asText();
+        }
+
+        if (node.isObject()) {
+            String[] candidates = {"text", "content", "message", "reasoning", "value", "url", "keyword", "name"};
+            for (String key : candidates) {
+                JsonNode candidate = node.get(key);
+                if (candidate != null && !candidate.isNull() && candidate.isValueNode()) {
+                    return candidate.asText();
+                }
+            }
+        }
+
+        return node.toString();
+    }
+
+    /**
+     * 读取数值（double），兼容字符串数值
+     *
+     * @param node 字段节点
+     * @return Double或null
+     */
+    private Double readDouble(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+
+        if (node.isNumber()) {
+            return node.doubleValue();
+        }
+
+        if (node.isTextual()) {
+            String text = node.asText().trim();
+            if (text.isEmpty()) {
+                return null;
+            }
+            return Double.parseDouble(text);
+        }
+
+        return null;
+    }
+
+    /**
+     * 读取字符串列表，兼容以下结构：
+     * <ul>
+     *   <li>数组：["a","b"]</li>
+     *   <li>单字符串："a"</li>
+     *   <li>对象数组：[{"url":"https://..."}]</li>
+     * </ul>
+     *
+     * @param node 字段节点
+     * @return 列表（永不为null）
+     */
+    private List<String> readStringList(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return new ArrayList<>();
+        }
+
+        List<String> result = new ArrayList<>();
+
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                String value = readText(item);
+                if (value != null && !value.trim().isEmpty()) {
+                    result.add(value);
+                }
+            }
+            return result;
+        }
+
+        if (node.isTextual()) {
+            String value = node.asText();
+            if (value != null && !value.trim().isEmpty()) {
+                result.add(value);
+            }
+            return result;
+        }
+
+        if (node.isObject()) {
+            // 常见：{"urls":[...]} 或 {"items":[...]}，兜底提取后仍保持兼容
+            String[] candidates = {"urls", "items", "values", "list"};
+            for (String key : candidates) {
+                JsonNode candidate = node.get(key);
+                if (candidate != null && candidate.isArray()) {
+                    return readStringList(candidate);
+                }
+            }
+        }
+
+        return result;
     }
 
     /**

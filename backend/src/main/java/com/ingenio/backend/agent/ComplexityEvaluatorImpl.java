@@ -1,6 +1,7 @@
 package com.ingenio.backend.agent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.ingenio.backend.agent.dto.ComplexityLevel;
 import com.ingenio.backend.agent.dto.ComplexityScore;
 import com.ingenio.backend.common.exception.BusinessException;
@@ -287,40 +288,31 @@ public class ComplexityEvaluatorImpl implements ComplexityEvaluator {
             // 提取JSON部分
             String jsonContent = extractJson(response);
 
-            // 使用ObjectMapper解析JSON
-            @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> jsonMap = objectMapper.readValue(jsonContent, java.util.Map.class);
+            // 使用JsonNode解析，避免AI返回对象结构时触发Map强制类型转换异常
+            JsonNode root = objectMapper.readTree(jsonContent);
 
             // 构建ComplexityScore
             ComplexityScore.ComplexityScoreBuilder builder = ComplexityScore.builder();
 
             // 解析四维度评分
-            builder.entityCountScore(parseIntValue(jsonMap.get("entityCountScore")));
-            builder.relationshipComplexityScore(parseIntValue(jsonMap.get("relationshipComplexityScore")));
-            builder.aiCapabilityScore(parseIntValue(jsonMap.get("aiCapabilityScore")));
-            builder.technicalRiskScore(parseIntValue(jsonMap.get("technicalRiskScore")));
+            builder.entityCountScore(parseIntValue(root.get("entityCountScore")));
+            builder.relationshipComplexityScore(parseIntValue(root.get("relationshipComplexityScore")));
+            builder.aiCapabilityScore(parseIntValue(root.get("aiCapabilityScore")));
+            builder.technicalRiskScore(parseIntValue(root.get("technicalRiskScore")));
 
             // 解析文本字段
-            builder.reasoning((String) jsonMap.get("reasoning"));
-            builder.suggestedArchitecture((String) jsonMap.get("suggestedArchitecture"));
-            builder.suggestedDevelopmentStrategy((String) jsonMap.get("suggestedDevelopmentStrategy"));
+            builder.reasoning(readText(root.get("reasoning")));
+            builder.suggestedArchitecture(readText(root.get("suggestedArchitecture")));
+            builder.suggestedDevelopmentStrategy(readText(root.get("suggestedDevelopmentStrategy")));
 
             // 解析数组字段
-            @SuppressWarnings("unchecked")
-            List<String> extractedEntities = (List<String>) jsonMap.get("extractedEntities");
-            builder.extractedEntities(extractedEntities != null ? extractedEntities : new ArrayList<>());
+            builder.extractedEntities(readStringList(root.get("extractedEntities")));
 
-            @SuppressWarnings("unchecked")
-            List<String> keyTechnologies = (List<String>) jsonMap.get("keyTechnologies");
-            builder.keyTechnologies(keyTechnologies != null ? keyTechnologies : new ArrayList<>());
+            builder.keyTechnologies(readStringList(root.get("keyTechnologies")));
 
-            @SuppressWarnings("unchecked")
-            List<String> aiCapabilities = (List<String>) jsonMap.get("aiCapabilities");
-            builder.aiCapabilities(aiCapabilities != null ? aiCapabilities : new ArrayList<>());
+            builder.aiCapabilities(readStringList(root.get("aiCapabilities")));
 
-            @SuppressWarnings("unchecked")
-            List<String> riskFactors = (List<String>) jsonMap.get("riskFactors");
-            builder.riskFactors(riskFactors != null ? riskFactors : new ArrayList<>());
+            builder.riskFactors(readStringList(root.get("riskFactors")));
 
             // 保存提示词和原始响应（用于调试）
             builder.promptUsed(promptUsed);
@@ -340,21 +332,119 @@ public class ComplexityEvaluatorImpl implements ComplexityEvaluator {
     /**
      * 解析整数值
      */
-    private Integer parseIntValue(Object value) {
-        if (value == null) {
+    private Integer parseIntValue(JsonNode node) {
+        if (node == null || node.isNull()) {
             return 0;
         }
-        if (value instanceof Number) {
-            return ((Number) value).intValue();
+        if (node.isNumber()) {
+            return node.intValue();
         }
-        if (value instanceof String) {
+        if (node.isTextual()) {
+            String text = node.asText().trim();
+            if (text.isEmpty()) {
+                return 0;
+            }
             try {
-                return Integer.parseInt((String) value);
+                return Integer.parseInt(text);
             } catch (NumberFormatException e) {
                 return 0;
             }
         }
+        if (node.isObject()) {
+            // 常见结构：{"score": 80} / {"value": 80}
+            String[] candidates = {"score", "value", "count"};
+            for (String key : candidates) {
+                JsonNode candidate = node.get(key);
+                if (candidate != null && candidate.isNumber()) {
+                    return candidate.intValue();
+                }
+                if (candidate != null && candidate.isTextual()) {
+                    try {
+                        return Integer.parseInt(candidate.asText().trim());
+                    } catch (NumberFormatException ignored) {
+                        // 继续尝试其他候选字段
+                    }
+                }
+            }
+        }
         return 0;
+    }
+
+    /**
+     * 读取文本字段（兼容AI返回对象/数组导致的类型不一致）
+     *
+     * @param node 字段节点
+     * @return 文本值或JSON字符串，可能为null
+     */
+    private String readText(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+
+        if (node.isTextual() || node.isNumber() || node.isBoolean()) {
+            return node.asText();
+        }
+
+        if (node.isObject()) {
+            String[] candidates = {"text", "content", "message", "reasoning", "value", "name"};
+            for (String key : candidates) {
+                JsonNode candidate = node.get(key);
+                if (candidate != null && !candidate.isNull() && candidate.isValueNode()) {
+                    return candidate.asText();
+                }
+            }
+        }
+
+        return node.toString();
+    }
+
+    /**
+     * 读取字符串列表，兼容以下结构：
+     * <ul>
+     *   <li>数组：["a","b"]</li>
+     *   <li>单字符串："a"</li>
+     *   <li>对象数组：[{"name":"xxx"}] / [{"value":"xxx"}]</li>
+     * </ul>
+     *
+     * @param node 字段节点
+     * @return 列表（永不为null）
+     */
+    private List<String> readStringList(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return new ArrayList<>();
+        }
+
+        List<String> result = new ArrayList<>();
+
+        if (node.isArray()) {
+            for (JsonNode item : node) {
+                String value = readText(item);
+                if (value != null && !value.trim().isEmpty()) {
+                    result.add(value);
+                }
+            }
+            return result;
+        }
+
+        if (node.isTextual()) {
+            String value = node.asText();
+            if (value != null && !value.trim().isEmpty()) {
+                result.add(value);
+            }
+            return result;
+        }
+
+        if (node.isObject()) {
+            String[] candidates = {"items", "values", "list"};
+            for (String key : candidates) {
+                JsonNode candidate = node.get(key);
+                if (candidate != null && candidate.isArray()) {
+                    return readStringList(candidate);
+                }
+            }
+        }
+
+        return result;
     }
 
     /**

@@ -38,8 +38,10 @@ public class AuditLogEntity {
 
     /**
      * 审计日志ID（UUID自动生成）
+     *
+     * 使用 IdType.AUTO 让 PostgreSQL 的 DEFAULT gen_random_uuid() 生成 UUID
      */
-    @TableId(value = "id", type = IdType.ASSIGN_UUID)
+    @TableId(value = "id", type = IdType.AUTO)
     private UUID id;
 
     /**

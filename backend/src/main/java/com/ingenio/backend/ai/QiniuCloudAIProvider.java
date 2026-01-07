@@ -19,9 +19,14 @@ import java.util.concurrent.TimeUnit;
  *
  * 技术特点：
  * - API端点：https://api.qnaigc.com/v1/chat/completions
- * - 默认模型：Qwen/Qwen2.5-72B-Instruct（通义千问2.5-72B参数版本）
+ * - 默认模型：z-ai/glm-4.7（智谱AI GLM-4.7）
  * - 兼容OpenAI Chat Completion API格式
  * - 支持流式和非流式响应（当前实现非流式）
+ *
+ * 速率限制处理：
+ * - 集成AIRateLimiter，实现令牌桶速率限制
+ * - 支持指数退避重试（针对429错误）
+ * - 调用间隔控制，避免请求过于密集
  *
  * 优势：
  * - 国内访问速度快，无需翻墙
@@ -55,15 +60,16 @@ public class QiniuCloudAIProvider implements AIProvider {
     private static final String DEFAULT_BASE_URL = "https://api.qnaigc.com";
 
     /**
-     * 默认模型：智谱AI GLM-4.7
+     * 默认模型：从配置文件读取，回退到 deepseek-v3
      *
-     * 其他可选模型：
-     * - z-ai/glm-4.7（当前使用，智谱AI最新模型）
-     * - qwen3-235b-a22b-instruct-2507（通义千问3-235B）
-     * - deepseek-v3（数学和代码能力强）
-     * - qwen3-coder-480b-a35b-instruct（代码生成专用，480B参数）
+     * 可选模型（按推荐度排序）：
+     * - deepseek-v3：代码和推理能力强，RPM限制相对宽松（推荐）
+     * - qwen-max：通义千问旗舰模型
+     * - qwen-plus：性价比高
+     * - z-ai/glm-4.7：智谱AI最新模型
+     * - qwen3-235b-a22b-instruct-2507：通义千问3-235B（RPM限制严格）
      */
-    private static final String DEFAULT_MODEL = "z-ai/glm-4.7";
+    private static final String FALLBACK_MODEL = "deepseek-v3";
 
     /**
      * HTTP客户端配置
@@ -81,6 +87,29 @@ public class QiniuCloudAIProvider implements AIProvider {
             .readTimeout(300, TimeUnit.SECONDS)
             .writeTimeout(60, TimeUnit.SECONDS)
             .build();
+
+    /**
+     * 最大重试次数（当响应内容为空或发生可重试错误时重试）
+     * 参考 open-lovable-cn 的 geminiFetch 实现：3次重试
+     */
+    private static final int MAX_RETRIES = 3;
+
+    /**
+     * 基础重试间隔（毫秒）
+     * 参考 open-lovable-cn：429错误使用 2秒基础延迟，其他错误 3秒
+     */
+    private static final long BASE_RETRY_DELAY_MS = 2000;
+
+    /**
+     * 最大重试间隔（毫秒）- 15秒
+     * 参考 open-lovable-cn：Math.min(baseDelay * Math.pow(2, attempt - 1), 15000)
+     */
+    private static final long MAX_RETRY_DELAY_MS = 15_000;
+
+    /**
+     * 速率限制获取许可的超时时间（毫秒）- 5分钟
+     */
+    private static final long RATE_LIMIT_ACQUIRE_TIMEOUT_MS = 300_000;
 
     /**
      * 七牛云API Key
@@ -105,12 +134,28 @@ public class QiniuCloudAIProvider implements AIProvider {
     private String baseUrl;
 
     /**
+     * 默认模型（从配置文件读取，与 Spring AI ChatClient 保持一致）
+     *
+     * 优先级：
+     * 1. spring.ai.openai.chat.options.model（Spring AI配置）
+     * 2. FALLBACK_MODEL（回退到 deepseek-v3）
+     */
+    @Value("${spring.ai.openai.chat.options.model:" + FALLBACK_MODEL + "}")
+    private String defaultModel;
+
+    /**
      * JSON序列化工具
      */
     private final ObjectMapper objectMapper;
 
-    public QiniuCloudAIProvider(ObjectMapper objectMapper) {
+    /**
+     * AI调用速率限制器
+     */
+    private final AIRateLimiter rateLimiter;
+
+    public QiniuCloudAIProvider(ObjectMapper objectMapper, AIRateLimiter rateLimiter) {
         this.objectMapper = objectMapper;
+        this.rateLimiter = rateLimiter;
     }
 
     @Override
@@ -125,7 +170,7 @@ public class QiniuCloudAIProvider implements AIProvider {
 
     @Override
     public String getDefaultModel() {
-        return DEFAULT_MODEL;
+        return defaultModel != null && !defaultModel.isBlank() ? defaultModel : FALLBACK_MODEL;
     }
 
     @Override
@@ -139,7 +184,7 @@ public class QiniuCloudAIProvider implements AIProvider {
     }
 
     /**
-     * 判断API Key是否为“未配置/占位符”值
+     * 判断API Key是否为"未配置/占位符"值
      *
      * 说明：
      * - 为避免把示例值当作真实Key发起请求（导致 401 invalid api key），这里对常见占位符做拦截。
@@ -190,7 +235,14 @@ public class QiniuCloudAIProvider implements AIProvider {
     }
 
     /**
-     * 生成文本（同步调用）
+     * 生成文本（同步调用，带速率限制和指数退避重试机制）
+     *
+     * 执行流程：
+     * 1. 验证API可用性和参数
+     * 2. 获取速率限制许可
+     * 3. 执行HTTP请求
+     * 4. 遇到速率限制错误时进行指数退避重试
+     * 5. 解析并返回响应
      *
      * @param prompt 提示词（支持多行文本）
      * @param request 请求参数配置
@@ -216,43 +268,153 @@ public class QiniuCloudAIProvider implements AIProvider {
         }
 
         long startTime = System.currentTimeMillis();
+        AIException lastException = null;
 
-        try {
-            // 1. 构建请求Body（OpenAI格式）
-            String requestBody = buildRequestBody(prompt, request);
+        // 重试循环：当响应为空或发生可重试错误时自动重试
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            // 获取速率限制许可
+            boolean acquired = false;
+            try {
+                log.debug("[QiniuCloudAI] 尝试获取速率限制许可... (attempt {}/{})", attempt, MAX_RETRIES);
+                acquired = rateLimiter.acquire(RATE_LIMIT_ACQUIRE_TIMEOUT_MS);
 
-            log.debug("七牛云API请求: model={}, temperature={}, maxTokens={}",
-                    request.model() != null ? request.model() : DEFAULT_MODEL,
-                    request.temperature(),
-                    request.maxTokens());
+                if (!acquired) {
+                    throw new AIException(
+                            "获取速率限制许可超时，请稍后重试",
+                            getProviderName()
+                    );
+                }
 
-            // 2. 执行HTTP请求
-            String responseBody = executeHttpRequest(requestBody);
+                // 1. 构建请求Body（OpenAI格式）
+                String requestBody = buildRequestBody(prompt, request);
 
-            // 3. 解析响应
-            AIResponse response = parseResponse(responseBody, startTime);
+                log.info("[QiniuCloudAI] API请求开始: model={}, temperature={}, maxTokens={}, attempt={}/{}, rateLimiter={}",
+                        request.model() != null ? request.model() : getDefaultModel(),
+                        request.temperature(),
+                        request.maxTokens(),
+                        attempt,
+                        MAX_RETRIES,
+                        rateLimiter.getStatus());
 
-            log.info("七牛云API调用成功: model={}, promptTokens={}, completionTokens={}, duration={}ms",
-                    response.model(),
-                    response.promptTokens(),
-                    response.completionTokens(),
-                    response.durationMs());
+                // 2. 执行HTTP请求
+                String responseBody = executeHttpRequest(requestBody);
 
-            return response;
+                // 3. 解析响应
+                AIResponse response = parseResponse(responseBody, startTime);
 
-        } catch (AIException e) {
-            // 重新抛出AIException
-            throw e;
-        } catch (Exception e) {
-            // 包装其他异常
-            long duration = System.currentTimeMillis() - startTime;
-            log.error("七牛云API调用异常: duration={}ms", duration, e);
-            throw new AIException(
-                    "API调用失败: " + e.getMessage(),
-                    getProviderName(),
-                    e
-            );
+                log.info("[QiniuCloudAI] API调用成功: model={}, promptTokens={}, completionTokens={}, duration={}ms, attempt={}/{}",
+                        response.model(),
+                        response.promptTokens(),
+                        response.completionTokens(),
+                        response.durationMs(),
+                        attempt,
+                        MAX_RETRIES);
+
+                return response;
+
+            } catch (AIException e) {
+                lastException = e;
+
+                // 检查是否是速率限制错误
+                boolean isRateLimitError = rateLimiter.isRateLimitError(e.getHttpStatus(), e.getMessage());
+
+                if (isRateLimitError) {
+                    // 速率限制错误：使用指数退避重试
+                    if (attempt < MAX_RETRIES) {
+                        long backoffDelay = rateLimiter.calculateExponentialBackoff(
+                                attempt, BASE_RETRY_DELAY_MS, MAX_RETRY_DELAY_MS);
+
+                        log.warn("[QiniuCloudAI] 触发速率限制（attempt {}/{}），{}ms后重试: {}",
+                                attempt, MAX_RETRIES, backoffDelay, e.getMessage());
+
+                        try {
+                            Thread.sleep(backoffDelay);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            throw e;
+                        }
+                        continue;
+                    }
+
+                    // 已达到最大重试次数
+                    log.error("[QiniuCloudAI] 速率限制重试耗尽，请求失败: {}", e.getMessage());
+                    throw e;
+                }
+
+                // 检查是否是可重试的其他错误（响应内容为空、超时等）
+                boolean isRetryable = e.getMessage() != null &&
+                        (e.getMessage().contains("响应内容为空") ||
+                         e.getMessage().contains("empty") ||
+                         e.getMessage().contains("timeout") ||
+                         e.getMessage().contains("Connection reset"));
+
+                if (isRetryable && attempt < MAX_RETRIES) {
+                    long retryDelay = BASE_RETRY_DELAY_MS * attempt;
+
+                    log.warn("[QiniuCloudAI] 响应异常（attempt {}/{}），{}ms后重试: {}",
+                            attempt, MAX_RETRIES, retryDelay, e.getMessage());
+
+                    try {
+                        Thread.sleep(retryDelay);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw e;
+                    }
+                    continue;
+                }
+
+                // 不可重试的错误或已达到最大重试次数
+                throw e;
+
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new AIException(
+                        "请求被中断: " + e.getMessage(),
+                        getProviderName(),
+                        e
+                );
+
+            } catch (Exception e) {
+                // 包装其他异常
+                long duration = System.currentTimeMillis() - startTime;
+                log.error("[QiniuCloudAI] API调用异常: duration={}ms, attempt={}/{}", duration, attempt, MAX_RETRIES, e);
+                lastException = new AIException(
+                        "API调用失败: " + e.getMessage(),
+                        getProviderName(),
+                        e
+                );
+
+                // 对于一般异常也尝试重试
+                if (attempt < MAX_RETRIES) {
+                    long retryDelay = BASE_RETRY_DELAY_MS * attempt;
+
+                    log.warn("[QiniuCloudAI] 异常（attempt {}/{}），{}ms后重试",
+                            attempt, MAX_RETRIES, retryDelay);
+
+                    try {
+                        Thread.sleep(retryDelay);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw lastException;
+                    }
+                    continue;
+                }
+
+                throw lastException;
+
+            } finally {
+                // 释放速率限制许可
+                if (acquired) {
+                    rateLimiter.release();
+                }
+            }
         }
+
+        // 理论上不会到达这里，但为了编译通过
+        throw lastException != null ? lastException : new AIException(
+                "API调用失败：已达到最大重试次数",
+                getProviderName()
+        );
     }
 
     /**
@@ -267,7 +429,7 @@ public class QiniuCloudAIProvider implements AIProvider {
             Map<String, Object> requestBody = new HashMap<>();
 
             // 模型名称
-            requestBody.put("model", request.model() != null ? request.model() : DEFAULT_MODEL);
+            requestBody.put("model", request.model() != null ? request.model() : getDefaultModel());
 
             // 消息列表（OpenAI格式）
             List<Map<String, String>> messages = new ArrayList<>();
@@ -325,14 +487,14 @@ public class QiniuCloudAIProvider implements AIProvider {
 
                 // 检查HTTP状态码
                 if (!response.isSuccessful()) {
-                    log.error("七牛云API调用失败: code={}, message={}, body={}",
+                    log.error("[QiniuCloudAI] API调用失败: code={}, message={}, body={}",
                             response.code(), response.message(), responseBody);
 
                     // 尝试解析错误信息
                     String errorMessage = parseErrorMessage(responseBody);
 
                     throw new AIException(
-                            "API调用失败: " + errorMessage,
+                            errorMessage,
                             getProviderName(),
                             extractErrorCode(responseBody),
                             response.code()
@@ -379,7 +541,7 @@ public class QiniuCloudAIProvider implements AIProvider {
             }
 
             // 提取模型名称
-            String model = jsonResponse.path("model").asText(DEFAULT_MODEL);
+            String model = jsonResponse.path("model").asText(getDefaultModel());
 
             // 提取token统计信息
             JsonNode usage = jsonResponse.path("usage");

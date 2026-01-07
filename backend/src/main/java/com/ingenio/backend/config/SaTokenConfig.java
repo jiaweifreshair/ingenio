@@ -65,45 +65,77 @@ public class SaTokenConfig implements WebMvcConfigurer {
         .addPathPatterns("/**") // 拦截所有路径
         .excludePathPatterns(
             // 认证相关公开接口（无需Token）
+            // 兼容：后端配置了 server.servlet.context-path=/api 时，部分匹配逻辑可能包含前缀
             "/v1/auth/login",                      // 用户名密码登录
+            "/api/v1/auth/login",
             "/v1/auth/register",                   // 用户注册
+            "/api/v1/auth/register",
             "/v1/auth/reset-password/**",          // 密码重置
+            "/api/v1/auth/reset-password/**",
             "/v1/auth/wechat/**",                  // 微信扫码登录
+            "/api/v1/auth/wechat/**",
             "/v1/auth/oauth/**",                   // OAuth第三方登录
+            "/api/v1/auth/oauth/**",
             "/v1/auth/health",                     // 健康检查
+            "/api/v1/auth/health",
 
             // 后台服务接口（Agent调用，无需认证）
             "/v1/openlovable/**",
+            "/api/v1/openlovable/**",
             "/v1/generate/**",
+            "/api/v1/generate/**",
             "/v1/intent/**",
+            "/api/v1/intent/**",
             "/v2/**",
+            "/api/v2/**",
             "/v1/g3/**",
+            "/api/v1/g3/**",
             "/v1/prototype/generate/stream",
+            "/api/v1/prototype/generate/stream",
             "/v1/prototype/create-app-spec",
+            "/api/v1/prototype/create-app-spec",
             "/v1/notifications/unread-count",
+            "/api/v1/notifications/unread-count",
 
             // 模板API（公开接口，无需认证）
             "/v1/templates/**",
+            "/api/v1/templates/**",
+
+            // ProductShot API (Pilot)
+            "/v1/product-shots/**",
+            "/api/v1/product-shots/**",
 
             // SSE流式接口
             "/v1/generate/analyze-stream",
+            "/api/v1/generate/analyze-stream",
 
             // API文档和监控
             "/swagger-ui/**",
+            "/api/swagger-ui/**",
             "/swagger-ui.html",
+            "/api/swagger-ui.html",
             "/v3/api-docs/**",
+            "/api/v3/api-docs/**",
             "/api-docs/**",
+            "/api/api-docs/**",
             "/swagger-resources/**",
+            "/api/swagger-resources/**",
             "/webjars/**",
+            "/api/webjars/**",
             "/actuator/**",
+            "/api/actuator/**",
 
             // 静态资源
             "/static/**",
+            "/api/static/**",
             "/public/**",
+            "/api/public/**",
             "/favicon.ico",
+            "/api/favicon.ico",
 
             // 错误页面
             "/error",
+            "/api/error",
 
             // Admin API：由独立的服务间JWT保护，必须排除C端用户登录态校验
             "/admin/**",
@@ -133,40 +165,71 @@ public class SaTokenConfig implements WebMvcConfigurer {
             .addExclude(
                 // 认证相关公开接口
                 "/v1/auth/login",
+                "/api/v1/auth/login",
                 "/v1/auth/register",
+                "/api/v1/auth/register",
                 "/v1/auth/reset-password/**",
+                "/api/v1/auth/reset-password/**",
                 "/v1/auth/wechat/**",
+                "/api/v1/auth/wechat/**",
                 "/v1/auth/oauth/**",
+                "/api/v1/auth/oauth/**",
                 "/v1/auth/health",
+                "/api/v1/auth/health",
 
                 // 后台服务接口（Agent调用）
                 "/v1/openlovable/**",
+                "/api/v1/openlovable/**",
                 "/v1/generate/**",
+                "/api/v1/generate/**",
                 "/v1/intent/**",
+                "/api/v1/intent/**",
                 "/v2/**",
+                "/api/v2/**",
                 "/v1/g3/**",
+                "/api/v1/g3/**",
                 "/v1/prototype/generate/stream",
+                "/api/v1/prototype/generate/stream",
                 "/v1/prototype/create-app-spec",
+                "/api/v1/prototype/create-app-spec",
                 "/v1/notifications/unread-count",
+                "/api/v1/notifications/unread-count",
                 "/v1/generate/analyze-stream",
+                "/api/v1/generate/analyze-stream",
 
                 // 模板API（公开接口）
                 "/v1/templates/**",
+                "/api/v1/templates/**",
+
+                // ProductShot API (Pilot)
+                "/v1/product-shots/**",
+                "/api/v1/product-shots/**",
 
                 // API文档和监控
                 "/swagger-ui/**",
+                "/api/swagger-ui/**",
                 "/swagger-ui.html",
+                "/api/swagger-ui.html",
                 "/v3/api-docs/**",
+                "/api/v3/api-docs/**",
                 "/api-docs/**",
+                "/api/api-docs/**",
                 "/swagger-resources/**",
+                "/api/swagger-resources/**",
                 "/webjars/**",
+                "/api/webjars/**",
                 "/actuator/**",
+                "/api/actuator/**",
 
                 // 静态资源
                 "/static/**",
+                "/api/static/**",
                 "/public/**",
+                "/api/public/**",
                 "/favicon.ico",
+                "/api/favicon.ico",
                 "/error",
+                "/api/error",
 
                 // Admin API：由独立的服务间JWT保护，必须排除C端用户登录态校验
                 "/admin/**",

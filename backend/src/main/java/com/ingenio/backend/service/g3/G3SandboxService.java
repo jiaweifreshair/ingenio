@@ -303,9 +303,15 @@ public class G3SandboxService {
                         new TypeReference<Map<String, Object>>() {}
                 );
 
-                int exitCode = (Integer) result.getOrDefault("exitCode", -1);
-                String stdout = (String) result.getOrDefault("stdout", "");
-                String stderr = (String) result.getOrDefault("stderr", "");
+                int exitCode = toInt(result.getOrDefault("exitCode", -1), -1);
+                String stdout = toString(result.getOrDefault("stdout", ""));
+                String stderr = toString(result.getOrDefault("stderr", ""));
+
+                // 兼容 Open-Lovable 返回字段差异（部分实现只返回 output/message）
+                if ((stdout == null || stdout.isBlank()) && (stderr == null || stderr.isBlank())) {
+                    Object fallback = result.getOrDefault("output", result.getOrDefault("message", ""));
+                    stdout = toString(fallback);
+                }
 
                 if (exitCode == 0) {
                     logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.EXECUTOR,
@@ -313,11 +319,23 @@ public class G3SandboxService {
                     return CompileResult.success(stdout, durationMs);
                 } else {
                     // 解析编译错误
-                    String output = stdout + "\n" + stderr;
+                    String output = combineOutput(stdout, stderr);
                     List<CompileError> errors = parseCompilerErrors(output);
 
+                    // 兜底：构建失败但未解析到 Java 编译错误时，输出关键构建信息，便于定位问题
+                    if (errors.isEmpty()) {
+                        logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR,
+                                "Maven编译失败（未解析到Java编译错误），可能是依赖下载/构建配置/环境问题，输出关键日志片段..."));
+                        emitMavenFailureSnippet(output, logConsumer);
+                        errors = List.of(new CompileError("pom.xml", 0, 0,
+                                "构建失败（未解析到Java编译错误），请查看日志中的 Maven 输出片段", "error"));
+                    } else {
+                        // 如果已解析到具体错误，仅输出错误行，避免前端被大量构建日志淹没
+                        emitMavenFailureSnippet(output, logConsumer);
+                    }
+
                     logConsumer.accept(G3LogEntry.error(G3LogEntry.Role.EXECUTOR,
-                            "Maven编译失败: " + errors.size() + " 个错误"));
+                            "Maven编译失败: " + errors.size() + " 个错误 (exitCode=" + exitCode + ")"));
 
                     return CompileResult.failure(exitCode, stdout, stderr, durationMs, errors);
                 }
@@ -331,6 +349,89 @@ public class G3SandboxService {
             logConsumer.accept(G3LogEntry.error(G3LogEntry.Role.EXECUTOR, "Maven编译异常: " + e.getMessage()));
 
             return CompileResult.failure(-1, "", e.getMessage(), durationMs, List.of());
+        }
+    }
+
+    /**
+     * 将任意对象转换为字符串（null安全）
+     */
+    private static String toString(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    /**
+     * 将任意对象转换为 int（兼容 Number / String）
+     */
+    private static int toInt(Object value, int defaultValue) {
+        if (value == null) return defaultValue;
+        if (value instanceof Number n) return n.intValue();
+        try {
+            return Integer.parseInt(String.valueOf(value).trim());
+        } catch (Exception ignored) {
+            return defaultValue;
+        }
+    }
+
+    /**
+     * 合并 stdout/stderr 为单一输出（避免空串导致多余换行）
+     */
+    private static String combineOutput(String stdout, String stderr) {
+        String out = stdout == null ? "" : stdout;
+        String err = stderr == null ? "" : stderr;
+        if (out.isBlank()) return err;
+        if (err.isBlank()) return out;
+        return out + "\n" + err;
+    }
+
+    /**
+     * 输出 Maven 构建失败的关键日志片段（单行化，避免 SSE/UI 折叠）
+     *
+     * 规则：
+     * 1) 优先输出 [ERROR] 行（Maven 统一前缀）
+     * 2) 如无 [ERROR] 行，则输出末尾若干行（通常包含失败原因）
+     * 3) 限制最大行数与单行长度，避免刷屏
+     */
+    private static void emitMavenFailureSnippet(String output, Consumer<G3LogEntry> logConsumer) {
+        if (output == null || output.isBlank()) {
+            logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR, "Maven输出为空，无法解析失败原因"));
+            return;
+        }
+
+        List<String> errorLines = new ArrayList<>();
+        List<String> allLines = new ArrayList<>();
+
+        String[] lines = output.split("\n");
+        for (String raw : lines) {
+            if (raw == null) continue;
+            String line = raw.replace("\r", "").trim();
+            if (line.isEmpty()) continue;
+
+            allLines.add(line);
+            if (line.startsWith("[ERROR]")) {
+                errorLines.add(line);
+            }
+        }
+
+        List<String> chosen;
+        if (!errorLines.isEmpty()) {
+            chosen = errorLines;
+        } else {
+            int tail = Math.min(60, allLines.size());
+            chosen = allLines.subList(Math.max(0, allLines.size() - tail), allLines.size());
+        }
+
+        int maxLines = 80;
+        int emitted = 0;
+        for (String line : chosen) {
+            if (emitted >= maxLines) break;
+            String oneLine = line.length() > 420 ? line.substring(0, 420) + "..." : line;
+            logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR, "Maven输出: " + oneLine));
+            emitted++;
+        }
+
+        if (chosen.size() > maxLines) {
+            logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR,
+                    "Maven输出: ... 省略 " + (chosen.size() - maxLines) + " 行"));
         }
     }
 
@@ -388,29 +489,37 @@ public class G3SandboxService {
 
         // 5. 更新产物的编译状态
         if (!compileResult.success()) {
-            updateArtifactErrors(artifacts, compileResult);
+            updateArtifactErrors(allArtifacts, compileResult);
         }
 
         // 6. Phase 5: 可选地保存结果到ValidationService（统一结果存储）
-        try {
-            // 使用G3ValidationAdapter将CompileResult转换为ValidationResponse
-            com.ingenio.backend.dto.response.validation.ValidationResponse validationResponse =
-                    g3ValidationAdapter.toValidationResponse(compileResult, job.getId());
+        // 注意：只有当 G3 任务关联了真实的 AppSpec 时才保存到 ValidationService
+        // 否则会因为外键约束（validation_results_app_spec_id_fkey）失败并导致事务回滚
+        UUID appSpecId = job.getAppSpecId();
+        if (appSpecId != null && job.getTenantId() != null) {
+            try {
+                // 使用G3ValidationAdapter将CompileResult转换为ValidationResponse
+                com.ingenio.backend.dto.response.validation.ValidationResponse validationResponse =
+                        g3ValidationAdapter.toValidationResponse(compileResult, job.getId());
 
-            // 保存到ValidationService的统一结果表
-            validationService.saveExternalValidationResult(
-                    job.getId(),
-                    validationResponse,
-                    com.ingenio.backend.entity.ValidationResultEntity.ValidationType.COMPILE
-            );
+                // 保存到ValidationService的统一结果表
+                validationService.saveExternalValidationResult(
+                        appSpecId,
+                        job.getTenantId(),
+                        validationResponse,
+                        com.ingenio.backend.entity.ValidationResultEntity.ValidationType.COMPILE
+                );
 
-            log.debug("G3验证结果已同步到ValidationService - jobId: {}, passed: {}",
-                    job.getId(), validationResponse.getPassed());
+                log.debug("G3验证结果已同步到ValidationService - jobId: {}, appSpecId: {}, tenantId: {}, passed: {}",
+                        job.getId(), appSpecId, job.getTenantId(), validationResponse.getPassed());
 
-        } catch (Exception e) {
-            // 不影响G3主流程 - ValidationService集成失败只记录日志
-            log.warn("同步G3验证结果到ValidationService失败（不影响G3流程） - jobId: {}, error: {}",
-                    job.getId(), e.getMessage());
+            } catch (Exception e) {
+                // 不影响G3主流程 - ValidationService集成失败只记录日志
+                log.warn("同步G3验证结果到ValidationService失败（不影响G3流程） - jobId: {}, error: {}",
+                        job.getId(), e.getMessage());
+            }
+        } else {
+            log.debug("跳过ValidationService同步（无AppSpec关联） - jobId: {}", job.getId());
         }
 
         return validationResult;
@@ -430,18 +539,21 @@ public class G3SandboxService {
         }
 
         // Maven/javac错误格式：[ERROR] /path/to/File.java:[line,column] error: message
+        // 兼容 Windows 路径（C:\path\to\File.java）
         Pattern mavenPattern = Pattern.compile(
-                "\\[ERROR\\]\\s+([^:]+\\.java):\\[(\\d+),(\\d+)\\]\\s*(error|warning)?:?\\s*(.+)"
+                "\\[ERROR\\]\\s+(.+?\\.java):\\[(\\d+),(\\d+)\\]\\s*(error|warning)?:?\\s*(.+)"
         );
 
         // javac直接输出格式：File.java:line: error: message
         Pattern javacPattern = Pattern.compile(
-                "([^:]+\\.java):(\\d+):\\s*(error|warning)?:?\\s*(.+)"
+                "(.+?\\.java):(\\d+):\\s*(error|warning)?:?\\s*(.+)"
         );
 
         String[] lines = output.split("\n");
 
         for (String line : lines) {
+            if (line == null) continue;
+            line = line.replace("\r", "");
             Matcher mavenMatcher = mavenPattern.matcher(line);
             if (mavenMatcher.find()) {
                 errors.add(new CompileError(
@@ -493,6 +605,53 @@ public class G3SandboxService {
                 }
             }
         }
+
+        // 兜底：构建失败但未能定位到具体文件时，至少将错误挂到 pom.xml（便于 Coach 继续修复）
+        if (!compileResult.success()) {
+            boolean anyMarked = artifacts.stream().anyMatch(a -> Boolean.TRUE.equals(a.getHasErrors()));
+            if (!anyMarked) {
+                artifacts.stream()
+                        .filter(a -> "pom.xml".equals(a.getFileName()))
+                        .findFirst()
+                        .ifPresent(pom -> pom.markError(extractBuildFailureSummary(combinedOutput)));
+            }
+        }
+    }
+
+    /**
+     * 提取构建失败摘要（控制长度，避免日志/DB 过大）
+     */
+    private static String extractBuildFailureSummary(String output) {
+        if (output == null || output.isBlank()) {
+            return "构建失败（输出为空）";
+        }
+        String normalized = output.replace("\r", "");
+        String[] lines = normalized.split("\n");
+        StringBuilder sb = new StringBuilder();
+        int limit = 80;
+        int count = 0;
+        for (String raw : lines) {
+            if (raw == null) continue;
+            String line = raw.trim();
+            if (line.isEmpty()) continue;
+            if (line.startsWith("[ERROR]") || line.contains("BUILD FAILURE") || line.contains("Failed to execute goal")) {
+                sb.append(line).append("\n");
+                count++;
+                if (count >= limit) break;
+            }
+        }
+        if (sb.isEmpty()) {
+            // 没有明显错误行则取末尾
+            int tail = Math.min(60, lines.length);
+            for (int i = lines.length - tail; i < lines.length; i++) {
+                if (i < 0) continue;
+                String line = lines[i].trim();
+                if (line.isEmpty()) continue;
+                sb.append(line).append("\n");
+            }
+        }
+        String summary = sb.toString();
+        return summary.length() > 8000 ? summary.substring(0, 8000) + "\n... (已截断)" : summary;
     }
 
     /**
@@ -599,7 +758,7 @@ public class G3SandboxService {
                 .anyMatch(a -> a.getFileName().contains("UUIDv8TypeHandler"));
 
         if (!hasTypeHandler) {
-            String typeHandlerContent = generateUUIDv8TypeHandler();
+            String typeHandlerContent = generateUUIDv8TypeHandlerContent();
             G3ArtifactEntity typeHandlerArtifact = G3ArtifactEntity.create(
                     job.getId(),
                     "src/main/java/com/ingenio/backend/config/UUIDv8TypeHandler.java",
@@ -614,9 +773,13 @@ public class G3SandboxService {
     }
 
     /**
-     * 生成UUIDv8TypeHandler类
+     * 生成UUIDv8TypeHandler类内容
+     *
+     * 用途：
+     * - G3 生成的 MyBatis-Plus 代码会引用该 TypeHandler
+     * - 将其作为“构建脚手架”与业务代码一并纳入产物/修复闭环
      */
-    private String generateUUIDv8TypeHandler() {
+    public String generateUUIDv8TypeHandlerContent() {
         return """
                 package com.ingenio.backend.config;
 

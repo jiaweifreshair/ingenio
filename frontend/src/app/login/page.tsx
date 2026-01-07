@@ -16,6 +16,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import NextImage from 'next/image';
 import { useRouter } from 'next/navigation';
 import { WechatLogin } from '@/components/auth/wechat-login';
 import { LoginForm } from '@/components/auth/login-form';
@@ -66,11 +67,8 @@ export default function LoginPage(): React.ReactElement {
       {/* 内容层 */}
       <div className="relative z-10 flex w-full flex-col items-center max-w-[420px]">
         
-        {/* 品牌Logo - 更专业的设计 */}
         <div className="mb-10 flex flex-col items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-tr from-indigo-500 to-blue-600 shadow-lg shadow-indigo-500/20">
-            <span className="text-2xl font-bold text-white">秒</span>
-          </div>
+          <NextImage src="/logo.png" alt="Ingenio Logo" width={128} height={128} className="h-32 w-32" />
           <div className="text-center">
             <h1 className="text-2xl font-semibold text-white tracking-tight">
               Ingenio 妙构

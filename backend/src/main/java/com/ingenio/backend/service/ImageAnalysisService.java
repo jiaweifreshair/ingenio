@@ -2,111 +2,37 @@ package com.ingenio.backend.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.ingenio.backend.ai.JeecgBootMultiModalClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.*;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.net.URL;
-import java.nio.file.Files;
 import java.util.*;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 图像分析服务
- * 使用阿里云DashScope QianwenVL多模态大模型
+ * 通过JeecgBoot网关调用七牛云多模态AI服务
  *
  * 功能：
  * 1. OCR文字识别
  * 2. UI元素检测
  * 3. 图像场景理解
  *
- * API文档: https://help.aliyun.com/zh/dashscope/developer-reference/qianwen-vl-api
+ * 架构说明：Ingenio -> JeecgBoot -> 七牛云AI
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class ImageAnalysisService {
 
-    @Value("${DASHSCOPE_API_KEY:}")
-    private String apiKey;
-
+    private final JeecgBootMultiModalClient jeecgBootClient;
     private final ObjectMapper objectMapper;
 
-    private static final String DASHSCOPE_VL_API = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
-    private static final String MODEL = "qwen-vl-plus"; // 使用qwen-vl-plus模型
-    private static final OkHttpClient HTTP_CLIENT = new OkHttpClient.Builder()
-            .connectTimeout(60, TimeUnit.SECONDS)
-            .readTimeout(180, TimeUnit.SECONDS)
-            .writeTimeout(60, TimeUnit.SECONDS)
-            .build();
-
     /**
-     * 分析图像内容（OCR + UI元素检测 + 场景理解）
-     *
-     * @param imageUrl MinIO中的图像文件URL
-     * @return 图像分析结果（JSON格式）
+     * 默认图像分析提示词
+     * 要求AI返回结构化的JSON格式分析结果
      */
-    public ImageAnalysisResult analyze(String imageUrl) {
-        log.info("开始图像分析: imageUrl={}", imageUrl);
-
-        try {
-            // 1. 调用QianwenVL API进行图像理解
-            String analysisJson = callQianwenVL(imageUrl);
-
-            // 2. 解析分析结果
-            ImageAnalysisResult result = parseAnalysisResult(analysisJson);
-
-            log.info("图像分析完成: imageUrl={}, ocrTextLength={}, uiElementsCount={}",
-                    imageUrl,
-                    result.getOcrText() != null ? result.getOcrText().length() : 0,
-                    result.getUiElements() != null ? result.getUiElements().size() : 0);
-
-            return result;
-
-        } catch (Exception e) {
-            log.error("图像分析失败: imageUrl={}", imageUrl, e);
-            throw new RuntimeException("图像分析失败: " + e.getMessage(), e);
-        }
-    }
-
-    /**
-     * 调用QianwenVL API进行图像理解
-     *
-     * 使用多轮对话模式：
-     * 1. 第一轮：识别图片中的所有文字（OCR）
-     * 2. 第二轮：检测UI元素（按钮、输入框、图标等）
-     * 3. 第三轮：理解图片场景和用途
-     */
-    private String callQianwenVL(String imageUrl) throws Exception {
-        log.debug("调用QianwenVL API: imageUrl={}", imageUrl);
-
-        // 构造请求体
-        Map<String, Object> requestBody = new HashMap<>();
-        requestBody.put("model", MODEL);
-
-        // 构造消息列表
-        List<Map<String, Object>> messages = new ArrayList<>();
-
-        // 用户消息：包含图片URL和分析指令
-        Map<String, Object> userMessage = new HashMap<>();
-        userMessage.put("role", "user");
-
-        List<Map<String, Object>> content = new ArrayList<>();
-
-        // 添加图片
-        Map<String, Object> imageContent = new HashMap<>();
-        imageContent.put("image", imageUrl);
-        content.add(imageContent);
-
-        // 添加分析指令（综合三个任务）
-        Map<String, Object> textContent = new HashMap<>();
-        textContent.put("text",
+    private static final String DEFAULT_ANALYSIS_PROMPT =
             "请详细分析这张图片，提供以下信息：\n" +
             "1. OCR识别：提取图片中的所有文字内容\n" +
             "2. UI元素检测：识别按钮、输入框、图标、导航栏等UI组件\n" +
@@ -121,65 +47,86 @@ public class ImageAnalysisService {
             "  \"scene_description\": \"场景描述\",\n" +
             "  \"design_style\": \"设计风格\",\n" +
             "  \"purpose\": \"用途说明\"\n" +
-            "}"
-        );
-        content.add(textContent);
+            "}";
 
-        userMessage.put("content", content);
-        messages.add(userMessage);
+    /**
+     * 分析图像内容（OCR + UI元素检测 + 场景理解）
+     *
+     * 通过JeecgBoot网关调用七牛云Vision API进行图像分析。
+     * 不提供降级方案，JeecgBoot服务不可用时直接抛出异常。
+     *
+     * @param imageUrl MinIO中的图像文件URL
+     * @return 图像分析结果（JSON格式）
+     * @throws RuntimeException 如果JeecgBoot服务不可用或分析失败
+     */
+    public ImageAnalysisResult analyze(String imageUrl) {
+        log.info("开始图像分析: imageUrl={}", imageUrl);
 
-        requestBody.put("messages", messages);
+        try {
+            // 调用JeecgBoot Vision API进行图像理解
+            JeecgBootMultiModalClient.VisionAnalysisResult visionResult =
+                    jeecgBootClient.analyzeImage(imageUrl, DEFAULT_ANALYSIS_PROMPT);
 
-        // 发送请求
-        RequestBody body = RequestBody.create(
-                objectMapper.writeValueAsString(requestBody),
-                MediaType.parse("application/json; charset=utf-8")
-        );
-
-        Request request = new Request.Builder()
-                .url(DASHSCOPE_VL_API)
-                .addHeader("Authorization", "Bearer " + apiKey)
-                .addHeader("Content-Type", "application/json")
-                .post(body)
-                .build();
-
-        // 执行请求
-        try (Response response = HTTP_CLIENT.newCall(request).execute()) {
-            if (!response.isSuccessful()) {
-                String errorBody = response.body() != null ? response.body().string() : "No error details";
-                throw new RuntimeException("QianwenVL API调用失败: " + response.code() + ", " + errorBody);
+            if (!visionResult.isSuccess()) {
+                throw new RuntimeException("JeecgBoot Vision API调用失败: " + visionResult.getErrorMessage());
             }
 
-            // 解析响应
-            String responseBody = response.body().string();
-            log.debug("QianwenVL API响应: {}", responseBody);
+            // 解析分析结果
+            ImageAnalysisResult result = parseAnalysisResult(visionResult.getContent());
 
-            JsonNode jsonResponse = objectMapper.readTree(responseBody);
+            log.info("图像分析完成: imageUrl={}, ocrTextLength={}, uiElementsCount={}, durationMs={}",
+                    imageUrl,
+                    result.getOcrText() != null ? result.getOcrText().length() : 0,
+                    result.getUiElements() != null ? result.getUiElements().size() : 0,
+                    visionResult.getDurationMs());
 
-            // 提取生成的文本
-            if (jsonResponse.has("output") &&
-                jsonResponse.get("output").has("choices") &&
-                jsonResponse.get("output").get("choices").isArray() &&
-                jsonResponse.get("output").get("choices").size() > 0) {
+            return result;
 
-                JsonNode firstChoice = jsonResponse.get("output").get("choices").get(0);
-                if (firstChoice.has("message") && firstChoice.get("message").has("content")) {
-                    String responseContent = firstChoice.get("message").get("content").asText();
-                    return responseContent;
-                }
-            }
-
-            throw new RuntimeException("QianwenVL API响应格式异常: " + responseBody);
+        } catch (Exception e) {
+            log.error("图像分析失败: imageUrl={}", imageUrl, e);
+            throw new RuntimeException("图像分析失败: " + e.getMessage(), e);
         }
     }
 
     /**
-     * 解析QianwenVL返回的分析结果
+     * 使用自定义提示词分析图像
+     *
+     * @param imageUrl MinIO中的图像文件URL
+     * @param customPrompt 自定义分析提示词
+     * @return 原始分析内容（字符串）
+     * @throws RuntimeException 如果分析失败
+     */
+    public String analyzeWithCustomPrompt(String imageUrl, String customPrompt) {
+        log.info("使用自定义提示词分析图像: imageUrl={}", imageUrl);
+
+        try {
+            JeecgBootMultiModalClient.VisionAnalysisResult visionResult =
+                    jeecgBootClient.analyzeImage(imageUrl, customPrompt);
+
+            if (!visionResult.isSuccess()) {
+                throw new RuntimeException("JeecgBoot Vision API调用失败: " + visionResult.getErrorMessage());
+            }
+
+            return visionResult.getContent();
+
+        } catch (Exception e) {
+            log.error("自定义图像分析失败: imageUrl={}", imageUrl, e);
+            throw new RuntimeException("自定义图像分析失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 解析AI返回的分析结果
      *
      * 尝试解析JSON格式的响应，如果失败则使用纯文本模式
      */
     private ImageAnalysisResult parseAnalysisResult(String analysisJson) {
         ImageAnalysisResult result = new ImageAnalysisResult();
+
+        if (analysisJson == null || analysisJson.isEmpty()) {
+            log.warn("分析结果为空");
+            return result;
+        }
 
         try {
             // 尝试从Markdown代码块中提取JSON
@@ -255,10 +202,14 @@ public class ImageAnalysisService {
     }
 
     /**
-     * 检查API密钥是否配置
+     * 检查服务是否可用
+     *
+     * 检查JeecgBoot多模态服务是否可用
+     *
+     * @return true如果服务可用
      */
     public boolean isConfigured() {
-        return apiKey != null && !apiKey.isEmpty() && !apiKey.equals("sk-placeholder");
+        return jeecgBootClient.isAvailable();
     }
 
     /**

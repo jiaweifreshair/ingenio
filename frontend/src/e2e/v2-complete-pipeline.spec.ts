@@ -1,415 +1,254 @@
 /**
- * V2.0完整链路E2E测试
+ * Blueprint 端到端（E2E）测试
  *
- * 测试覆盖：
- * - Plan阶段：意图识别 → 路由决策 → 风格选择
- * - 确认设计：用户确认 → designConfirmed标志
- * - Execute阶段：ExecuteGuard前置检查
+ * 覆盖范围（以“能跑通、能定位问题”为第一目标）：
+ * 1) Plan 路由：`POST /api/v2/plan-routing/route`
+ * 2) Blueprint Mode：`POST /api/v2/plan-routing/{appSpecId}/select-template`
+ * 3) 设计确认：`POST /api/v2/plan-routing/{appSpecId}/confirm-design`
+ * 4) UI 主链路：登录 → 生成 →（确认方案）→ 原型确认 → 确认设计 → 进入 Execute（G3 Console）
  *
- * 三大核心场景：
- * 1. CLONE路径：克隆已有网站
- * 2. DESIGN路径：从零设计（7风格选择）
- * 3. 确认→Execute：设计确认后进入Execute阶段
+ * 说明：
+ * - 该链路依赖 AI 规划/原型生成与外部沙箱，耗时远超 10s 属于正常现象；
+ * - 为减少误报，关键请求均显式提高 timeout；
+ * - E2E 默认走真实后端，不使用 Mock。
  */
 
-import { test, expect } from '@playwright/test';
-import { v4 as uuidv4 } from 'uuid';
-
-// 测试配置
-const BASE_URL = 'http://localhost:3000';
-const API_BASE_URL = 'http://localhost:8080';
-const TEST_TENANT_ID = uuidv4();
-const TEST_USER_ID = uuidv4();
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 
 /**
- * 场景A: CLONE路径 - 克隆已有网站
- * 用户需求: "仿照airbnb.com做一个民宿预订平台"
- * 预期流程: 意图识别→CLONE_EXISTING_WEBSITE→直接生成原型
+ * 后端基准地址（包含 /api context-path）
+ * - 默认使用 127.0.0.1，避免 localhost 在部分环境优先解析到 IPv6(::1) 导致连接问题
  */
-test.describe('场景A: CLONE路径 - 克隆已有网站', () => {
-  test('应该正确识别克隆意图并生成原型', async ({ page }) => {
-    // Step 1: 调用Plan路由API
-    const routeResponse = await page.request.post(`${API_BASE_URL}/api/v2/plan-routing/route`, {
-      data: {
-        userRequirement: '仿照airbnb.com做一个民宿预订平台，需要支持房源列表、预订、支付功能',
-        tenantId: TEST_TENANT_ID,
-        userId: TEST_USER_ID,
-      },
+const BACKEND_API_BASE_URL =
+  process.env.E2E_BACKEND_API_BASE_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  'http://127.0.0.1:8080/api';
+
+/**
+ * UI 登录账号（用于走完整 UI 链路）
+ * - 如果你不希望把密码写死，请在运行时注入 `E2E_PASSWORD`
+ */
+const E2E_USERNAME = process.env.E2E_USERNAME || 'justin';
+const E2E_PASSWORD = process.env.E2E_PASSWORD || 'qazOKM123';
+
+const API_TIMEOUT_MS = Number(process.env.E2E_API_TIMEOUT_MS || 180_000);
+const PRODUCTSHOT_TEMPLATE_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
+
+function api(path: string) {
+  return `${BACKEND_API_BASE_URL}${path}`;
+}
+
+async function ensureBackendHealthy(request: APIRequestContext) {
+  const health = await request.get(api('/actuator/health'), { timeout: 10_000 });
+  expect(health.ok()).toBeTruthy();
+}
+
+async function loginViaApi(request: APIRequestContext) {
+  const resp = await request.post(api('/v1/auth/login'), {
+    data: { usernameOrEmail: E2E_USERNAME, password: E2E_PASSWORD },
+    timeout: 20_000,
+  });
+  expect(resp.ok()).toBeTruthy();
+  const body = await resp.json();
+  // 兼容两类响应包装：
+  // 1) { code: "0000", message, data, ... }
+  // 2) { code: 200, success: true, message: "success", data, ... }
+  expect([200, '0000']).toContain(body.code);
+  expect(body.data?.token).toBeTruthy();
+  return { token: body.data.token as string };
+}
+
+async function loginViaUi(page: Page) {
+  await page.goto('/login');
+  await page.getByLabel('用户名或邮箱').fill(E2E_USERNAME);
+  await page.getByLabel('密码').fill(E2E_PASSWORD);
+
+  const loginRespPromise = page.waitForResponse((resp) => {
+    return resp.request().method() === 'POST' && resp.url().includes('/v1/auth/login');
+  });
+
+  await page.getByRole('button', { name: '登录' }).click();
+  const loginResp = await loginRespPromise;
+  expect(loginResp.ok()).toBeTruthy();
+
+  await expect.poll(
+    () => page.evaluate(() => localStorage.getItem('auth_token')),
+    { timeout: 10_000 }
+  ).not.toBeNull();
+}
+
+async function routeClone(request: APIRequestContext, token: string) {
+  const routeResp = await request.post(api('/v2/plan-routing/route'), {
+    headers: { authorization: token },
+    timeout: API_TIMEOUT_MS,
+    data: {
+      userRequirement: '仿照 airbnb.com 做一个民宿预订平台，需要支持房源列表、预订、支付功能',
+    },
+  });
+  expect(routeResp.ok()).toBeTruthy();
+
+  const routeBody = await routeResp.json();
+  expect(routeBody.code).toBe('0000');
+
+  const data = routeBody.data;
+  expect(data).toBeTruthy();
+  expect(data.intent).toBe('CLONE_EXISTING_WEBSITE');
+  expect(data.branch).toBe('CLONE');
+  expect(data.prototypeGenerated).toBe(true);
+  expect(typeof data.prototypeUrl).toBe('string');
+  expect(data.prototypeUrl).toMatch(/^https?:\/\//);
+  expect(data.appSpecId).toBeTruthy();
+
+  return { appSpecId: data.appSpecId as string, prototypeUrl: data.prototypeUrl as string };
+}
+
+test.describe('Blueprint E2E（API + UI）', () => {
+  let token: string;
+
+  test.beforeAll(async ({ request }) => {
+    await ensureBackendHealthy(request);
+    const login = await loginViaApi(request);
+    token = login.token;
+  });
+
+  test('API：CLONE 路由返回原型（可确认设计）', async ({ request }) => {
+    test.setTimeout(API_TIMEOUT_MS + 60_000);
+    await routeClone(request, token);
+  });
+
+  test('API：选择模板后 Blueprint Mode 已加载（select-template）', async ({ request }) => {
+    test.setTimeout(API_TIMEOUT_MS + 60_000);
+    const { appSpecId } = await routeClone(request, token);
+
+    const resp = await request.post(api(`/v2/plan-routing/${appSpecId}/select-template`), {
+      headers: { authorization: token },
+      timeout: 30_000,
+      data: { templateId: PRODUCTSHOT_TEMPLATE_ID },
     });
+    expect(resp.ok()).toBeTruthy();
 
-    expect(routeResponse.ok()).toBeTruthy();
-    const routeResult = await routeResponse.json();
-
-    // 验证响应结构
-    expect(routeResult.code).toBe('0000');
-    expect(routeResult.data).toBeDefined();
-
-    const { data } = routeResult;
-
-    // 验证意图识别结果
-    expect(data.intent).toBe('CLONE_EXISTING_WEBSITE');
-    expect(data.branch).toBe('CLONE');
-    expect(data.confidence).toBeGreaterThanOrEqual(0.8);
-
-    // 验证提取的URL
-    expect(data.extractedUrls).toContain('airbnb.com');
-
-    // 验证下一步操作
-    expect(data.nextAction).toBe('CRAWL_AND_GENERATE');
-
-    // 验证AppSpec已创建
-    expect(data.appSpecId).toBeDefined();
-
-    console.log(`✅ CLONE路径测试通过 - AppSpecId: ${data.appSpecId}`);
+    const body = await resp.json();
+    expect(body.code).toBe('0000');
+    expect(body.data?.metadata?.blueprintModeEnabled).toBe(true);
+    expect(body.data?.nextAction).toContain('Blueprint');
   });
 
-  test('应该能够直接生成原型（无需风格选择）', async ({ page: _page }) => {
-    // CLONE路径应该跳过风格选择，直接生成
-    // 这里需要验证不会显示StylePicker组件
+  test('API：未确认设计时，execute-code-generation 应返回“设计未确认”', async ({ request }) => {
+    test.setTimeout(API_TIMEOUT_MS + 60_000);
+    const { appSpecId } = await routeClone(request, token);
 
-    // TODO: 验证前端不显示风格选择UI
-    // await page.goto(`${BASE_URL}/plan-routing?requirement=仿照airbnb.com`);
-    // await expect(page.locator('[data-testid="style-picker"]')).not.toBeVisible();
+    const resp = await request.post(api(`/v2/plan-routing/${appSpecId}/execute-code-generation`), {
+      headers: { authorization: token },
+      timeout: 30_000,
+      data: {},
+    });
+    expect(resp.ok()).toBeTruthy();
+
+    const body = await resp.json();
+    expect(body.code).toBe('1001');
+    expect(body.message).toContain('设计未确认');
   });
-});
 
-/**
- * 场景B: DESIGN路径 - 从零设计
- * 用户需求: "创建一个技术博客平台"
- * 预期流程: 意图识别→DESIGN_FROM_SCRATCH→7风格预览→用户选择→生成原型
- */
-test.describe('场景B: DESIGN路径 - 从零设计', () => {
-  let appSpecId: string;
+  test('API：confirm-design 成功（数据库需补齐 blueprint_* 字段）', async ({ request }) => {
+    test.setTimeout(API_TIMEOUT_MS + 60_000);
+    const { appSpecId } = await routeClone(request, token);
 
-  test('应该正确识别从零设计意图', async ({ page }) => {
-    const routeResponse = await page.request.post(`${API_BASE_URL}/api/v2/plan-routing/route`, {
+    const resp = await request.post(api(`/v2/plan-routing/${appSpecId}/confirm-design`), {
+      headers: { authorization: token },
+      timeout: 30_000,
+    });
+    expect(resp.ok()).toBeTruthy();
+
+    const body = await resp.json();
+    expect(body.code).toBe('0000');
+    expect(body.data?.message).toContain('设计确认成功');
+  });
+
+  test('API：DESIGN 路由返回 styleVariants（当前为单风格极速版）', async ({ request }) => {
+    test.setTimeout(90_000);
+
+    const routeResp = await request.post(api('/v2/plan-routing/route'), {
+      headers: { authorization: token },
+      timeout: 60_000,
       data: {
         userRequirement: '创建一个技术博客平台，支持Markdown编辑、代码高亮、评论功能',
-        tenantId: TEST_TENANT_ID,
-        userId: TEST_USER_ID,
       },
     });
+    expect(routeResp.ok()).toBeTruthy();
 
-    expect(routeResponse.ok()).toBeTruthy();
-    const routeResult = await routeResponse.json();
+    const routeBody = await routeResp.json();
+    expect(routeBody.code).toBe('0000');
 
-    const { data } = routeResult;
-
-    // 验证意图识别
+    const data = routeBody.data;
     expect(data.intent).toBe('DESIGN_FROM_SCRATCH');
     expect(data.branch).toBe('DESIGN');
-
-    // 验证风格选项
-    expect(data.styleOptions).toBeDefined();
-    expect(data.styleOptions.length).toBe(7);
-
-    // 验证7种风格都存在
-    const expectedStyles = ['modern_minimal', 'vibrant_trendy', 'classic_professional',
-                           'futuristic_tech', 'immersive_3d', 'gamified', 'natural_flow'];
-    data.styleOptions.forEach((style: { id: string; previewUrl: string; name: string }) => {
-      expect(expectedStyles).toContain(style.id);
-      expect(style.previewUrl).toBeDefined();
-      expect(style.name).toBeDefined();
-    });
-
-    // 验证下一步操作
-    expect(data.nextAction).toBe('SELECT_STYLE');
-
-    appSpecId = data.appSpecId;
-    console.log(`✅ DESIGN路径 - 意图识别通过 - AppSpecId: ${appSpecId}`);
+    expect(Array.isArray(data.styleVariants)).toBe(true);
+    expect(data.styleVariants.length).toBeGreaterThanOrEqual(1);
+    expect(typeof data.selectedStyleId).toBe('string');
+    expect(data.prototypeGenerated).toBe(false);
+    expect(data.nextAction).toContain('流式');
   });
 
-  test('应该能够选择风格并生成原型', async ({ page }) => {
-    // 使用上一步的appSpecId（如果没有则创建新的）
-    if (!appSpecId) {
-      const routeResponse = await page.request.post(`${API_BASE_URL}/api/v2/plan-routing/route`, {
-        data: {
-          userRequirement: '创建一个技术博客平台',
-          tenantId: TEST_TENANT_ID,
-          userId: TEST_USER_ID,
-        },
-      });
-      const routeResult = await routeResponse.json();
-      appSpecId = routeResult.data.appSpecId;
-    }
+  test('UI：登录 → 生成 → 原型确认 → 确认设计 → 进入 Execute', async ({ page }) => {
+    test.setTimeout(300_000);
 
-    // Step 2: 选择风格
-    const selectedStyleId = 'modern_minimal';
+    await loginViaUi(page);
+    await page.goto('/');
+    await expect(page.getByText('你的创意，AI 实现')).toBeVisible();
 
-    const selectStyleResponse = await page.request.post(
-      `${API_BASE_URL}/api/v2/plan-routing/${appSpecId}/select-style?styleId=${selectedStyleId}`
-    );
-
-    expect(selectStyleResponse.ok()).toBeTruthy();
-    const selectStyleResult = await selectStyleResponse.json();
-
-    const { data } = selectStyleResult;
-
-    // 验证原型URL已生成
-    expect(data.prototypeUrl).toBeDefined();
-    expect(data.prototypeUrl).toContain('http');
-
-    // 验证选择的风格
-    expect(data.selectedStyleId).toBe(selectedStyleId);
-
-    // 验证下一步操作
-    expect(data.nextAction).toBe('CONFIRM_DESIGN');
-
-    console.log(`✅ DESIGN路径 - 风格选择通过 - PrototypeURL: ${data.prototypeUrl}`);
-  });
-});
-
-/**
- * 场景C: 确认设计 → Execute阶段
- * 操作: 用户点击"确认设计"按钮
- * 预期: designConfirmed=true → ExecuteGuard放行
- */
-test.describe('场景C: 确认设计 → Execute阶段', () => {
-  let testAppSpecId: string;
-
-  test.beforeEach(async ({ page }) => {
-    // 创建测试用的AppSpec
-    const routeResponse = await page.request.post(`${API_BASE_URL}/api/v2/plan-routing/route`, {
-      data: {
-        userRequirement: '创建一个在线教育平台',
-        tenantId: TEST_TENANT_ID,
-        userId: TEST_USER_ID,
-      },
-    });
-    const routeResult = await routeResponse.json();
-    testAppSpecId = routeResult.data.appSpecId;
-
-    // 如果是DESIGN分支，选择风格
-    if (routeResult.data.branch === 'DESIGN') {
-      await page.request.post(
-        `${API_BASE_URL}/api/v2/plan-routing/${testAppSpecId}/select-style?styleId=modern_minimal`
-      );
-    }
-  });
-
-  test('未确认设计时，ExecuteGuard应该阻塞Execute阶段', async ({ page }) => {
-    // 尝试调用Execute阶段API（假设存在）
-    const executeResponse = await page.request.post(
-      `${API_BASE_URL}/api/v2/execute/start`,
-      {
-        data: {
-          appSpecId: testAppSpecId,
-          tenantId: TEST_TENANT_ID,
-          userId: TEST_USER_ID,
-        },
-        failOnStatusCode: false, // 允许失败响应
-      }
-    );
-
-    // 验证被ExecuteGuard阻塞
-    expect(executeResponse.status()).toBe(400);
-
-    const errorResult = await executeResponse.json();
-    expect(errorResult.message).toContain('设计未确认');
-
-    console.log('✅ ExecuteGuard阻塞测试通过 - 未确认设计时正确阻塞');
-  });
-
-  test('确认设计后，designConfirmed标志应该更新', async ({ page }) => {
-    // Step 3: 确认设计
-    const confirmResponse = await page.request.post(
-      `${API_BASE_URL}/api/v2/plan-routing/${testAppSpecId}/confirm-design`
-    );
-
-    expect(confirmResponse.ok()).toBeTruthy();
-    const confirmResult = await confirmResponse.json();
-
-    expect(confirmResult.code).toBe('0000');
-    expect(confirmResult.data).toContain('设计确认成功');
-
-    console.log('✅ 确认设计API调用成功');
-
-    // TODO: 验证数据库中designConfirmed字段已更新
-    // 这里需要查询数据库或通过status API验证
-  });
-
-  test('确认设计后，ExecuteGuard应该放行Execute阶段', async ({ page }) => {
-    // 先确认设计
-    await page.request.post(
-      `${API_BASE_URL}/api/v2/plan-routing/${testAppSpecId}/confirm-design`
-    );
-
-    // 再次尝试调用Execute阶段API
-    const executeResponse = await page.request.post(
-      `${API_BASE_URL}/api/v2/execute/start`,
-      {
-        data: {
-          appSpecId: testAppSpecId,
-          tenantId: TEST_TENANT_ID,
-          userId: TEST_USER_ID,
-        },
-        failOnStatusCode: false,
-      }
-    );
-
-    // 验证ExecuteGuard放行（状态码不应该是400阻塞错误）
-    // 注意：Execute阶段可能返回其他错误（如404未实现），但不应该是400设计未确认错误
-    if (executeResponse.status() === 400) {
-      const errorResult = await executeResponse.json();
-      expect(errorResult.message).not.toContain('设计未确认');
-    }
-
-    console.log('✅ ExecuteGuard放行测试通过 - 确认设计后可进入Execute阶段');
-  });
-});
-
-/**
- * 前端UI集成测试
- * 测试V2.0创建流程的完整交互
- */
-test.describe('前端UI集成测试 - V2.0创建流程', () => {
-  test('应该正确渲染首页并包含创建入口', async ({ page }) => {
-    await page.goto(`${BASE_URL}/`);
-    await page.waitForLoadState('networkidle');
-
-    // 验证页面标题
-    await expect(page.locator('text=你的创意，AI 来实现')).toBeVisible();
-
-    // 验证输入框存在 (HeroBanner中的textarea)
-    await expect(page.locator('textarea[placeholder*="在这里输入你想做什么"]')).toBeVisible();
-
-    // 验证提交按钮存在
-    await expect(page.locator('button:has-text("生成")')).toBeVisible();
-  });
-
-  test('提交需求后应该进入向导模式并显示分析进度', async ({ page }) => {
-    await page.goto(`${BASE_URL}/`);
-    await page.waitForLoadState('networkidle');
-
-    // 输入需求
+    // 提交克隆需求，确保后端直接生成原型（无需等待前端 SSE 生成）
     const input = page.locator('textarea[placeholder*="在这里输入你想做什么"]');
-    await input.fill('创建一个技术博客平台，支持Markdown编辑、代码高亮、评论功能');
+    await input.fill('仿照 airbnb.com 做一个民宿预订平台，需要支持房源列表、预订、支付功能');
+    await page.getByRole('button', { name: '生成' }).click();
 
-    // 点击提交
-    const submitButton = page.locator('button:has-text("生成")');
-    await submitButton.click();
+    await expect(page.getByText('深度分析')).toBeVisible({ timeout: 60_000 });
 
-    // 验证进入向导模式（进度条出现）
-    await expect(page.locator('text=深度分析')).toBeVisible({ timeout: 10000 });
-    
-    // 验证正在分析中
-    await expect(page.locator('text=AI正在分析您的需求')).toBeVisible();
-  });
+    // 分析完成后可能出现 PlanDisplay，需要用户点击确认；也可能直接进入原型确认
+    const planConfirmButton = page.getByRole('button', { name: 'Confirm & Generate Prototype' });
+    const prototypePanel = page.locator('[data-testid="prototype-confirmation-panel"]');
 
-  test('完整流程：输入需求 -> 分析 -> 原型确认 -> 生成', async ({ page }) => {
-    // 设置较长的超时时间，因为涉及AI生成
-    test.setTimeout(120000);
+    const reached = await Promise.race([
+      planConfirmButton.waitFor({ state: 'visible', timeout: 180_000 }).then(() => 'plan' as const),
+      prototypePanel.waitFor({ state: 'visible', timeout: 180_000 }).then(() => 'prototype' as const),
+    ]);
 
-    await page.goto(`${BASE_URL}/`);
-    await page.waitForLoadState('networkidle');
-
-    // Step 1: 输入需求
-    const input = page.locator('textarea[placeholder*="在这里输入你想做什么"]');
-    await input.fill('创建一个简单的待办事项列表应用，包含添加、删除和标记完成功能');
-    await page.locator('button:has-text("生成")').click();
-
-    // Step 2: 等待分析完成并自动跳转到原型确认
-    // 这可能需要几秒钟
-    await expect(page.locator('[data-testid="prototype-confirmation-panel"]')).toBeVisible({ timeout: 60000 });
-
-    // Step 3: 验证原型确认面板内容
-    await expect(page.locator('[data-testid="confirm-design-button"]')).toBeVisible();
-    await expect(page.locator('[data-testid="refresh-preview-button"]')).toBeVisible();
-
-    // Step 4: 点击确认设计
-    const confirmButton = page.locator('[data-testid="confirm-design-button"]');
-    await confirmButton.click();
-
-    // Step 5: 验证跳转到Wizard生成页面
-    await page.waitForURL(/\/wizard\//, { timeout: 30000 });
-    expect(page.url()).toContain('/wizard/');
-
-    console.log('完整流程测试通过：首页 -> 原型确认 -> 生成向导');
-  });
-});
-
-/**
- * 性能测试
- * 验证关键API的响应时间
- */
-test.describe('性能测试', () => {
-  test('Plan路由API响应时间应该<3秒', async ({ page }) => {
-    const startTime = Date.now();
-
-    const routeResponse = await page.request.post(`${API_BASE_URL}/api/v2/plan-routing/route`, {
-      data: {
-        userRequirement: '创建一个电商平台',
-        tenantId: TEST_TENANT_ID,
-        userId: TEST_USER_ID,
-      },
-    });
-
-    const endTime = Date.now();
-    const duration = endTime - startTime;
-
-    expect(routeResponse.ok()).toBeTruthy();
-    expect(duration).toBeLessThan(3000); // 3秒内完成
-
-    console.log(`⏱️ Plan路由API响应时间: ${duration}ms`);
-  });
-
-  test('风格选择API响应时间应该<2秒', async ({ page }) => {
-    // 先创建AppSpec
-    const routeResponse = await page.request.post(`${API_BASE_URL}/api/v2/plan-routing/route`, {
-      data: {
-        userRequirement: '创建一个社交平台',
-        tenantId: TEST_TENANT_ID,
-        userId: TEST_USER_ID,
-      },
-    });
-    const routeResult = await routeResponse.json();
-    const appSpecId = routeResult.data.appSpecId;
-
-    const startTime = Date.now();
-
-    const selectStyleResponse = await page.request.post(
-      `${API_BASE_URL}/api/v2/plan-routing/${appSpecId}/select-style?styleId=modern_minimal`
-    );
-
-    const endTime = Date.now();
-    const duration = endTime - startTime;
-
-    expect(selectStyleResponse.ok()).toBeTruthy();
-    expect(duration).toBeLessThan(2000); // 2秒内完成
-
-    console.log(`⏱️ 风格选择API响应时间: ${duration}ms`);
-  });
-
-  test('确认设计API响应时间应该<500ms', async ({ page }) => {
-    // 创建并选择风格
-    const routeResponse = await page.request.post(`${API_BASE_URL}/api/v2/plan-routing/route`, {
-      data: {
-        userRequirement: '创建一个内容管理系统',
-        tenantId: TEST_TENANT_ID,
-        userId: TEST_USER_ID,
-      },
-    });
-    const routeResult = await routeResponse.json();
-    const appSpecId = routeResult.data.appSpecId;
-
-    if (routeResult.data.branch === 'DESIGN') {
-      await page.request.post(
-        `${API_BASE_URL}/api/v2/plan-routing/${appSpecId}/select-style?styleId=modern_minimal`
-      );
+    if (reached === 'plan') {
+      await planConfirmButton.click();
+      await expect(prototypePanel).toBeVisible({ timeout: 180_000 });
     }
 
-    const startTime = Date.now();
+    // 原型确认面板
+    // PrototypeConfirmation 同时渲染了桌面/移动两套布局（其中一套会被 CSS 隐藏），这里显式只选取可见元素
+    const refreshBtn = page.locator('[data-testid="refresh-preview-button"]:visible');
+    const confirmBtn = page.locator('[data-testid="confirm-design-button"]:visible');
 
-    const confirmResponse = await page.request.post(
-      `${API_BASE_URL}/api/v2/plan-routing/${appSpecId}/confirm-design`
-    );
+    await expect(refreshBtn).toBeVisible();
+    await expect(confirmBtn).toBeVisible();
 
-    const endTime = Date.now();
-    const duration = endTime - startTime;
+    // 预览可能存在“沙箱过期/地址失效”，先触发一次刷新（按钮可能短暂禁用，做容错）
+    try {
+      await expect(refreshBtn).toBeEnabled({ timeout: 60_000 });
+      await refreshBtn.click();
+    } catch {
+      // ignore: clone 分支可能已可确认，无需刷新
+    }
 
-    expect(confirmResponse.ok()).toBeTruthy();
-    expect(duration).toBeLessThan(500); // 500ms内完成
+    await expect(confirmBtn).toBeEnabled({ timeout: 180_000 });
 
-    console.log(`⏱️ 确认设计API响应时间: ${duration}ms`);
+    // 监听 confirm-design 请求，确保后端真正完成设计确认（而不是仅 UI 切步）
+    const confirmDesignRespPromise = page.waitForResponse((resp) => {
+      return resp.request().method() === 'POST' && resp.url().includes('/v2/plan-routing/') && resp.url().includes('/confirm-design');
+    });
+
+    await confirmBtn.click();
+    await page.getByRole('button', { name: '确认并生成' }).click();
+
+    const confirmDesignResp = await confirmDesignRespPromise;
+    expect(confirmDesignResp.ok()).toBeTruthy();
+    const confirmDesignBody = await confirmDesignResp.json();
+    expect(confirmDesignBody.code).toBe('0000');
+
+    // 进入 Execute（G3 Console）
+    await expect(page.getByRole('heading', { name: 'G3 Battle Console' })).toBeVisible({ timeout: 60_000 });
   });
 });

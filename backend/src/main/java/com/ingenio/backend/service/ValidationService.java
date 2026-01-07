@@ -3,7 +3,9 @@ package com.ingenio.backend.service;
 import com.ingenio.backend.dto.request.validation.*;
 import com.ingenio.backend.dto.response.validation.FullValidationResponse;
 import com.ingenio.backend.dto.response.validation.ValidationResponse;
+import com.ingenio.backend.entity.AppSpecEntity;
 import com.ingenio.backend.entity.ValidationResultEntity;
+import com.ingenio.backend.mapper.AppSpecMapper;
 import com.ingenio.backend.mapper.ValidationResultMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +53,7 @@ import java.util.concurrent.Executor;
 public class ValidationService {
 
     private final ValidationResultMapper validationResultMapper;
+    private final AppSpecMapper appSpecMapper;
 
     // Phase 1: 编译验证集成依赖
     private final CompilationValidator compilationValidator;
@@ -107,8 +110,10 @@ public class ValidationService {
 
             // Step 4: 保存验证记录到数据库
             log.debug("Step 4/4: 保存验证记录到数据库");
+            UUID tenantId = getTenantIdFromAppSpec(request.getAppSpecId());
             saveValidationResult(
                     request.getAppSpecId(),
+                    tenantId,
                     response,
                     startTime,
                     ValidationResultEntity.ValidationType.COMPILE
@@ -133,12 +138,14 @@ public class ValidationService {
      * 保存验证结果到数据库
      *
      * @param appSpecId 应用规格ID
+     * @param tenantId 租户ID（用于多租户隔离）
      * @param response 验证响应
      * @param startTime 开始时间
      * @param validationType 验证类型（compile/test/coverage等）
      */
     private void saveValidationResult(
             UUID appSpecId,
+            UUID tenantId,
             ValidationResponse response,
             Instant startTime,
             ValidationResultEntity.ValidationType validationType
@@ -146,6 +153,7 @@ public class ValidationService {
         ValidationResultEntity entity = ValidationResultEntity.builder()
                 .id(response.getValidationId())
                 .appSpecId(appSpecId)
+                .tenantId(tenantId)
                 .validationType(validationType.getValue())
                 .status(response.getPassed() ?
                         ValidationResultEntity.Status.PASSED.getValue() :
@@ -164,8 +172,32 @@ public class ValidationService {
 
         validationResultMapper.insert(entity);
 
-        log.debug("验证结果已保存: validationId={}, validationType={}, passed={}",
-                entity.getId(), entity.getValidationType(), entity.getIsPassed());
+        log.debug("验证结果已保存: validationId={}, tenantId={}, validationType={}, passed={}",
+                entity.getId(), entity.getTenantId(), entity.getValidationType(), entity.getIsPassed());
+    }
+
+    /**
+     * 从 AppSpec 中获取租户ID
+     *
+     * @param appSpecId 应用规格ID
+     * @return 租户ID（如果找不到AppSpec则返回null）
+     */
+    private UUID getTenantIdFromAppSpec(UUID appSpecId) {
+        if (appSpecId == null) {
+            log.warn("appSpecId 为空，无法获取 tenantId");
+            return null;
+        }
+        try {
+            AppSpecEntity appSpec = appSpecMapper.selectById(appSpecId);
+            if (appSpec != null) {
+                return appSpec.getTenantId();
+            }
+            log.warn("未找到 AppSpec: appSpecId={}", appSpecId);
+            return null;
+        } catch (Exception e) {
+            log.error("获取 AppSpec tenantId 失败: appSpecId={}", appSpecId, e);
+            return null;
+        }
     }
 
     /**
@@ -222,8 +254,10 @@ public class ValidationService {
                     testResult, request.getAppSpecId());
 
             // Step 4: 保存验证记录到数据库
+            UUID tenantId = getTenantIdFromAppSpec(request.getAppSpecId());
             saveValidationResult(
                     request.getAppSpecId(),
+                    tenantId,
                     response,
                     startTime,
                     ValidationResultEntity.ValidationType.TEST
@@ -275,8 +309,10 @@ public class ValidationService {
                     coverageResult, appSpecId);
 
             // Step 3: 保存验证记录到数据库
+            UUID tenantId = getTenantIdFromAppSpec(appSpecId);
             saveValidationResult(
                     appSpecId,
+                    tenantId,
                     response,
                     startTime,
                     ValidationResultEntity.ValidationType.COVERAGE
@@ -312,17 +348,19 @@ public class ValidationService {
      * - 实现G3和ValidationService的数据格式统一
      *
      * @param appSpecId 应用规格ID
+     * @param tenantId 租户ID（用于多租户隔离）
      * @param response 验证响应（由外部系统生成，如G3ValidationAdapter转换的结果）
      * @param validationType 验证类型（compile/test/coverage等）
      */
     @Transactional(rollbackFor = Exception.class)
     public void saveExternalValidationResult(
             UUID appSpecId,
+            UUID tenantId,
             ValidationResponse response,
             ValidationResultEntity.ValidationType validationType) {
 
-        log.info("保存外部验证结果（Phase 5） - appSpecId: {}, validationType: {}, passed: {}",
-                appSpecId, validationType, response.getPassed());
+        log.info("保存外部验证结果（Phase 5） - appSpecId: {}, tenantId: {}, validationType: {}, passed: {}",
+                appSpecId, tenantId, validationType, response.getPassed());
 
         // 计算startTime（从completedAt和durationMs反推）
         Instant startTime = response.getCompletedAt() != null ?
@@ -330,10 +368,10 @@ public class ValidationService {
                 Instant.now().minusMillis(response.getDurationMs());
 
         // 调用私有方法保存结果
-        saveValidationResult(appSpecId, response, startTime, validationType);
+        saveValidationResult(appSpecId, tenantId, response, startTime, validationType);
 
-        log.info("外部验证结果已保存 - validationId={}, appSpecId={}, validationType={}",
-                response.getValidationId(), appSpecId, validationType);
+        log.info("外部验证结果已保存 - validationId={}, appSpecId={}, tenantId={}, validationType={}",
+                response.getValidationId(), appSpecId, tenantId, validationType);
     }
 
     /**
@@ -398,10 +436,12 @@ public class ValidationService {
 
             Instant endTime = Instant.now();
             long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
+            UUID tenantId = getTenantIdFromAppSpec(request.getAppSpecId());
 
             ValidationResultEntity entity = ValidationResultEntity.builder()
                     .id(UUID.randomUUID())
                     .appSpecId(request.getAppSpecId())
+                    .tenantId(tenantId)
                     .validationType(ValidationResultEntity.ValidationType.QUALITY_GATE.getValue())
                     .status(allPassed ? ValidationResultEntity.Status.PASSED.getValue()
                             : ValidationResultEntity.Status.FAILED.getValue())
@@ -419,8 +459,8 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("质量门禁验证完成 - passed: {}, coverage: {}%, complexity: {}, durationMs: {}",
-                    allPassed, coverage, complexity, durationMs);
+            log.info("质量门禁验证完成 - passed: {}, coverage: {}%, complexity: {}, tenantId: {}, durationMs: {}",
+                    allPassed, coverage, complexity, tenantId, durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -483,10 +523,12 @@ public class ValidationService {
 
             Instant endTime = Instant.now();
             long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
+            UUID tenantId = getTenantIdFromAppSpec(appSpecId);
 
             ValidationResultEntity entity = ValidationResultEntity.builder()
                     .id(UUID.randomUUID())
                     .appSpecId(appSpecId)
+                    .tenantId(tenantId)
                     .validationType(ValidationResultEntity.ValidationType.CONTRACT.getValue())
                     .status(isValid ? ValidationResultEntity.Status.PASSED.getValue()
                             : ValidationResultEntity.Status.FAILED.getValue())
@@ -504,7 +546,7 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("API契约验证完成 - valid: {}, durationMs: {}", isValid, durationMs);
+            log.info("API契约验证完成 - valid: {}, tenantId: {}, durationMs: {}", isValid, tenantId, durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -566,10 +608,12 @@ public class ValidationService {
 
             Instant endTime = Instant.now();
             long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
+            UUID tenantId = getTenantIdFromAppSpec(appSpecId);
 
             ValidationResultEntity entity = ValidationResultEntity.builder()
                     .id(UUID.randomUUID())
                     .appSpecId(appSpecId)
+                    .tenantId(tenantId)
                     .validationType(ValidationResultEntity.ValidationType.SCHEMA.getValue())
                     .status(isValid ? ValidationResultEntity.Status.PASSED.getValue()
                             : ValidationResultEntity.Status.FAILED.getValue())
@@ -587,7 +631,7 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("Schema验证完成 - valid: {}, tables: {}, durationMs: {}", isValid, details.get("tableCount"), durationMs);
+            log.info("Schema验证完成 - valid: {}, tables: {}, tenantId: {}, durationMs: {}", isValid, details.get("tableCount"), tenantId, durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -647,10 +691,12 @@ public class ValidationService {
 
             Instant endTime = Instant.now();
             long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
+            UUID tenantId = getTenantIdFromAppSpec(appSpecId);
 
             ValidationResultEntity entity = ValidationResultEntity.builder()
                     .id(UUID.randomUUID())
                     .appSpecId(appSpecId)
+                    .tenantId(tenantId)
                     .validationType(ValidationResultEntity.ValidationType.BUSINESS_FLOW.getValue())
                     .status(isValid ? ValidationResultEntity.Status.PASSED.getValue()
                             : ValidationResultEntity.Status.FAILED.getValue())
@@ -668,7 +714,7 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("业务流程验证完成 - valid: {}, flows: {}, durationMs: {}", isValid, details.get("flowCount"), durationMs);
+            log.info("业务流程验证完成 - valid: {}, flows: {}, tenantId: {}, durationMs: {}", isValid, details.get("flowCount"), tenantId, durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())

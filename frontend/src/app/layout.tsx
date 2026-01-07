@@ -24,6 +24,9 @@ export const metadata: Metadata = {
   ],
   authors: [{ name: "Ingenio Team" }],
   creator: "Ingenio Team",
+  icons: {
+    icon: "/logo.png",
+  },
 };
 
 /**

@@ -1,6 +1,9 @@
 package com.ingenio.backend.module.g3.controller;
 
+import cn.dev33.satoken.stp.StpUtil;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ingenio.backend.common.Result;
+import com.ingenio.backend.common.context.TenantContextHolder;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
@@ -11,9 +14,13 @@ import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.codec.ServerSentEvent;
+import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
 import java.util.UUID;
 
@@ -37,6 +44,7 @@ import java.util.UUID;
 public class G3Controller {
 
     private final G3OrchestratorService orchestratorService;
+    private final ObjectMapper objectMapper;
 
     /**
      * 提交G3任务
@@ -47,12 +55,17 @@ public class G3Controller {
     @PostMapping("/jobs")
     @Operation(summary = "提交G3任务")
     public Result<SubmitJobResponse> submitJob(@RequestBody SubmitJobRequest request) {
-        log.info("[G3 API] 提交任务: requirement={}", truncate(request.getRequirement(), 50));
+        // 从认证上下文获取用户ID和租户ID
+        UUID userId = getCurrentUserId();
+        UUID tenantId = getCurrentTenantId();
+
+        log.info("[G3 API] 提交任务: requirement={}, userId={}, tenantId={}",
+                truncate(request.getRequirement(), 50), userId, tenantId);
 
         UUID jobId = orchestratorService.submitJob(
                 request.getRequirement(),
-                null,  // userId - 后续从认证上下文获取
-                null,  // tenantId - 后续从认证上下文获取
+                userId,
+                tenantId,
                 request.getAppSpecId(),
                 request.getTemplateId(),
                 request.getMaxRounds()
@@ -77,6 +90,11 @@ public class G3Controller {
             return Result.error(404, "任务不存在");
         }
 
+        // 权限验证：确保用户只能访问自己的任务
+        if (!hasJobAccess(job)) {
+            return Result.error(403, "无权访问该任务");
+        }
+
         return Result.success(JobStatusResponse.fromEntity(job));
     }
 
@@ -88,9 +106,52 @@ public class G3Controller {
      */
     @GetMapping(value = "/jobs/{jobId}/logs", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "订阅任务日志流（SSE）")
-    public Flux<G3LogEntry> subscribeToLogs(@PathVariable String jobId) {
+    public Flux<ServerSentEvent<String>> subscribeToLogs(@PathVariable String jobId, HttpServletResponse response) {
         log.info("[G3 API] 订阅日志流: jobId={}", jobId);
-        return orchestratorService.subscribeToLogs(UUID.fromString(jobId));
+
+        // 关键：显式禁用缓冲/压缩，避免“Network里看起来是空的”或长时间不刷新的情况
+        // - nginx: X-Accel-Buffering=no
+        // - 浏览器/代理：Cache-Control=no-transform/no-cache
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Cache-Control", "no-cache, no-transform");
+        response.setHeader("Connection", "keep-alive");
+        response.setHeader("Content-Encoding", "identity");
+
+        // 权限验证：确保用户只能订阅自己任务的日志
+        G3JobEntity job = orchestratorService.getJob(UUID.fromString(jobId));
+        if (job == null || !hasJobAccess(job)) {
+            log.warn("[G3 API] SSE 权限拒绝: jobId={}", jobId);
+            return Flux.just(ServerSentEvent.<String>builder("connected").event("open").build())
+                    .concatWith(Flux.just(ServerSentEvent.<String>builder("无权访问该任务的日志流").event("error").build()))
+                    .concatWith(Mono.just(ServerSentEvent.<String>builder("done").event("complete").build()));
+        }
+
+        UUID id = UUID.fromString(jobId);
+        // 先发送一个轻量的 open + padding，确保连接立即有可见输出并触发代理/浏览器 flush
+        Flux<ServerSentEvent<String>> openFlux = Flux.just(
+                ServerSentEvent.<String>builder("connected").event("open").build(),
+                ServerSentEvent.<String>builder("").comment(" ".repeat(2048)).build()
+        );
+
+        Flux<ServerSentEvent<String>> logFlux = orchestratorService.subscribeToLogs(id)
+                .map(entry -> {
+                    String eventName = "heartbeat".equalsIgnoreCase(entry.getLevel()) ? "heartbeat" : "log";
+                    try {
+                        return ServerSentEvent.<String>builder(objectMapper.writeValueAsString(entry))
+                                .event(eventName)
+                                .build();
+                    } catch (Exception e) {
+                        return ServerSentEvent.<String>builder("{\"level\":\"error\",\"message\":\"日志序列化失败\"}")
+                                .event("error")
+                                .build();
+                    }
+                })
+                // SSE 流正常结束时补一个 complete 事件，便于前端做“结果拉取/展示”
+                .concatWith(Mono.just(ServerSentEvent.<String>builder("done").event("complete").build()))
+                .onErrorResume(e -> Flux.just(ServerSentEvent.<String>builder(String.valueOf(e.getMessage())).event("error").build())
+                        .concatWith(Mono.just(ServerSentEvent.<String>builder("done").event("complete").build())));
+
+        return openFlux.concatWith(logFlux);
     }
 
     /**
@@ -104,12 +165,55 @@ public class G3Controller {
     public Result<List<ArtifactResponse>> getArtifacts(@PathVariable String jobId) {
         log.debug("[G3 API] 获取产物列表: jobId={}", jobId);
 
+        // 权限验证：确保用户只能访问自己任务的产物
+        G3JobEntity job = orchestratorService.getJob(UUID.fromString(jobId));
+        if (job == null) {
+            return Result.error(404, "任务不存在");
+        }
+        if (!hasJobAccess(job)) {
+            return Result.error(403, "无权访问该任务的产物");
+        }
+
         List<G3ArtifactEntity> artifacts = orchestratorService.getArtifacts(UUID.fromString(jobId));
         List<ArtifactResponse> response = artifacts.stream()
                 .map(ArtifactResponse::fromEntity)
                 .toList();
 
         return Result.success(response);
+    }
+
+    /**
+     * 获取单个产物的详细内容（包含完整代码/配置内容）
+     *
+     * @param jobId      任务ID
+     * @param artifactId 产物ID
+     * @return 产物内容
+     */
+    @GetMapping("/jobs/{jobId}/artifacts/{artifactId}/content")
+    @Operation(summary = "获取产物内容")
+    public Result<ArtifactContentResponse> getArtifactContent(
+            @PathVariable String jobId,
+            @PathVariable String artifactId
+    ) {
+        log.debug("[G3 API] 获取产物内容: jobId={}, artifactId={}", jobId, artifactId);
+
+        UUID jobUuid = UUID.fromString(jobId);
+        UUID artifactUuid = UUID.fromString(artifactId);
+
+        G3JobEntity job = orchestratorService.getJob(jobUuid);
+        if (job == null) {
+            return Result.error(404, "任务不存在");
+        }
+        if (!hasJobAccess(job)) {
+            return Result.error(403, "无权访问该任务的产物");
+        }
+
+        G3ArtifactEntity artifact = orchestratorService.getArtifact(jobUuid, artifactUuid);
+        if (artifact == null) {
+            return Result.error(404, "产物不存在");
+        }
+
+        return Result.success(ArtifactContentResponse.fromEntity(artifact));
     }
 
     /**
@@ -126,6 +230,11 @@ public class G3Controller {
         G3JobEntity job = orchestratorService.getJob(UUID.fromString(jobId));
         if (job == null) {
             return Result.error(404, "任务不存在");
+        }
+
+        // 权限验证：确保用户只能访问自己任务的契约
+        if (!hasJobAccess(job)) {
+            return Result.error(403, "无权访问该任务的契约");
         }
 
         return Result.success(new ContractResponse(
@@ -154,9 +263,13 @@ public class G3Controller {
     @PostMapping("/start")
     @Operation(summary = "启动G3任务（兼容旧API）")
     public Result<SubmitJobResponse> start(@RequestParam String requirement) {
-        log.info("[G3 API] 旧API启动任务: requirement={}", truncate(requirement, 50));
+        UUID userId = getCurrentUserId();
+        UUID tenantId = getCurrentTenantId();
 
-        UUID jobId = orchestratorService.submitJob(requirement, null, null);
+        log.info("[G3 API] 旧API启动任务: requirement={}, userId={}, tenantId={}",
+                truncate(requirement, 50), userId, tenantId);
+
+        UUID jobId = orchestratorService.submitJob(requirement, userId, tenantId);
         return Result.success(new SubmitJobResponse(jobId.toString()));
     }
 
@@ -165,9 +278,33 @@ public class G3Controller {
      */
     @GetMapping(value = "/stream/{taskId}", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "日志流（兼容旧API）")
-    public Flux<G3LogEntry> streamLogs(@PathVariable String taskId) {
+    public Flux<ServerSentEvent<String>> streamLogs(@PathVariable String taskId, HttpServletResponse response) {
         log.info("[G3 API] 旧API日志流: taskId={}", taskId);
-        return orchestratorService.subscribeToLogs(UUID.fromString(taskId));
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Cache-Control", "no-cache, no-transform");
+        response.setHeader("Connection", "keep-alive");
+        response.setHeader("Content-Encoding", "identity");
+        UUID id = UUID.fromString(taskId);
+        Flux<ServerSentEvent<String>> openFlux = Flux.just(
+                ServerSentEvent.<String>builder("connected").event("open").build(),
+                ServerSentEvent.<String>builder("").comment(" ".repeat(2048)).build()
+        );
+        Flux<ServerSentEvent<String>> logFlux = orchestratorService.subscribeToLogs(id)
+                .map(entry -> {
+                    String eventName = "heartbeat".equalsIgnoreCase(entry.getLevel()) ? "heartbeat" : "log";
+                    try {
+                        return ServerSentEvent.<String>builder(objectMapper.writeValueAsString(entry))
+                                .event(eventName)
+                                .build();
+                    } catch (Exception e) {
+                        return ServerSentEvent.<String>builder("{\"level\":\"error\",\"message\":\"日志序列化失败\"}")
+                                .event("error")
+                                .build();
+                    }
+                })
+                .concatWith(Mono.just(ServerSentEvent.<String>builder("done").event("complete").build()));
+
+        return openFlux.concatWith(logFlux);
     }
 
     // ========== DTO 类 ==========
@@ -254,6 +391,33 @@ public class G3Controller {
     }
 
     @Data
+    public static class ArtifactContentResponse {
+        private String id;
+        private String filePath;
+        private String fileName;
+        private String generatedBy;
+        private int round;
+        private boolean hasErrors;
+        private String compilerOutput;
+        private String content;
+        private String createdAt;
+
+        public static ArtifactContentResponse fromEntity(G3ArtifactEntity artifact) {
+            ArtifactContentResponse resp = new ArtifactContentResponse();
+            resp.setId(artifact.getId().toString());
+            resp.setFilePath(artifact.getFilePath());
+            resp.setFileName(artifact.getFileName());
+            resp.setGeneratedBy(artifact.getGeneratedBy());
+            resp.setRound(artifact.getGenerationRound() != null ? artifact.getGenerationRound() : 0);
+            resp.setHasErrors(Boolean.TRUE.equals(artifact.getHasErrors()));
+            resp.setCompilerOutput(artifact.getCompilerOutput());
+            resp.setContent(artifact.getContent());
+            resp.setCreatedAt(artifact.getCreatedAt() != null ? artifact.getCreatedAt().toString() : null);
+            return resp;
+        }
+    }
+
+    @Data
     public static class ContractResponse {
         private final String openApiYaml;
         private final String dbSchemaSql;
@@ -281,5 +445,82 @@ public class G3Controller {
         if (text == null) return "";
         if (text.length() <= maxLength) return text;
         return text.substring(0, maxLength) + "...";
+    }
+
+    /**
+     * 从认证上下文获取当前用户ID
+     *
+     * @return 用户ID（如果用户已登录），否则返回 null
+     */
+    private UUID getCurrentUserId() {
+        try {
+            if (StpUtil.isLogin()) {
+                String userIdStr = StpUtil.getLoginIdAsString();
+                if (StringUtils.hasText(userIdStr)) {
+                    return UUID.fromString(userIdStr);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("获取当前用户ID失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * 从 TenantContextHolder 获取当前租户ID
+     *
+     * @return 租户ID（如果已设置），否则返回 null
+     */
+    private UUID getCurrentTenantId() {
+        try {
+            String tenantIdStr = TenantContextHolder.getTenantId();
+            if (StringUtils.hasText(tenantIdStr)) {
+                return UUID.fromString(tenantIdStr);
+            }
+        } catch (Exception e) {
+            log.debug("获取当前租户ID失败: {}", e.getMessage());
+        }
+        return null;
+    }
+
+    /**
+     * 验证当前用户是否有权访问指定任务
+     *
+     * 权限规则：
+     * 1. 用户可以访问自己创建的任务（userId 匹配）
+     * 2. 用户可以访问同一租户下的任务（tenantId 匹配）
+     * 3. 匿名任务（userId=null 且 tenantId=null）允许任何人访问
+     *
+     * @param job 任务实体
+     * @return 是否有权访问
+     */
+    private boolean hasJobAccess(G3JobEntity job) {
+        if (job == null) {
+            return false;
+        }
+
+        UUID currentUserId = getCurrentUserId();
+        UUID currentTenantId = getCurrentTenantId();
+        UUID jobUserId = job.getUserId();
+        UUID jobTenantId = job.getTenantId();
+
+        // 匿名任务：允许任何人访问（用于未登录的 Lab 测试场景）
+        if (jobUserId == null && jobTenantId == null) {
+            return true;
+        }
+
+        // 同一用户创建的任务
+        if (currentUserId != null && currentUserId.equals(jobUserId)) {
+            return true;
+        }
+
+        // 同一租户下的任务
+        if (currentTenantId != null && currentTenantId.equals(jobTenantId)) {
+            return true;
+        }
+
+        log.warn("[G3 API] 权限拒绝: currentUser={}, currentTenant={}, jobUser={}, jobTenant={}",
+                currentUserId, currentTenantId, jobUserId, jobTenantId);
+        return false;
     }
 }

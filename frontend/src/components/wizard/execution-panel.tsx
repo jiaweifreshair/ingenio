@@ -6,8 +6,11 @@
 
 import React, { useState, useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { AgentExecutionStatus, AgentState } from '@/types/wizard';
-// import { Button } from '@/components/ui/button';
+import { AgentExecutionStatus, AgentState, AgentType } from '@/types/wizard';
+import { G3ConsoleView } from '@/components/g3/g3-console-view';
+import { G3LogEntry } from '@/lib/g3/types';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
@@ -239,6 +242,55 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState('timeline');
   const [selectedAgent, setSelectedAgent] = useState<AgentExecutionStatus>();
+  const [viewMode, setViewMode] = useState<'standard' | 'g3'>('standard');
+
+  // G3 Logic Mapping
+  const activeRole = useMemo(() => {
+    const runningAgent = agents.find(a => a.status === AgentState.RUNNING);
+    if (!runningAgent) return null;
+    
+    switch(runningAgent.type) {
+        case AgentType.PLAN: return 'ARCHITECT';
+        case AgentType.EXECUTE: return 'PLAYER';
+        case AgentType.VALIDATE: return 'COACH';
+        default: return null;
+    }
+  }, [agents]);
+
+  const apiLogs = useMemo<G3LogEntry[]>(() => {
+    // Synthesize logs from agents
+    const logs: G3LogEntry[] = [];
+    
+    // Add initial system log
+    logs.push({
+        timestamp: Date.now(),
+        role: 'SYSTEM',
+        step: 'INIT',
+        content: isConnected ? '✅ G3 Engine Connected' : '⏳ Waiting for connection...',
+        level: isConnected ? 'SUCCESS' : 'INFO'
+    });
+
+    agents.forEach(agent => {
+        if (agent.status === AgentState.RUNNING || agent.status === AgentState.COMPLETED) {
+            let role: 'ARCHITECT' | 'PLAYER' | 'COACH' | 'SYSTEM' = 'SYSTEM';
+            if (agent.type === AgentType.PLAN) role = 'ARCHITECT';
+            if (agent.type === AgentType.EXECUTE) role = 'PLAYER';
+            if (agent.type === AgentType.VALIDATE) role = 'COACH';
+
+            if (agent.message) {
+                 logs.push({
+                    timestamp: agent.duration ? Date.now() - agent.duration : Date.now(), // Approximate
+                    role: role as G3LogEntry['role'],
+                    step: 'PROCESS',
+                    content: agent.message,
+                    level: 'INFO'
+                });
+            }
+        }
+    });
+
+    return logs;
+  }, [agents, isConnected]);
 
   const stats = useMemo(() => calculateStats(agents), [agents]);
   const hasRunningAgent = agents.some(agent => agent.status === AgentState.RUNNING);
@@ -296,6 +348,34 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
         </div>
       </div>
 
+      {/* View Mode Toggle */}
+      <div className="px-4 py-2 bg-muted/20 border-b flex items-center justify-end gap-2">
+         <Label htmlFor="view-mode" className="text-xs text-muted-foreground mr-2">可视化模式</Label>
+         <div className="flex items-center space-x-2">
+            <span className={cn("text-xs font-medium transition-colors", viewMode === 'standard' ? "text-primary" : "text-muted-foreground")}>标准</span>
+            <Switch 
+                id="view-mode" 
+                checked={viewMode === 'g3'} 
+                onCheckedChange={(checked) => setViewMode(checked ? 'g3' : 'standard')}
+            />
+            <span className={cn("text-xs font-medium transition-colors", viewMode === 'g3' ? "text-primary" : "text-muted-foreground")}>G3引擎</span>
+         </div>
+      </div>
+
+      {viewMode === 'g3' ? (
+        <div className="flex-1 p-4 bg-background overflow-hidden flex flex-col">
+            <G3ConsoleView 
+                logs={apiLogs}
+                activeRole={activeRole}
+                round={1} // Mock round for wizard flow
+                isRunning={stats.running > 0}
+                requirement=""
+                autoStart={true}
+                className="flex-1 h-full shadow-none border-0"
+            />
+        </div>
+      ) : (
+      <>
       {/* 错误提示 */}
       {error && (
         <div className="p-4">
@@ -575,6 +655,8 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
           </div>
         </Tabs>
       </div>
+      </>
+      )}
     </div>
   );
 };

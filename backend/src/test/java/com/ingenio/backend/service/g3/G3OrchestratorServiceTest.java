@@ -17,10 +17,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -78,6 +80,9 @@ class G3OrchestratorServiceTest {
 
         // 设置 maxRounds 配置
         ReflectionTestUtils.setField(orchestratorService, "maxRounds", 3);
+
+        // 单元测试环境没有 Spring 代理注入 self，这里手动补齐，避免 submitJob 触发 NPE
+        ReflectionTestUtils.setField(orchestratorService, "self", orchestratorService);
     }
 
     /**
@@ -123,6 +128,34 @@ class G3OrchestratorServiceTest {
         assertNotNull(result);
         assertEquals(testJobId, result.getId());
         assertEquals("创建一个用户管理系统", result.getRequirement());
+    }
+
+    /**
+     * 测试：订阅日志流时应先回放历史日志
+     *
+     * 背景：
+     * - SSE 订阅往往发生在 job 已开始执行之后（前端 submit 完再订阅）
+     * - 若历史日志未回放，用户会看到“Network 200 但页面无任何流式日志”
+     */
+    @Test
+    void subscribeToLogs_shouldReplayHistoryLogs() {
+        // GIVEN
+        List<G3LogEntry> history = List.of(
+                G3LogEntry.info(G3LogEntry.Role.PLAYER, "G3引擎启动"),
+                G3LogEntry.info(G3LogEntry.Role.ARCHITECT, "开始架构设计阶段...")
+        );
+        testJob.setLogs(new ArrayList<>(history));
+        when(jobMapper.selectById(testJobId)).thenReturn(testJob);
+
+        // WHEN
+        Flux<G3LogEntry> flux = orchestratorService.subscribeToLogs(testJobId);
+
+        // THEN：取前两条（历史日志），避免心跳导致测试阻塞
+        List<G3LogEntry> firstTwo = flux.take(2).collectList().block(Duration.ofSeconds(1));
+        assertNotNull(firstTwo);
+        assertEquals(2, firstTwo.size());
+        assertEquals("G3引擎启动", firstTwo.get(0).getMessage());
+        assertTrue(firstTwo.get(1).getMessage().contains("架构设计"));
     }
 
     /**

@@ -313,6 +313,36 @@ class IntentClassifierTest {
         assertEquals(RequirementIntent.DESIGN_FROM_SCRATCH, result.getIntent());
     }
 
+    @Test
+    @DisplayName("解析AI返回对象结构字段（避免LinkedHashMap强转String）")
+    void testParseJsonWithObjectFields() {
+        // Given: AI返回的字段不是纯字符串，而是对象结构（历史上会触发ClassCastException）
+        String userRequirement = "做一个在线教育平台";
+        mockAIResponse("""
+            {
+              "intent": { "code": "design" },
+              "confidence": "0.93",
+              "reasoning": { "text": "用户描述了功能需求，但没有参考网站" },
+              "referenceUrls": [{ "url": "https://example.com" }],
+              "extractedKeywords": [{ "keyword": "在线教育" }, { "keyword": "课程" }],
+              "suggestedNextAction": { "content": "使用SuperDesign生成7种设计风格预览" },
+              "warnings": [{ "message": "示例警告" }]
+            }
+            """);
+
+        // When
+        IntentClassificationResult result = intentClassifier.classifyIntent(userRequirement);
+
+        // Then
+        assertNotNull(result);
+        assertEquals(RequirementIntent.DESIGN_FROM_SCRATCH, result.getIntent());
+        assertEquals(0.93, result.getConfidence(), 0.01);
+        assertTrue(result.getReferenceUrls().contains("https://example.com"));
+        assertTrue(result.getExtractedKeywords().contains("在线教育"));
+        assertEquals("使用SuperDesign生成7种设计风格预览", result.getSuggestedNextAction());
+        assertFalse(result.getWarnings().isEmpty());
+    }
+
     // ==================== 错误处理和边界情况测试 ====================
 
     @Test

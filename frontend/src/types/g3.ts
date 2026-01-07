@@ -14,8 +14,9 @@
  * - COACH: 红方，负责代码修复
  * - EXECUTOR: 裁判，负责编译验证
  * - ARCHITECT: 架构师，负责契约设计
+ * - SYSTEM: 系统消息（心跳、连接状态等）
  */
-export type G3Role = 'PLAYER' | 'COACH' | 'EXECUTOR' | 'ARCHITECT';
+export type G3Role = 'PLAYER' | 'COACH' | 'EXECUTOR' | 'ARCHITECT' | 'SYSTEM';
 
 /**
  * G3 任务状态
@@ -41,39 +42,37 @@ export interface G3LogEntry {
   /** 日志消息 */
   message: string;
   /** 日志级别 */
-  level: 'info' | 'warn' | 'error' | 'success';
+  level: 'info' | 'warn' | 'error' | 'success' | 'heartbeat';
 }
 
 /**
  * G3 产物（基础信息）
  */
-export interface G3Artifact {
+export interface G3ArtifactSummary {
   /** 产物ID */
-  id?: string;
-  /** 代码内容 */
-  code: string;
-  /** 文件名 */
-  filename: string;
-  /** 语言类型 */
-  language: 'typescript' | 'java' | 'python';
-  /** 是否有效 */
-  isValid: boolean;
+  id: string;
+  /** 文件路径（相对路径） */
+  filePath: string;
+  /** 生成者 */
+  generatedBy: string;
+  /** 生成轮次 */
+  round: number;
+  /** 是否标记为错误 */
+  hasErrors: boolean;
+  /** 创建时间（ISO 字符串，可为空） */
+  createdAt: string | null;
 }
 
 /**
- * G3 产物详情（包含完整内容）
+ * G3 产物内容（包含完整文件内容）
  */
-export interface G3ArtifactDetail extends G3Artifact {
-  /** 产物类型 */
-  type: 'SOURCE' | 'TEST' | 'CONFIG' | 'DOC';
-  /** 创建时间 */
-  createdAt: string;
-  /** 更新时间 */
-  updatedAt: string;
-  /** 版本号 */
-  version: number;
-  /** 关联的修复轮次 */
-  round: number;
+export interface G3ArtifactContent extends G3ArtifactSummary {
+  /** 文件名 */
+  fileName: string;
+  /** 编译器输出（可为空） */
+  compilerOutput: string | null;
+  /** 文件内容 */
+  content: string;
 }
 
 /**
@@ -95,6 +94,28 @@ export interface G3Contract {
 }
 
 /**
+ * G3 任务详情（完整实体）
+ */
+export interface G3Job {
+  id: string;
+  requirement: string;
+  status: G3JobStatus;
+  currentRound: number;
+  maxRounds: number;
+  contractLocked: boolean;
+  logs: G3LogEntry[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  
+  // Blueprint 相关
+  blueprintSpec?: Record<string, unknown>;
+  matchedTemplateId?: string;
+  blueprintModeEnabled?: boolean;
+  templateContext?: string;
+}
+
+/**
  * 提交 G3 任务请求
  */
 export interface SubmitG3JobRequest {
@@ -104,6 +125,10 @@ export interface SubmitG3JobRequest {
   maxRounds?: number;
   /** 是否启用详细日志（可选，默认 true） */
   verbose?: boolean;
+  
+  // 可选：直接关联模板（如果是从模板创建）
+  matchedTemplateId?: string;
+  blueprintSpec?: Record<string, unknown>;
 }
 
 /**

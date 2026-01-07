@@ -9,6 +9,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import NextImage from "next/image";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -125,7 +126,7 @@ export function TopNav(): React.ReactElement {
         {/* Logo和品牌名 */}
         <div className="mr-8 flex">
           <Link href="/" className="flex items-center space-x-2">
-            <div className="h-6 w-6 rounded-md bg-primary" />
+            <NextImage src="/logo.png" alt="Ingenio Logo" width={40} height={40} className="h-10 w-10" />
             <span className="hidden font-semibold sm:inline-block text-foreground tracking-tight">Ingenio 妙构</span>
           </Link>
         </div>

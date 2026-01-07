@@ -215,7 +215,7 @@ class G3SandboxServiceTest {
         mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(jsonPath("$.sandboxId").value(sandboxId))
-                .andExpect(jsonPath("$.command").value("cd /home/user/app && mvn compile -q 2>&1"))
+                .andExpect(jsonPath("$.command").value("cd /home/user/app && mvn compile -e -B --no-transfer-progress 2>&1"))
                 .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
 
         // WHEN
@@ -335,7 +335,7 @@ class G3SandboxServiceTest {
         assertTrue(result.getPassed());
         assertEquals(testJobId, result.getJobId());
         assertEquals(0, result.getRound());
-        assertEquals("mvn compile -q", result.getCommand());
+        assertEquals("mvn compile -e -B", result.getCommand());
         assertEquals(0, result.getExitCode());
 
         // 验证沙箱已创建并关联到Job

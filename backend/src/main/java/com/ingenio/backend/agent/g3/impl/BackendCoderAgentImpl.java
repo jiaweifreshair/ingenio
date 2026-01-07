@@ -293,6 +293,131 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         """;
 
     /**
+     * 代码生成提示词模板 - DTO类
+     * 用于生成请求/响应DTO，解决编译时缺少DTO类的问题
+     */
+    private static final String DTO_PROMPT_TEMPLATE = """
+        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和实体类生成DTO类。
+
+        %s
+
+        ## OpenAPI契约
+        ```yaml
+        %s
+        ```
+
+        ## 实体类定义
+        ```java
+        %s
+        ```
+
+        ## 核心要求（Critical）
+
+        ### 1. DTO类型（必须生成）
+        为每个实体生成以下DTO：
+        - **EntityDTO**：响应DTO，用于返回给前端
+        - **EntityCreateRequest**：创建请求DTO
+        - **EntityUpdateRequest**：更新请求DTO
+        - **EntityQueryRequest**：查询请求DTO（可选）
+
+        ### 2. 注解规范（Spring Boot 3 + Jakarta EE）
+        ⚠️ **重要**：必须使用 `jakarta.validation` 包，不要使用 `javax.validation`！
+
+        正确导入：
+        ```java
+        import jakarta.validation.constraints.NotBlank;
+        import jakarta.validation.constraints.NotNull;
+        import jakarta.validation.constraints.Size;
+        import jakarta.validation.constraints.Email;
+        ```
+
+        ### 3. Lombok注解
+        - @Data, @Builder, @NoArgsConstructor, @AllArgsConstructor
+
+        ### 4. 示例参考
+
+        // === 文件: UserDTO.java ===
+        package com.ingenio.backend.dto.generated;
+
+        import lombok.AllArgsConstructor;
+        import lombok.Builder;
+        import lombok.Data;
+        import lombok.NoArgsConstructor;
+
+        import java.time.Instant;
+        import java.util.UUID;
+
+        /**
+         * 用户响应DTO
+         */
+        @Data
+        @Builder
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public class UserDTO {
+            private UUID id;
+            private String username;
+            private String email;
+            private Instant createdAt;
+        }
+
+        // === 文件: UserCreateRequest.java ===
+        package com.ingenio.backend.dto.generated;
+
+        import jakarta.validation.constraints.Email;
+        import jakarta.validation.constraints.NotBlank;
+        import jakarta.validation.constraints.Size;
+        import lombok.AllArgsConstructor;
+        import lombok.Builder;
+        import lombok.Data;
+        import lombok.NoArgsConstructor;
+
+        /**
+         * 用户创建请求DTO
+         */
+        @Data
+        @Builder
+        @NoArgsConstructor
+        @AllArgsConstructor
+        public class UserCreateRequest {
+            @NotBlank(message = "用户名不能为空")
+            @Size(min = 2, max = 50, message = "用户名长度必须在2-50之间")
+            private String username;
+
+            @NotBlank(message = "邮箱不能为空")
+            @Email(message = "邮箱格式不正确")
+            private String email;
+
+            @NotBlank(message = "密码不能为空")
+            @Size(min = 6, max = 100, message = "密码长度必须在6-100之间")
+            private String password;
+        }
+
+        ## 输出格式要求
+
+        ⚠️ **重要**：**不要**使用```java标记包裹代码。
+
+        使用以下格式分隔多个文件：
+        // === 文件: EntityDTO.java ===
+        package com.ingenio.backend.dto.generated;
+        // 代码内容
+
+        // === 文件: EntityCreateRequest.java ===
+        package com.ingenio.backend.dto.generated;
+        // 代码内容
+
+        ## 质量检查清单
+        - [ ] 使用 jakarta.validation（不是 javax.validation）
+        - [ ] 所有必填字段有 @NotBlank 或 @NotNull 注解
+        - [ ] 字符串字段有 @Size 注解
+        - [ ] 邮箱字段有 @Email 注解
+        - [ ] 输出格式正确（// === 文件: xxx ===）
+        - [ ] 无```java标记包裹
+
+        现在请根据契约和实体类生成所有必要的DTO类。
+        """;
+
+    /**
      * 代码生成提示词模板 - Service层
      */
     private static final String SERVICE_PROMPT_TEMPLATE = """
@@ -310,6 +435,11 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         %s
         ```
 
+        ## DTO类
+        ```java
+        %s
+        ```
+
         ## 输出要求
         1. 创建Service接口和ServiceImpl实现类
         2. 使用 @Service 和 @Transactional 注解
@@ -318,10 +448,14 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         5. 使用构造器注入（@RequiredArgsConstructor）
         6. 添加完整的中文JavaDoc注释
         7. 包名使用 com.ingenio.backend.service.generated
+        8. ⚠️ **重要**：导入DTO时使用 com.ingenio.backend.dto.generated 包
+        9. ⚠️ **重要**：密码加密使用简单的哈希方法（不使用PasswordEncoder），或直接存储（由Controller层处理）
 
         ## 输出格式
         请生成Service接口和实现类，使用以下格式：
-        ```java
+
+        ⚠️ **重要**：**不要**使用```java标记包裹代码。
+
         // === 文件: IEntityNameService.java ===
         package com.ingenio.backend.service.generated;
         // 接口代码
@@ -329,7 +463,6 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         // === 文件: EntityNameServiceImpl.java ===
         package com.ingenio.backend.service.generated;
         // 实现类代码
-        ```
         """;
 
     /**
@@ -350,6 +483,11 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         %s
         ```
 
+        ## DTO类
+        ```java
+        %s
+        ```
+
         ## 输出要求
         1. 使用 @RestController 和 @RequestMapping 注解
         2. 严格按照OpenAPI契约定义的路径和方法
@@ -359,14 +497,24 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         6. 使用构造器注入（@RequiredArgsConstructor）
         7. 添加完整的中文JavaDoc注释
         8. 包名使用 com.ingenio.backend.controller.generated
+        9. ⚠️ **重要**：导入DTO时使用 com.ingenio.backend.dto.generated 包
+        10. ⚠️ **重要**：使用 jakarta.validation（不是 javax.validation）
+
+        ## 示例导入（Spring Boot 3 + Jakarta EE）
+        ```java
+        import jakarta.validation.Valid;
+        import com.ingenio.backend.dto.generated.UserDTO;
+        import com.ingenio.backend.dto.generated.UserCreateRequest;
+        ```
 
         ## 输出格式
         请生成Controller类，使用以下格式：
-        ```java
+
+        ⚠️ **重要**：**不要**使用```java标记包裹代码。
+
         // === 文件: EntityNameController.java ===
         package com.ingenio.backend.controller.generated;
         // 代码内容
-        ```
         """;
 
     public BackendCoderAgentImpl(
@@ -445,23 +593,30 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             artifacts.addAll(mapperArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "Mapper接口生成完成，共 " + mapperArtifacts.size() + " 个文件"));
 
-            // 3. 生成Service层
+            // 3. 生成DTO类（解决编译时缺少DTO类的问题）
+            logConsumer.accept(G3LogEntry.info(getRole(), "正在生成DTO类..."));
+            List<G3ArtifactEntity> dtoArtifacts = generateDTOs(job, contractYaml, entityCode, aiProvider, generationRound, logConsumer);
+            artifacts.addAll(dtoArtifacts);
+            logConsumer.accept(G3LogEntry.success(getRole(), "DTO类生成完成，共 " + dtoArtifacts.size() + " 个文件"));
+            String dtoCode = combineArtifactsContent(dtoArtifacts);
+
+            // 4. 生成Service层
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成Service层..."));
             String mapperCode = combineArtifactsContent(mapperArtifacts);
-            List<G3ArtifactEntity> serviceArtifacts = generateServices(job, contractYaml, mapperCode, aiProvider, generationRound, logConsumer);
+            List<G3ArtifactEntity> serviceArtifacts = generateServices(job, contractYaml, mapperCode, dtoCode, aiProvider, generationRound, logConsumer);
             artifacts.addAll(serviceArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "Service层生成完成，共 " + serviceArtifacts.size() + " 个文件"));
 
-            // 4. 生成Controller层
+            // 5. 生成Controller层
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成Controller层..."));
             String serviceCode = combineArtifactsContent(serviceArtifacts.stream()
                     .filter(a -> a.getFilePath().contains("Service.java") && !a.getFilePath().contains("Impl"))
                     .toList());
-            List<G3ArtifactEntity> controllerArtifacts = generateControllers(job, contractYaml, serviceCode, aiProvider, generationRound, logConsumer);
+            List<G3ArtifactEntity> controllerArtifacts = generateControllers(job, contractYaml, serviceCode, dtoCode, aiProvider, generationRound, logConsumer);
             artifacts.addAll(controllerArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "Controller层生成完成，共 " + controllerArtifacts.size() + " 个文件"));
 
-            // 5. 生成pom.xml依赖补充
+            // 6. 生成pom.xml依赖补充
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成项目配置..."));
             G3ArtifactEntity pomArtifact = generatePomFragment(job, generationRound);
             artifacts.add(pomArtifact);
@@ -529,12 +684,39 @@ public class BackendCoderAgentImpl implements ICoderAgent {
     }
 
     /**
+     * 生成DTO类
+     * 解决编译时缺少DTO类（如UserDTO、UserCreateRequest等）的问题
+     */
+    private List<G3ArtifactEntity> generateDTOs(
+            G3JobEntity job,
+            String contractYaml,
+            String entityCode,
+            AIProvider aiProvider,
+            int generationRound,
+            Consumer<G3LogEntry> logConsumer) {
+
+        String blueprintConstraint = shouldEnableBlueprint(job)
+                ? blueprintPromptBuilder.buildEntityConstraint(job.getBlueprintSpec())
+                : "";
+        String prompt = String.format(DTO_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, entityCode);
+        AIProvider.AIResponse response = aiProvider.generate(prompt,
+                AIProvider.AIRequest.builder()
+                        .temperature(0.2)
+                        .maxTokens(8000)
+                        .build());
+
+        return parseJavaFiles(response.content(), job.getId(), generationRound,
+                "src/main/java/com/ingenio/backend/dto/generated/");
+    }
+
+    /**
      * 生成Service层
      */
     private List<G3ArtifactEntity> generateServices(
             G3JobEntity job,
             String contractYaml,
             String mapperCode,
+            String dtoCode,
             AIProvider aiProvider,
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
@@ -542,7 +724,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         String blueprintConstraint = shouldEnableBlueprint(job)
                 ? blueprintPromptBuilder.buildServiceConstraint(job.getBlueprintSpec())
                 : "";
-        String prompt = String.format(SERVICE_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, mapperCode);
+        String prompt = String.format(SERVICE_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, mapperCode, dtoCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -560,6 +742,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             G3JobEntity job,
             String contractYaml,
             String serviceCode,
+            String dtoCode,
             AIProvider aiProvider,
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
@@ -567,7 +750,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         String blueprintConstraint = shouldEnableBlueprint(job)
                 ? blueprintPromptBuilder.buildServiceConstraint(job.getBlueprintSpec())
                 : "";
-        String prompt = String.format(CONTROLLER_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, serviceCode);
+        String prompt = String.format(CONTROLLER_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, serviceCode, dtoCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -580,6 +763,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
 
     /**
      * 生成pom.xml依赖片段
+     * 包含所有G3生成代码所需的依赖，避免编译错误
      */
     private G3ArtifactEntity generatePomFragment(G3JobEntity job, int generationRound) {
         String pomFragment = """
@@ -606,10 +790,22 @@ public class BackendCoderAgentImpl implements ICoderAgent {
                         <optional>true</optional>
                     </dependency>
 
-                    <!-- Validation -->
+                    <!-- Validation (Jakarta EE - Spring Boot 3) -->
                     <dependency>
                         <groupId>org.springframework.boot</groupId>
                         <artifactId>spring-boot-starter-validation</artifactId>
+                    </dependency>
+
+                    <!-- Spring Security (for PasswordEncoder) -->
+                    <dependency>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-starter-security</artifactId>
+                    </dependency>
+
+                    <!-- Spring Web -->
+                    <dependency>
+                        <groupId>org.springframework.boot</groupId>
+                        <artifactId>spring-boot-starter-web</artifactId>
                     </dependency>
                 </dependencies>
                 """;

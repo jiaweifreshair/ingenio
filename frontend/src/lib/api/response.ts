@@ -49,6 +49,21 @@ function isRecord(value: unknown): value is AnyRecord {
 }
 
 /**
+ * 将可能的“消息/错误”字段统一转成可展示字符串
+ *
+ * 兼容场景：
+ * - 后端/代理层返回 message/error 为 string
+ * - 少量实现返回为 number/boolean
+ * - 异常场景返回为对象（如 { message: "..." }）
+ */
+function coerceDisplayText(value: unknown): string | undefined {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (isRecord(value) && typeof value.message === 'string') return value.message;
+  return undefined;
+}
+
+/**
  * 将不同形态的API响应统一为 NormalizedApiResponse<T>
  *
  * 规则：
@@ -84,11 +99,10 @@ export function normalizeApiResponse<T>(raw: unknown): NormalizedApiResponse<T> 
       typeof codeValue === 'string' || typeof codeValue === 'number'
         ? codeValue
         : undefined,
-    message: typeof messageValue === 'string' ? messageValue : undefined,
-    error: typeof errorValue === 'string' ? errorValue : undefined,
+    message: coerceDisplayText(messageValue),
+    error: coerceDisplayText(errorValue),
     data: dataValue as T | undefined,
     timestamp: typeof timestampValue === 'number' ? timestampValue : undefined,
     metadata: isRecord(metadataValue) ? metadataValue : undefined,
   };
 }
-

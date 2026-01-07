@@ -48,6 +48,17 @@ describe('openlovable-stream-accumulator', () => {
     expect(getOpenLovableCodeForApply(s2)).toBe(streamed);
   });
 
+  it('complete.generatedCode 为空时不应锁定状态，后续 stream 仍可继续累积', () => {
+    const s0 = getInitialOpenLovableAccumulationState();
+    const s1 = applyOpenLovableSseMessage(s0, { type: 'complete', generatedCode: '' });
+    const next = '<file path="src/App.jsx">NEXT</file>';
+    const s2 = applyOpenLovableSseMessage(s1, { type: 'stream', text: next });
+
+    expect(s1.finalCode).toBe(null);
+    expect(s2.streamedText).toBe(next);
+    expect(getOpenLovableCodeForApply(s2)).toBe(next);
+  });
+
   it('complete.text/content 含 file 标签时可作为最终输出（generatedCode 为空的兼容兜底）', () => {
     const s0 = getInitialOpenLovableAccumulationState();
     const finalCode = '<file path="src/main.jsx">MAIN</file>';

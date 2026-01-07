@@ -6,7 +6,10 @@ import cn.dev33.satoken.exception.NotPermissionException;
 import cn.dev33.satoken.exception.NotRoleException;
 import com.ingenio.backend.common.response.Result;
 import lombok.extern.slf4j.Slf4j;
+import org.mybatis.spring.MyBatisSystemException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -14,6 +17,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -186,6 +190,65 @@ public class GlobalExceptionHandler {
     public Result<Object> handleIllegalArgumentException(IllegalArgumentException e) {
         log.warn("非法参数异常: {}", e.getMessage());
         return Result.error(ErrorCode.PARAM_ERROR.getCode(), e.getMessage());
+    }
+
+    /**
+     * 处理数据库连接获取失败异常
+     * 当连接池耗尽或数据库暂时不可用时抛出
+     *
+     * 返回JSON格式的友好错误信息，避免前端收到纯文本"Internal Server Error"
+     */
+    @ExceptionHandler(CannotGetJdbcConnectionException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public Result<Object> handleCannotGetJdbcConnectionException(CannotGetJdbcConnectionException e) {
+        log.error("数据库连接获取失败: {}", e.getMessage());
+        return Result.error("503", "服务繁忙，请稍后重试");
+    }
+
+    /**
+     * 处理MyBatis系统异常
+     * 通常由数据库连接问题或SQL执行错误导致
+     *
+     * 返回JSON格式的友好错误信息，避免前端收到纯文本"Internal Server Error"
+     */
+    @ExceptionHandler(MyBatisSystemException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public Result<Object> handleMyBatisSystemException(MyBatisSystemException e) {
+        Throwable cause = e.getCause();
+
+        // 检查是否是连接问题
+        if (cause instanceof CannotGetJdbcConnectionException ||
+            (cause != null && cause.getMessage() != null &&
+             cause.getMessage().contains("Failed to obtain JDBC Connection"))) {
+            log.error("MyBatis数据库连接失败: {}", e.getMessage());
+            return Result.error("503", "服务繁忙，请稍后重试");
+        }
+
+        log.error("MyBatis系统异常: {}", e.getMessage(), e);
+        return Result.error("500", "数据访问异常，请稍后重试");
+    }
+
+    /**
+     * 处理数据访问资源失败异常
+     * 包括连接池耗尽、数据库宕机等场景
+     */
+    @ExceptionHandler(DataAccessResourceFailureException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public Result<Object> handleDataAccessResourceFailureException(DataAccessResourceFailureException e) {
+        log.error("数据访问资源失败: {}", e.getMessage());
+        return Result.error("503", "服务繁忙，请稍后重试");
+    }
+
+    /**
+     * 处理SQL异常
+     * 包括连接超时、查询超时等数据库相关错误
+     */
+    @ExceptionHandler(SQLException.class)
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    public Result<Object> handleSQLException(SQLException e) {
+        log.error("SQL异常: SQLState={}, ErrorCode={}, Message={}",
+            e.getSQLState(), e.getErrorCode(), e.getMessage());
+        return Result.error("503", "数据库服务暂时不可用，请稍后重试");
     }
 
     /**
