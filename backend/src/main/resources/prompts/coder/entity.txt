@@ -1,0 +1,227 @@
+你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下数据库Schema生成MyBatis-Plus实体类。
+
+%s
+
+## 数据库Schema
+```sql
+%s
+```
+
+## 核心要求（Critical）
+
+### 1. UUID主键处理（⚠️ 重要）
+**PostgreSQL的DEFAULT gen_random_uuid()不生效！必须在Java代码中显式生成UUID。**
+
+正确做法：
+```java
+@TableId(value = "id", type = IdType.ASSIGN_UUID)
+@TableField(typeHandler = UUIDv8TypeHandler.class)
+private UUID id;
+```
+
+### 2. 基础注解
+- @Data, @Builder, @NoArgsConstructor, @AllArgsConstructor
+- @TableName(value = "表名", autoResultMap = true)
+- @TableField 用于字段映射
+
+### 3. 字段类型映射
+
+| PostgreSQL类型 | Java类型 | MyBatis-Plus注解 |
+|--------------|----------|----------------|
+| UUID | java.util.UUID | @TableField(typeHandler = UUIDv8TypeHandler.class) |
+| VARCHAR | String | @TableField("column_name") |
+| TEXT | String | @TableField("column_name") |
+| TIMESTAMP | java.time.Instant | @TableField("created_at") |
+| JSONB | String | @TableField("metadata") |
+| BOOLEAN | Boolean | @TableField("is_active") |
+
+### 4. 特殊字段处理
+
+**枚举字段**：定义内部枚举类
+```java
+@TableField("status")
+private String status;
+
+public enum Status {
+    PENDING("PENDING", "待处理"),
+    COMPLETED("COMPLETED", "已完成");
+
+    private final String value;
+    private final String description;
+
+    Status(String value, String description) {
+        this.value = value;
+        this.description = description;
+    }
+}
+```
+
+**JSONB字段**：使用String存储
+```java
+@TableField("metadata")
+private String metadata;  // 存储JSON字符串
+```
+
+## 输出格式要求
+
+⚠️ **重要**：**不要**使用```java标记包裹代码。
+
+使用以下格式分隔多个文件：
+// === 文件: EntityName.java ===
+package com.ingenio.backend.entity.generated;
+// 代码内容
+
+// === 文件: AnotherEntity.java ===
+package com.ingenio.backend.entity.generated;
+// 代码内容
+
+## 示例参考（Task实体类）
+
+// === 文件: TaskEntity.java ===
+package com.ingenio.backend.entity.generated;
+
+import com.baomidou.mybatisplus.annotation.*;
+import com.ingenio.backend.config.UUIDv8TypeHandler;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * 待办事项实体类
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@TableName(value = "tasks", autoResultMap = true)
+public class TaskEntity {
+
+    /**
+     * 主键ID
+     */
+    @TableId(value = "id", type = IdType.ASSIGN_UUID)
+    @TableField(typeHandler = UUIDv8TypeHandler.class)
+    private UUID id;
+
+    /**
+     * 标题
+     */
+    @TableField("title")
+    private String title;
+
+    /**
+     * 状态
+     */
+    @TableField("status")
+    private String status;
+
+    /**
+     * 优先级
+     */
+    @TableField("priority")
+    private String priority;
+
+    /**
+     * 创建时间
+     */
+    @TableField(value = "created_at", fill = FieldFill.INSERT)
+    private Instant createdAt;
+
+    /**
+     * 更新时间
+     */
+    @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
+    private Instant updatedAt;
+
+    /**
+     * 状态枚举
+     */
+    public enum Status {
+        PENDING("PENDING", "待处理"),
+        COMPLETED("COMPLETED", "已完成");
+
+        private final String value;
+        private final String description;
+
+        Status(String value, String description) {
+            this.value = value;
+            this.description = description;
+        }
+
+        public String getValue() {
+            return value;
+        }
+    }
+}
+
+## 自检要求（仅用于你自己检查，不要输出）
+- UUID字段使用UUIDv8TypeHandler
+- 所有字段都有@TableField注解
+- 时间字段使用Instant类型
+- 输出仅包含文件内容（不要追加说明/清单/符号），且不要包含```标记
+
+---
+
+## 负面示例（禁止生成以下代码）
+
+### ❌ 禁止使用 JPA 注解
+```java
+// ❌ 错误 - 工程使用 MyBatis-Plus，不支持 JPA
+import javax.persistence.*;
+import jakarta.persistence.*;
+
+@Entity
+@Table(name = "users")
+public class UserEntity {
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
+}
+```
+
+```java
+// ✅ 正确 - 使用 MyBatis-Plus 注解
+import com.baomidou.mybatisplus.annotation.*;
+
+@TableName(value = "users", autoResultMap = true)
+public class UserEntity {
+    @TableId(value = "id", type = IdType.ASSIGN_UUID)
+    @TableField(typeHandler = UUIDv8TypeHandler.class)
+    private UUID id;
+}
+```
+
+### ❌ 禁止遗漏 UUID TypeHandler
+```java
+// ❌ 错误 - UUID 字段未配置 TypeHandler 会导致查询失败
+@TableId(value = "id", type = IdType.ASSIGN_UUID)
+private UUID id;  // 缺少 TypeHandler！
+```
+
+```java
+// ✅ 正确 - 必须配置 UUIDv8TypeHandler
+@TableId(value = "id", type = IdType.ASSIGN_UUID)
+@TableField(typeHandler = UUIDv8TypeHandler.class)
+private UUID id;
+```
+
+### ❌ 禁止使用 Date 类型
+```java
+// ❌ 错误 - 避免使用旧版日期 API
+import java.util.Date;
+private Date createdAt;
+```
+
+```java
+// ✅ 正确 - 使用 java.time API
+import java.time.Instant;
+import java.time.LocalDateTime;
+private Instant createdAt;
+```
+
+现在请根据Schema生成实体类。
+

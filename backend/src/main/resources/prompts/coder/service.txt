@@ -1,0 +1,152 @@
+你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和Mapper接口生成Service层代码。
+
+%s
+
+## OpenAPI契约
+```yaml
+%s
+```
+
+5. 方法实现：
+    - 必须注入 Mapper 和 DTO Converter
+    - 实现业务逻辑，包含参数校验
+    - 所有方法必须捕获异常并记录日志 (Slf4j)
+    - 返回类型必须与 Mapper/Entity 严格一致（特别注意 ID 类型：Mapper 是 Integer 则 Service 也是 Integer；Mapper 是 Long 则 Service 也是 Long，严禁自动转换导致编译错误）
+    - 确保实现类 (@Service) 实现了接口的所有方法
+    - 方法签名必须与 Interface 完全匹配（包括泛型）
+    - 优先使用 MyBatis-Plus 的 IService 方法（如 save, updateById, getById, page 等）注解
+
+## Mapper接口
+```java
+%s
+```
+
+## DTO类
+```java
+%s
+```
+
+## 输出要求
+1. 创建Service接口和ServiceImpl实现类
+2. 使用 @Service 和 @Transactional 注解
+3. 实现CRUD基础方法
+4. 根据API契约实现业务方法
+5. 使用构造器注入（@RequiredArgsConstructor）
+6. 添加完整的中文JavaDoc注释
+7. 包名使用 com.ingenio.backend.service.generated
+8. ⚠️ **重要**：导入DTO时使用 com.ingenio.backend.dto.generated 包
+9. ⚠️ **重要**：密码加密使用简单的哈希方法（不使用PasswordEncoder），或直接存储（由Controller层处理）
+10. ⚠️ **重要**：分页必须使用 MyBatis-Plus 的 Page/IPage，禁止使用 org.springframework.data.domain.*
+
+## 输出格式
+请生成Service接口和实现类，使用以下格式：
+
+⚠️ **重要**：**不要**使用```java标记包裹代码。
+
+// === 文件: IEntityNameService.java ===
+package com.ingenio.backend.service.generated;
+// 接口代码
+
+// === 文件: EntityNameServiceImpl.java ===
+package com.ingenio.backend.service.generated;
+// 实现类代码
+
+---
+
+## 负面示例（禁止生成以下代码）
+
+### ❌ 禁止使用 Spring Data 分页
+```java
+// ❌ 错误 - 工程无 Spring Data 依赖
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+
+public Page<UserDTO> findAll(int page, int size) {
+    List<UserDTO> list = ...;
+    return new PageImpl<>(list, PageRequest.of(page, size), total);  // 编译失败！
+}
+```
+
+```java
+// ✅ 正确 - 使用 MyBatis-Plus 分页
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+
+public IPage<UserDTO> findAll(int page, int size) {
+    Page<UserEntity> entityPage = new Page<>(page, size);
+    IPage<UserEntity> result = userMapper.selectPage(entityPage, null);
+    Page<UserDTO> dtoPage = new Page<>(result.getCurrent(), result.getSize(), result.getTotal());
+    dtoPage.setRecords(convertToDTO(result.getRecords()));
+    return dtoPage;
+}
+```
+
+### ❌ 禁止使用 MapStruct
+```java
+// ❌ 错误 - 工程无 MapStruct 依赖
+import org.mapstruct.Mapper;
+@Mapper(componentModel = "spring")
+public interface UserConverter { }
+```
+
+```java
+// ✅ 正确 - 使用 BeanUtils 手动转换
+import org.springframework.beans.BeanUtils;
+
+private UserDTO toDTO(UserEntity entity) {
+    if (entity == null) return null;
+    UserDTO dto = new UserDTO();
+    BeanUtils.copyProperties(entity, dto);
+    return dto;
+}
+```
+
+### ❌ 禁止方法签名与接口不一致
+```java
+// ❌ 错误 - Impl 返回类型与 Interface 不一致
+// Interface 定义: IPage<UserDTO> findUsers(Page<UserEntity> page);
+// Impl 错误写法:
+@Override
+public Page<UserDTO> findUsers(Page<UserEntity> page) { ... }  // 返回类型不匹配！
+```
+
+```java
+// ✅ 正确 - 必须完全匹配接口签名
+// Interface 定义: IPage<UserDTO> findUsers(Page<UserEntity> page);
+@Override
+public IPage<UserDTO> findUsers(Page<UserEntity> page) { ... }  // 完全匹配
+```
+
+### ❌ 禁止 ID 类型不一致
+```java
+// ❌ 错误 - Mapper 使用 Integer，Service 使用 Long
+// Mapper 定义: UserEntity selectById(Integer id);
+public UserDTO getById(Long id) {
+    return toDTO(userMapper.selectById(id));  // 类型不匹配，编译失败！
+}
+```
+
+```java
+// ✅ 正确 - ID 类型必须与 Mapper/Entity 严格一致
+// Mapper 定义: UserEntity selectById(Integer id);
+public UserDTO getById(Integer id) {
+    return toDTO(userMapper.selectById(id));  // 类型一致
+}
+```
+
+### ❌ 禁止引用未定义的 DTO
+```java
+// ❌ 错误 - 引用不存在的 DTO 类
+import com.ingenio.backend.dto.generated.UserQueryRequest;  // 如果未生成则失败
+import com.ingenio.backend.dto.generated.UserPageResponse;  // 如果未生成则失败
+```
+
+```java
+// ✅ 正确 - 仅使用已生成的 DTO 类
+import com.ingenio.backend.dto.generated.UserDTO;  // 确认已生成
+import com.ingenio.backend.dto.generated.UserCreateRequest;  // 确认已生成
+```
+
+现在请根据契约和Mapper生成Service层代码。
+

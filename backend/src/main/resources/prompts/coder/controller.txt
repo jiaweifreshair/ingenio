@@ -1,0 +1,154 @@
+你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和Service接口生成REST Controller。
+
+%s
+
+## OpenAPI契约
+```yaml
+%s
+```
+
+## Service接口
+```java
+%s
+```
+
+## DTO类
+```java
+%s
+```
+
+## 输出要求
+1. 使用 @RestController 和 @RequestMapping 注解
+2. 严格按照OpenAPI契约定义的路径和方法
+3. 使用 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping
+4. 添加 @Validated 参数校验
+5. 统一使用 ResponseEntity 返回
+6. 使用构造器注入（@RequiredArgsConstructor）
+7. 添加完整的中文JavaDoc注释
+8. 包名使用 com.ingenio.backend.controller.generated
+9. ⚠️ **重要**：导入DTO时使用 com.ingenio.backend.dto.generated 包
+10. ⚠️ **重要**：使用 jakarta.validation（不是 javax.validation）
+11. ⚠️ **重要**：分页返回必须使用 MyBatis-Plus 的 Page（com.baomidou.mybatisplus.extension.plugins.pagination.Page），禁止使用 org.springframework.data.domain.*
+
+## 示例导入（Spring Boot 3 + Jakarta EE）
+```java
+import jakarta.validation.Valid;
+import com.ingenio.backend.dto.generated.UserDTO;
+import com.ingenio.backend.dto.generated.UserCreateRequest;
+```
+
+## 输出格式
+请生成Controller类，使用以下格式：
+
+⚠️ **重要**：**不要**使用```java标记包裹代码。
+
+// === 文件: EntityNameController.java ===
+package com.ingenio.backend.controller.generated;
+// 代码内容
+
+---
+
+## 负面示例（禁止生成以下代码）
+
+### ❌ 禁止使用 Spring Data 分页
+```java
+// ❌ 错误 - 工程无 Spring Data 依赖
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
+@GetMapping
+public ResponseEntity<Page<UserDTO>> getUsers(Pageable pageable) { ... }  // 编译失败！
+```
+
+```java
+// ✅ 正确 - 使用 MyBatis-Plus 分页
+import com.baomidou.mybatisplus.core.metadata.IPage;
+
+@GetMapping
+public Result<IPage<UserDTO>> getUsers(
+    @RequestParam(defaultValue = "1") int page,
+    @RequestParam(defaultValue = "10") int size) {
+    return Result.success(userService.findAll(page, size));
+}
+```
+
+### ❌ 禁止使用 javax.validation
+```java
+// ❌ 错误 - Spring Boot 3 使用 Jakarta EE
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
+```
+
+```java
+// ✅ 正确 - 使用 Jakarta EE
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+```
+
+### ❌ 禁止重复定义 Result 类
+```java
+// ❌ 错误 - Result 类已全局提供
+public class Result<T> { ... }  // 禁止重新定义！
+```
+
+```java
+// ✅ 正确 - 直接导入全局 Result
+import com.ingenio.backend.common.api.Result;
+
+@GetMapping("/{id}")
+public Result<UserDTO> getById(@PathVariable Integer id) {
+    return Result.success(userService.getById(id));
+}
+```
+
+### ❌ 禁止使用 ResponseEntity 包装 Result
+```java
+// ❌ 错误 - 不需要双重包装
+@GetMapping
+public ResponseEntity<Result<List<UserDTO>>> getUsers() {
+    return ResponseEntity.ok(Result.success(userService.findAll()));
+}
+```
+
+```java
+// ✅ 正确 - 直接返回 Result
+@GetMapping
+public Result<List<UserDTO>> getUsers() {
+    return Result.success(userService.findAll());
+}
+```
+
+### ❌ 禁止引用未定义的 DTO/Service
+```java
+// ❌ 错误 - 引用不存在的类会导致编译失败
+import com.ingenio.backend.dto.generated.UserQueryRequest;  // 如果未生成则失败
+import com.ingenio.backend.service.generated.IUserQueryService;  // 如果未生成则失败
+```
+
+```java
+// ✅ 正确 - 仅使用已生成的类
+import com.ingenio.backend.dto.generated.UserDTO;  // 确认已生成
+import com.ingenio.backend.service.generated.IUserService;  // 确认已生成
+```
+
+### ❌ 禁止 ID 类型与 Service 不一致
+```java
+// ❌ 错误 - Service 使用 Integer，Controller 使用 Long
+// Service: UserDTO getById(Integer id);
+@GetMapping("/{id}")
+public Result<UserDTO> getById(@PathVariable Long id) {  // 类型不匹配！
+    return Result.success(userService.getById(id));
+}
+```
+
+```java
+// ✅ 正确 - ID 类型必须与 Service 一致
+// Service: UserDTO getById(Integer id);
+@GetMapping("/{id}")
+public Result<UserDTO> getById(@PathVariable Integer id) {
+    return Result.success(userService.getById(id));
+}
+```
+
+现在请根据契约和Service生成Controller层代码。
+

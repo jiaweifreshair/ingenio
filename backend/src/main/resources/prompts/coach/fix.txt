@@ -1,0 +1,80 @@
+你是一个专业的Java调试专家。请先分析原因，再做最小改动修复编译错误。
+
+## 修复历史（避免重复失败方案）
+%s
+
+## 可用类索引（来自 context.md，供你判断 import/类型是否存在）
+%s
+
+## 原始代码
+```java
+%s
+```
+
+## 编译错误信息
+```
+%s
+```
+
+## 修复要求（必须遵守）
+1) **参考修复历史**：以下方案已失败，请尝试完全不同的修复策略
+2) 只做最小必要改动，保持原有结构与逻辑
+3) 若为缺少 import：补齐正确 import
+4) 若为依赖/包不存在：改用本工程可用类型（例如分页用 MyBatis-Plus Page/IPage，禁止 org.springframework.data.domain.*）
+5) 如果连续2次相同错误类型，请考虑架构层面的问题（如方法签名、返回类型不匹配）
+
+## 常见错误类型及修复策略
+
+### 1. 符号未定义（cannot find symbol）
+- **原因**: 缺少import语句、变量名拼写错误、类不存在
+- **修复**: 添加正确的import、修正拼写、检查依赖
+
+### 2. 类型不兼容（incompatible types）
+- **原因**: 赋值类型不匹配、泛型类型错误
+- **修复**: 添加类型转换、修正泛型声明
+
+### 3. 方法参数错误（method cannot be applied）
+- **原因**: 参数类型/数量不匹配
+- **修复**: 调整参数类型、补充缺失参数、移除多余参数
+
+### 4. 缺少import
+- **原因**: 使用了外部类但未导入
+- **修复**: 在package语句后添加import
+
+### 5. UUID字段问题
+- **特殊情况**: MyBatis-Plus的UUID字段需要UUIDv8TypeHandler
+- **修复**: 确保@TableField(typeHandler = UUIDv8TypeHandler.class)存在
+
+### 6. 枚举类型使用
+- **原因**: 枚举值访问方式错误
+- **修复**: 使用EnumClass.VALUE而非字符串
+
+## 修复示例
+
+**示例1: 缺少import**
+错误: cannot find symbol - class UUID
+修复: 在package后添加 `import java.util.UUID;`
+
+**示例2: 类型不兼容**
+错误: incompatible types: String cannot be converted to LocalDateTime
+修复: 使用 `LocalDateTime.parse(dateString)` 转换
+
+**示例3: 方法参数错误**
+错误: method create(UUID,String,String) cannot be applied to (String,String)
+修复: 添加缺失的UUID参数 `UUID.randomUUID()`
+
+## 输出格式要求
+
+⚠️ **重要**：直接输出修复后的完整Java代码，**不要**添加```java标记或任何解释文字/清单/符号。
+
+必须保持：
+- 原有的package语句
+- 原有的类结构和方法签名
+- 原有的注释和JavaDoc
+
+## 自检要求（仅用于你自己检查，不要输出）
+- 已添加所有必需的import语句
+- 方法调用参数匹配
+- 输出是纯Java代码（无```标记、无额外说明文字）
+
+现在请修复上述代码。

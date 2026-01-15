@@ -1,0 +1,215 @@
+
+## 代码生成核心规范
+
+### 代码生成八荣八耻
+- 以明确定义职责为荣，以模糊职责界限为耻
+- 以复用可靠模块为荣，以重复造轮子为耻
+- 以实现验证闭环为荣，以忽略测试验证为耻
+- 以优化算法架构为荣，以牺牲代码性能为耻
+- 以注重长期质量为荣，以追求短期快捷为耻
+
+### SOLID设计原则（必须遵守）
+- **S - 单一职责**：一个类只有一个变化原因
+- **O - 开闭原则**：对扩展开放，对修改关闭
+- **L - 里氏替换**：子类型必须能替换基类型
+- **I - 接口隔离**：客户端不依赖不需要的接口
+- **D - 依赖倒置**：依赖抽象而非实现
+
+### Java语言规范
+- 遵循 Google Java Style Guide
+- 使用 Lombok 减少样板代码（@Data, @Builder, @RequiredArgsConstructor）
+- 构造器注入优于字段注入
+- 使用 Optional 处理可能为空的返回值
+- 禁止 Magic Number，使用常量定义
+
+### 注释规范（强制要求）
+- **所有类必须有类级JavaDoc**：描述职责和用途
+- **所有public方法必须有JavaDoc**：描述参数、返回值、异常
+- **使用中文注释**：便于团队理解
+- **完整性**：描述"是什么"、"做什么"、"为什么"
+- **准确性**：注释与代码同步更新
+
+### 安全编码规范
+- **SQL注入防护**：使用参数化查询或MyBatis-Plus的方法
+- **日志安全**：禁止记录明文密码、Token、敏感信息
+- **输入校验**：使用 @Validated 进行参数校验
+- **异常处理**：细粒度异常处理，不吞没异常
+
+### 质量标准
+- 代码编译必须通过（0 errors, 0 warnings）
+- 遵循分层架构：Controller -> Service -> Mapper -> Entity
+- 业务逻辑放在Service层，Controller只做请求转发
+- 使用 @Transactional 管理事务边界
+
+
+### 分页与集合（强制要求）
+- ⚠️ 禁止使用 `org.springframework.data.domain.*`（Page/Pageable/PageImpl/PageRequest 等），因为当前工程不引入 Spring Data 依赖
+- 分页必须使用 MyBatis-Plus：`com.baomidou.mybatisplus.extension.plugins.pagination.Page` 或 `com.baomidou.mybatisplus.core.metadata.IPage`
+- 若需要返回分页数据：返回类型建议使用 `IPage<DTO>`。
+- ⚠️ 禁止使用 MapStruct（`org.mapstruct.*`），因为当前工程默认不引入 MapStruct 依赖
+
+### 通用类与依赖（强制要求）
+- ✅ 全局已提供通用响应类 `com.ingenio.backend.common.api.Result`，请直接使用，**禁止重新生成**。
+- ✅ 全局已提供基类 `com.ingenio.backend.dto.generated.BaseResponse` (若需要)，禁止在 Controller 层重新定义同名类。
+- Controller 所有 API 必须返回 `Result<T>`。
+- 仅使用已生成的 Entity/DTO 类，**禁止引用未定义的类**。
+
+---
+
+## 负面示例（禁止生成以下代码）
+
+### ❌ 禁止使用 Spring Data 分页
+
+```java
+// ❌ 错误 - 工程无 Spring Data 依赖，会导致编译失败
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+
+// ❌ 错误用法
+public Page<UserDTO> getUsers(int page, int size) {
+    List<UserDTO> records = ...;
+    return new PageImpl<>(records, PageRequest.of(page, size), total);
+}
+```
+
+```java
+// ✅ 正确 - 使用 MyBatis-Plus 分页
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+
+// ✅ 正确用法
+public IPage<UserDTO> getUsers(int page, int size) {
+    Page<UserDTO> result = new Page<>(page, size);
+    result.setRecords(records);
+    result.setTotal(total);
+    return result;
+}
+```
+
+### ❌ 禁止使用 MapStruct
+
+```java
+// ❌ 错误 - 工程无 MapStruct 依赖，会导致编译失败
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.mapstruct.factory.Mappers;
+
+@Mapper(componentModel = "spring")
+public interface UserConverter {
+    UserConverter INSTANCE = Mappers.getMapper(UserConverter.class);
+    UserDTO toDTO(UserEntity entity);
+}
+```
+
+```java
+// ✅ 正确 - 使用 BeanUtils 或手动转换
+import org.springframework.beans.BeanUtils;
+
+// ✅ 正确用法 - 手动转换
+public UserDTO toDTO(UserEntity entity) {
+    if (entity == null) return null;
+    UserDTO dto = new UserDTO();
+    BeanUtils.copyProperties(entity, dto);
+    return dto;
+}
+
+// ✅ 或使用已提供的 BeanConverter 组件
+@Autowired
+private BeanConverter beanConverter;
+
+public UserDTO toDTO(UserEntity entity) {
+    return beanConverter.convert(entity, UserDTO.class);
+}
+```
+
+### ❌ 禁止重复生成通用类
+
+```java
+// ❌ 错误 - Result 类已全局提供，禁止重新定义
+package com.ingenio.backend.dto.generated;
+
+public class Result<T> {  // 禁止！
+    private Integer code;
+    private String message;
+    private T data;
+    // ...
+}
+```
+
+```java
+// ✅ 正确 - 直接导入使用全局 Result
+import com.ingenio.backend.common.api.Result;
+
+@GetMapping("/users")
+public Result<List<UserDTO>> getUsers() {
+    return Result.success(userService.findAll());
+}
+```
+
+### ❌ 禁止使用 javax.validation（Spring Boot 3 使用 Jakarta）
+
+```java
+// ❌ 错误 - Spring Boot 3 不支持 javax 包
+import javax.validation.Valid;
+import javax.validation.constraints.NotNull;
+```
+
+```java
+// ✅ 正确 - 使用 Jakarta EE 包
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.NotBlank;
+```
+
+### ❌ 禁止引用未定义的类
+
+```java
+// ❌ 错误 - 引用不存在的类会导致编译失败
+import com.ingenio.backend.dto.generated.UserQueryRequest;  // 如果未生成则失败
+import com.ingenio.backend.util.DateUtils;  // 如果不存在则失败
+```
+
+```java
+// ✅ 正确 - 仅使用已生成或已知存在的类
+import com.ingenio.backend.dto.generated.UserDTO;  // 已生成
+import com.ingenio.backend.entity.generated.UserEntity;  // 已生成
+import java.time.LocalDateTime;  // JDK 标准库
+```
+
+### ❌ 禁止方法签名与接口不一致
+
+```java
+// ❌ 错误 - ServiceImpl 方法签名与 Interface 不一致
+// Interface: IPage<UserDTO> findUsers(Page<UserEntity> page);
+// Impl 错误写法:
+public Page<UserDTO> findUsers(Page<UserEntity> page) { ... }  // 返回类型不匹配！
+```
+
+```java
+// ✅ 正确 - 方法签名必须完全匹配
+// Interface: IPage<UserDTO> findUsers(Page<UserEntity> page);
+// Impl 正确写法:
+@Override
+public IPage<UserDTO> findUsers(Page<UserEntity> page) { ... }  // 完全匹配
+```
+
+### ❌ 禁止 ID 类型不一致
+
+```java
+// ❌ 错误 - Mapper 使用 Integer，Service 使用 Long
+// Mapper: UserEntity selectById(Integer id);
+// Service 错误写法:
+public UserDTO getById(Long id) {
+    return mapper.selectById(id);  // 类型不匹配！
+}
+```
+
+```java
+// ✅ 正确 - ID 类型必须与 Mapper/Entity 一致
+// Mapper: UserEntity selectById(Integer id);
+// Service 正确写法:
+public UserDTO getById(Integer id) {
+    return toDTO(mapper.selectById(id));
+}

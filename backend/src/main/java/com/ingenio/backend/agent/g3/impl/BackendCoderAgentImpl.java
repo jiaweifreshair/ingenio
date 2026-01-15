@@ -6,6 +6,7 @@ import com.ingenio.backend.ai.AIProviderFactory;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
+import com.ingenio.backend.prompt.PromptTemplateService;
 import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -36,492 +37,18 @@ public class BackendCoderAgentImpl implements ICoderAgent {
 
     private final AIProviderFactory aiProviderFactory;
     private final BlueprintPromptBuilder blueprintPromptBuilder;
-
-    /**
-     * 公共代码规范提示词 - 精选自项目 .claude/CLAUDE.md
-     * 这些规范适用于所有生成的Java代码
-     */
-    private static final String CODE_STANDARDS_PROMPT = """
-
-        ## 代码生成核心规范
-
-        ### 代码生成八荣八耻
-        - 以明确定义职责为荣，以模糊职责界限为耻
-        - 以复用可靠模块为荣，以重复造轮子为耻
-        - 以实现验证闭环为荣，以忽略测试验证为耻
-        - 以优化算法架构为荣，以牺牲代码性能为耻
-        - 以注重长期质量为荣，以追求短期快捷为耻
-
-        ### SOLID设计原则（必须遵守）
-        - **S - 单一职责**：一个类只有一个变化原因
-        - **O - 开闭原则**：对扩展开放，对修改关闭
-        - **L - 里氏替换**：子类型必须能替换基类型
-        - **I - 接口隔离**：客户端不依赖不需要的接口
-        - **D - 依赖倒置**：依赖抽象而非实现
-
-        ### Java语言规范
-        - 遵循 Google Java Style Guide
-        - 使用 Lombok 减少样板代码（@Data, @Builder, @RequiredArgsConstructor）
-        - 构造器注入优于字段注入
-        - 使用 Optional 处理可能为空的返回值
-        - 禁止 Magic Number，使用常量定义
-
-        ### 注释规范（强制要求）
-        - **所有类必须有类级JavaDoc**：描述职责和用途
-        - **所有public方法必须有JavaDoc**：描述参数、返回值、异常
-        - **使用中文注释**：便于团队理解
-        - **完整性**：描述"是什么"、"做什么"、"为什么"
-        - **准确性**：注释与代码同步更新
-
-        ### 安全编码规范
-        - **SQL注入防护**：使用参数化查询或MyBatis-Plus的方法
-        - **日志安全**：禁止记录明文密码、Token、敏感信息
-        - **输入校验**：使用 @Validated 进行参数校验
-        - **异常处理**：细粒度异常处理，不吞没异常
-
-        ### 质量标准
-        - 代码编译必须通过（0 errors, 0 warnings）
-        - 遵循分层架构：Controller -> Service -> Mapper -> Entity
-        - 业务逻辑放在Service层，Controller只做请求转发
-        - 使用 @Transactional 管理事务边界
-
-        """;
-
-    /**
-     * 代码生成提示词模板 - 实体类
-     * 优化版本: 添加完整示例、UUID显式生成说明、JSONB字段处理、枚举定义
-     */
-    private static final String ENTITY_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下数据库Schema生成MyBatis-Plus实体类。
-
-        %s
-
-        ## 数据库Schema
-        ```sql
-        %s
-        ```
-
-        ## 核心要求（Critical）
-
-        ### 1. UUID主键处理（⚠️ 重要）
-        **PostgreSQL的DEFAULT gen_random_uuid()不生效！必须在Java代码中显式生成UUID。**
-
-        正确做法：
-        ```java
-        @TableId(value = "id", type = IdType.ASSIGN_UUID)
-        @TableField(typeHandler = UUIDv8TypeHandler.class)
-        private UUID id;
-        ```
-
-        ### 2. 基础注解
-        - @Data, @Builder, @NoArgsConstructor, @AllArgsConstructor
-        - @TableName(value = "表名", autoResultMap = true)
-        - @TableField 用于字段映射
-
-        ### 3. 字段类型映射
-
-        | PostgreSQL类型 | Java类型 | MyBatis-Plus注解 |
-        |--------------|----------|----------------|
-        | UUID | java.util.UUID | @TableField(typeHandler = UUIDv8TypeHandler.class) |
-        | VARCHAR | String | @TableField("column_name") |
-        | TEXT | String | @TableField("column_name") |
-        | TIMESTAMP | java.time.Instant | @TableField("created_at") |
-        | JSONB | String | @TableField("metadata") |
-        | BOOLEAN | Boolean | @TableField("is_active") |
-
-        ### 4. 特殊字段处理
-
-        **枚举字段**：定义内部枚举类
-        ```java
-        @TableField("status")
-        private String status;
-
-        public enum Status {
-            PENDING("PENDING", "待处理"),
-            COMPLETED("COMPLETED", "已完成");
-
-            private final String value;
-            private final String description;
-
-            Status(String value, String description) {
-                this.value = value;
-                this.description = description;
-            }
-        }
-        ```
-
-        **JSONB字段**：使用String存储
-        ```java
-        @TableField("metadata")
-        private String metadata;  // 存储JSON字符串
-        ```
-
-        ## 输出格式要求
-
-        ⚠️ **重要**：**不要**使用```java标记包裹代码。
-
-        使用以下格式分隔多个文件：
-        // === 文件: EntityName.java ===
-        package com.ingenio.backend.entity.generated;
-        // 代码内容
-
-        // === 文件: AnotherEntity.java ===
-        package com.ingenio.backend.entity.generated;
-        // 代码内容
-
-        ## 示例参考（Task实体类）
-
-        // === 文件: TaskEntity.java ===
-        package com.ingenio.backend.entity.generated;
-
-        import com.baomidou.mybatisplus.annotation.*;
-        import com.ingenio.backend.config.UUIDv8TypeHandler;
-        import lombok.AllArgsConstructor;
-        import lombok.Builder;
-        import lombok.Data;
-        import lombok.NoArgsConstructor;
-
-        import java.time.Instant;
-        import java.util.UUID;
-
-        /**
-         * 待办事项实体类
-         */
-        @Data
-        @Builder
-        @NoArgsConstructor
-        @AllArgsConstructor
-        @TableName(value = "tasks", autoResultMap = true)
-        public class TaskEntity {
-
-            /**
-             * 主键ID
-             */
-            @TableId(value = "id", type = IdType.ASSIGN_UUID)
-            @TableField(typeHandler = UUIDv8TypeHandler.class)
-            private UUID id;
-
-            /**
-             * 标题
-             */
-            @TableField("title")
-            private String title;
-
-            /**
-             * 状态
-             */
-            @TableField("status")
-            private String status;
-
-            /**
-             * 优先级
-             */
-            @TableField("priority")
-            private String priority;
-
-            /**
-             * 创建时间
-             */
-            @TableField(value = "created_at", fill = FieldFill.INSERT)
-            private Instant createdAt;
-
-            /**
-             * 更新时间
-             */
-            @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
-            private Instant updatedAt;
-
-            /**
-             * 状态枚举
-             */
-            public enum Status {
-                PENDING("PENDING", "待处理"),
-                COMPLETED("COMPLETED", "已完成");
-
-                private final String value;
-                private final String description;
-
-                Status(String value, String description) {
-                    this.value = value;
-                    this.description = description;
-                }
-
-                public String getValue() {
-                    return value;
-                }
-            }
-        }
-
-        ## 质量检查清单
-        - [ ] UUID字段使用UUIDv8TypeHandler
-        - [ ] 所有字段都有@TableField注解
-        - [ ] 时间字段使用Instant类型
-        - [ ] 枚举字段定义了内部枚举类
-        - [ ] 输出格式正确（// === 文件: xxx ===）
-        - [ ] 无```java标记包裹
-
-        现在请根据Schema生成实体类。
-        """;
-
-    /**
-     * 代码生成提示词模板 - Mapper接口
-     */
-    private static final String MAPPER_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下实体类生成MyBatis-Plus Mapper接口。
-
-        %s
-
-        ## 实体类定义
-        ```java
-        %s
-        ```
-
-        ## 输出要求
-        1. 继承 BaseMapper<EntityName>
-        2. 使用 @Mapper 注解
-        3. 添加常用的自定义查询方法（如按条件分页、按关联ID查询等）
-        4. 添加完整的中文JavaDoc注释
-        5. 包名使用 com.ingenio.backend.mapper.generated
-
-        ## 输出格式
-        请为每个实体生成一个Mapper接口，使用以下格式：
-        ```java
-        // === 文件: EntityNameMapper.java ===
-        package com.ingenio.backend.mapper.generated;
-        // 代码内容
-        ```
-        """;
-
-    /**
-     * 代码生成提示词模板 - DTO类
-     * 用于生成请求/响应DTO，解决编译时缺少DTO类的问题
-     */
-    private static final String DTO_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和实体类生成DTO类。
-
-        %s
-
-        ## OpenAPI契约
-        ```yaml
-        %s
-        ```
-
-        ## 实体类定义
-        ```java
-        %s
-        ```
-
-        ## 核心要求（Critical）
-
-        ### 1. DTO类型（必须生成）
-        为每个实体生成以下DTO：
-        - **EntityDTO**：响应DTO，用于返回给前端
-        - **EntityCreateRequest**：创建请求DTO
-        - **EntityUpdateRequest**：更新请求DTO
-        - **EntityQueryRequest**：查询请求DTO（可选）
-
-        ### 2. 注解规范（Spring Boot 3 + Jakarta EE）
-        ⚠️ **重要**：必须使用 `jakarta.validation` 包，不要使用 `javax.validation`！
-
-        正确导入：
-        ```java
-        import jakarta.validation.constraints.NotBlank;
-        import jakarta.validation.constraints.NotNull;
-        import jakarta.validation.constraints.Size;
-        import jakarta.validation.constraints.Email;
-        ```
-
-        ### 3. Lombok注解
-        - @Data, @Builder, @NoArgsConstructor, @AllArgsConstructor
-
-        ### 4. 示例参考
-
-        // === 文件: UserDTO.java ===
-        package com.ingenio.backend.dto.generated;
-
-        import lombok.AllArgsConstructor;
-        import lombok.Builder;
-        import lombok.Data;
-        import lombok.NoArgsConstructor;
-
-        import java.time.Instant;
-        import java.util.UUID;
-
-        /**
-         * 用户响应DTO
-         */
-        @Data
-        @Builder
-        @NoArgsConstructor
-        @AllArgsConstructor
-        public class UserDTO {
-            private UUID id;
-            private String username;
-            private String email;
-            private Instant createdAt;
-        }
-
-        // === 文件: UserCreateRequest.java ===
-        package com.ingenio.backend.dto.generated;
-
-        import jakarta.validation.constraints.Email;
-        import jakarta.validation.constraints.NotBlank;
-        import jakarta.validation.constraints.Size;
-        import lombok.AllArgsConstructor;
-        import lombok.Builder;
-        import lombok.Data;
-        import lombok.NoArgsConstructor;
-
-        /**
-         * 用户创建请求DTO
-         */
-        @Data
-        @Builder
-        @NoArgsConstructor
-        @AllArgsConstructor
-        public class UserCreateRequest {
-            @NotBlank(message = "用户名不能为空")
-            @Size(min = 2, max = 50, message = "用户名长度必须在2-50之间")
-            private String username;
-
-            @NotBlank(message = "邮箱不能为空")
-            @Email(message = "邮箱格式不正确")
-            private String email;
-
-            @NotBlank(message = "密码不能为空")
-            @Size(min = 6, max = 100, message = "密码长度必须在6-100之间")
-            private String password;
-        }
-
-        ## 输出格式要求
-
-        ⚠️ **重要**：**不要**使用```java标记包裹代码。
-
-        使用以下格式分隔多个文件：
-        // === 文件: EntityDTO.java ===
-        package com.ingenio.backend.dto.generated;
-        // 代码内容
-
-        // === 文件: EntityCreateRequest.java ===
-        package com.ingenio.backend.dto.generated;
-        // 代码内容
-
-        ## 质量检查清单
-        - [ ] 使用 jakarta.validation（不是 javax.validation）
-        - [ ] 所有必填字段有 @NotBlank 或 @NotNull 注解
-        - [ ] 字符串字段有 @Size 注解
-        - [ ] 邮箱字段有 @Email 注解
-        - [ ] 输出格式正确（// === 文件: xxx ===）
-        - [ ] 无```java标记包裹
-
-        现在请根据契约和实体类生成所有必要的DTO类。
-        """;
-
-    /**
-     * 代码生成提示词模板 - Service层
-     */
-    private static final String SERVICE_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和Mapper接口生成Service层代码。
-
-        %s
-
-        ## OpenAPI契约
-        ```yaml
-        %s
-        ```
-
-        ## Mapper接口
-        ```java
-        %s
-        ```
-
-        ## DTO类
-        ```java
-        %s
-        ```
-
-        ## 输出要求
-        1. 创建Service接口和ServiceImpl实现类
-        2. 使用 @Service 和 @Transactional 注解
-        3. 实现CRUD基础方法
-        4. 根据API契约实现业务方法
-        5. 使用构造器注入（@RequiredArgsConstructor）
-        6. 添加完整的中文JavaDoc注释
-        7. 包名使用 com.ingenio.backend.service.generated
-        8. ⚠️ **重要**：导入DTO时使用 com.ingenio.backend.dto.generated 包
-        9. ⚠️ **重要**：密码加密使用简单的哈希方法（不使用PasswordEncoder），或直接存储（由Controller层处理）
-
-        ## 输出格式
-        请生成Service接口和实现类，使用以下格式：
-
-        ⚠️ **重要**：**不要**使用```java标记包裹代码。
-
-        // === 文件: IEntityNameService.java ===
-        package com.ingenio.backend.service.generated;
-        // 接口代码
-
-        // === 文件: EntityNameServiceImpl.java ===
-        package com.ingenio.backend.service.generated;
-        // 实现类代码
-        """;
-
-    /**
-     * 代码生成提示词模板 - Controller层
-     */
-    private static final String CONTROLLER_PROMPT_TEMPLATE = """
-        你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和Service接口生成REST Controller。
-
-        %s
-
-        ## OpenAPI契约
-        ```yaml
-        %s
-        ```
-
-        ## Service接口
-        ```java
-        %s
-        ```
-
-        ## DTO类
-        ```java
-        %s
-        ```
-
-        ## 输出要求
-        1. 使用 @RestController 和 @RequestMapping 注解
-        2. 严格按照OpenAPI契约定义的路径和方法
-        3. 使用 @GetMapping/@PostMapping/@PutMapping/@DeleteMapping
-        4. 添加 @Validated 参数校验
-        5. 统一使用 ResponseEntity 返回
-        6. 使用构造器注入（@RequiredArgsConstructor）
-        7. 添加完整的中文JavaDoc注释
-        8. 包名使用 com.ingenio.backend.controller.generated
-        9. ⚠️ **重要**：导入DTO时使用 com.ingenio.backend.dto.generated 包
-        10. ⚠️ **重要**：使用 jakarta.validation（不是 javax.validation）
-
-        ## 示例导入（Spring Boot 3 + Jakarta EE）
-        ```java
-        import jakarta.validation.Valid;
-        import com.ingenio.backend.dto.generated.UserDTO;
-        import com.ingenio.backend.dto.generated.UserCreateRequest;
-        ```
-
-        ## 输出格式
-        请生成Controller类，使用以下格式：
-
-        ⚠️ **重要**：**不要**使用```java标记包裹代码。
-
-        // === 文件: EntityNameController.java ===
-        package com.ingenio.backend.controller.generated;
-        // 代码内容
-        """;
+    private final PromptTemplateService promptTemplateService;
+    private final com.ingenio.backend.service.g3.G3ContextBuilder contextBuilder;
 
     public BackendCoderAgentImpl(
             AIProviderFactory aiProviderFactory,
-            BlueprintPromptBuilder blueprintPromptBuilder) {
+            BlueprintPromptBuilder blueprintPromptBuilder,
+            PromptTemplateService promptTemplateService,
+            com.ingenio.backend.service.g3.G3ContextBuilder contextBuilder) {
         this.aiProviderFactory = aiProviderFactory;
         this.blueprintPromptBuilder = blueprintPromptBuilder;
+        this.promptTemplateService = promptTemplateService;
+        this.contextBuilder = contextBuilder;
     }
 
     @Override
@@ -580,22 +107,30 @@ public class BackendCoderAgentImpl implements ICoderAgent {
 
             List<G3ArtifactEntity> artifacts = new ArrayList<>();
 
+            // 0. 生成通用基础类 (Common)
+            logConsumer.accept(G3LogEntry.info(getRole(), "正在生成通用基础类 (Result, BaseResponse)..."));
+            List<G3ArtifactEntity> commonArtifacts = generateCommonArtifacts(job, generationRound);
+            artifacts.addAll(commonArtifacts);
+
             // 1. 生成实体类
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成实体类..."));
-            List<G3ArtifactEntity> entityArtifacts = generateEntities(job, dbSchemaSql, aiProvider, generationRound, logConsumer);
+            List<G3ArtifactEntity> entityArtifacts = generateEntities(job, dbSchemaSql, aiProvider, generationRound,
+                    logConsumer);
             artifacts.addAll(entityArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "实体类生成完成，共 " + entityArtifacts.size() + " 个文件"));
 
             // 2. 生成Mapper接口
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成Mapper接口..."));
             String entityCode = combineArtifactsContent(entityArtifacts);
-            List<G3ArtifactEntity> mapperArtifacts = generateMappers(job, entityCode, aiProvider, generationRound, logConsumer);
+            List<G3ArtifactEntity> mapperArtifacts = generateMappers(job, entityCode, entityArtifacts, aiProvider, generationRound,
+                    logConsumer);
             artifacts.addAll(mapperArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "Mapper接口生成完成，共 " + mapperArtifacts.size() + " 个文件"));
 
             // 3. 生成DTO类（解决编译时缺少DTO类的问题）
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成DTO类..."));
-            List<G3ArtifactEntity> dtoArtifacts = generateDTOs(job, contractYaml, entityCode, aiProvider, generationRound, logConsumer);
+            List<G3ArtifactEntity> dtoArtifacts = generateDTOs(job, contractYaml, entityCode, entityArtifacts, aiProvider,
+                    generationRound, logConsumer);
             artifacts.addAll(dtoArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "DTO类生成完成，共 " + dtoArtifacts.size() + " 个文件"));
             String dtoCode = combineArtifactsContent(dtoArtifacts);
@@ -603,7 +138,8 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             // 4. 生成Service层
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成Service层..."));
             String mapperCode = combineArtifactsContent(mapperArtifacts);
-            List<G3ArtifactEntity> serviceArtifacts = generateServices(job, contractYaml, mapperCode, dtoCode, aiProvider, generationRound, logConsumer);
+            List<G3ArtifactEntity> serviceArtifacts = generateServices(job, contractYaml, mapperCode, dtoCode,
+                    entityArtifacts, mapperArtifacts, dtoArtifacts, aiProvider, generationRound, logConsumer);
             artifacts.addAll(serviceArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "Service层生成完成，共 " + serviceArtifacts.size() + " 个文件"));
 
@@ -612,14 +148,47 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             String serviceCode = combineArtifactsContent(serviceArtifacts.stream()
                     .filter(a -> a.getFilePath().contains("Service.java") && !a.getFilePath().contains("Impl"))
                     .toList());
-            List<G3ArtifactEntity> controllerArtifacts = generateControllers(job, contractYaml, serviceCode, dtoCode, aiProvider, generationRound, logConsumer);
+            List<G3ArtifactEntity> controllerArtifacts = generateControllers(job, contractYaml, serviceCode, dtoCode,
+                    serviceArtifacts, dtoArtifacts, aiProvider, generationRound, logConsumer);
             artifacts.addAll(controllerArtifacts);
-            logConsumer.accept(G3LogEntry.success(getRole(), "Controller层生成完成，共 " + controllerArtifacts.size() + " 个文件"));
+            logConsumer
+                    .accept(G3LogEntry.success(getRole(), "Controller层生成完成，共 " + controllerArtifacts.size() + " 个文件"));
 
             // 6. 生成pom.xml依赖补充
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成项目配置..."));
             G3ArtifactEntity pomArtifact = generatePomFragment(job, generationRound);
             artifacts.add(pomArtifact);
+
+            // === Planning with Files: Update Docs ===
+            // 1. task_plan.md (Update: Mark Coding as done)
+            String taskPlan = """
+                    # Implementation Plan
+
+                    - [x] Design Phase (Architect)
+                    - [x] Coding Phase (Backend)
+                        - [x] Entities
+                        - [x] Mappers
+                        - [x] Services
+                        - [x] Controllers
+                    - [ ] Verification Phase (Coach)
+                    """;
+            artifacts.add(G3ArtifactEntity.create(
+                    job.getId(),
+                    "docs/task_plan.md",
+                    taskPlan,
+                    G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
+                    generationRound));
+
+            // 2. progress.md (Append log)
+            String progress = "\n\n## " + java.time.LocalDateTime.now() + " Backend Coder Agent\n" +
+                    "- Status: Completed\n" +
+                    "- Generated: " + artifacts.size() + " files (Entity, Mapper, Service, Controller)\n";
+            artifacts.add(G3ArtifactEntity.create(
+                    job.getId(),
+                    "docs/progress.md",
+                    progress,
+                    G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
+                    generationRound));
 
             logConsumer.accept(G3LogEntry.success(getRole(), "后端代码生成完成，共 " + artifacts.size() + " 个文件"));
             return CoderResult.success(artifacts);
@@ -648,7 +217,14 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         String blueprintConstraint = shouldEnableBlueprint(job)
                 ? blueprintPromptBuilder.buildEntityConstraint(job.getBlueprintSpec())
                 : "";
-        String prompt = String.format(ENTITY_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, dbSchemaSql);
+
+        // Planning with Files: Inject Context
+        String projectContext = contextBuilder.buildGlobalContext(job.getId());
+
+        String prompt = String.format(
+                promptTemplateService.coderEntityTemplate(),
+                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + projectContext,
+                dbSchemaSql);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -665,6 +241,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
     private List<G3ArtifactEntity> generateMappers(
             G3JobEntity job,
             String entityCode,
+            List<G3ArtifactEntity> entityArtifacts,
             AIProvider aiProvider,
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
@@ -672,7 +249,14 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         String blueprintConstraint = shouldEnableBlueprint(job)
                 ? blueprintPromptBuilder.buildEntityConstraint(job.getBlueprintSpec())
                 : "";
-        String prompt = String.format(MAPPER_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, entityCode);
+
+        // S2增强：注入已生成的Entity类清单
+        String entityClassList = contextBuilder.buildGeneratedClassList(entityArtifacts, "Entity");
+
+        String prompt = String.format(
+                promptTemplateService.coderMapperTemplate(),
+                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + entityClassList,
+                entityCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -691,6 +275,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             G3JobEntity job,
             String contractYaml,
             String entityCode,
+            List<G3ArtifactEntity> entityArtifacts,
             AIProvider aiProvider,
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
@@ -698,7 +283,15 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         String blueprintConstraint = shouldEnableBlueprint(job)
                 ? blueprintPromptBuilder.buildEntityConstraint(job.getBlueprintSpec())
                 : "";
-        String prompt = String.format(DTO_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, entityCode);
+
+        // S2增强：注入已生成的Entity类清单
+        String entityClassList = contextBuilder.buildGeneratedClassList(entityArtifacts, "Entity");
+
+        String prompt = String.format(
+                promptTemplateService.coderDtoTemplate(),
+                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + entityClassList,
+                contractYaml,
+                entityCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -717,6 +310,9 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             String contractYaml,
             String mapperCode,
             String dtoCode,
+            List<G3ArtifactEntity> entityArtifacts,
+            List<G3ArtifactEntity> mapperArtifacts,
+            List<G3ArtifactEntity> dtoArtifacts,
             AIProvider aiProvider,
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
@@ -724,7 +320,22 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         String blueprintConstraint = shouldEnableBlueprint(job)
                 ? blueprintPromptBuilder.buildServiceConstraint(job.getBlueprintSpec())
                 : "";
-        String prompt = String.format(SERVICE_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, mapperCode, dtoCode);
+
+        // Planning with Files: Inject Context
+        String projectContext = contextBuilder.buildGlobalContext(job.getId());
+
+        // S2增强：注入已生成的类清单
+        String entityClassList = contextBuilder.buildGeneratedClassList(entityArtifacts, "Entity");
+        String mapperClassList = contextBuilder.buildGeneratedClassList(mapperArtifacts, "Mapper");
+        String dtoClassList = contextBuilder.buildGeneratedClassList(dtoArtifacts, "DTO");
+        String generatedClassesContext = entityClassList + mapperClassList + dtoClassList;
+
+        String prompt = String.format(
+                promptTemplateService.coderServiceTemplate(),
+                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + projectContext + "\n\n" + generatedClassesContext,
+                contractYaml,
+                mapperCode,
+                dtoCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -743,6 +354,8 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             String contractYaml,
             String serviceCode,
             String dtoCode,
+            List<G3ArtifactEntity> serviceArtifacts,
+            List<G3ArtifactEntity> dtoArtifacts,
             AIProvider aiProvider,
             int generationRound,
             Consumer<G3LogEntry> logConsumer) {
@@ -750,7 +363,25 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         String blueprintConstraint = shouldEnableBlueprint(job)
                 ? blueprintPromptBuilder.buildServiceConstraint(job.getBlueprintSpec())
                 : "";
-        String prompt = String.format(CONTROLLER_PROMPT_TEMPLATE, CODE_STANDARDS_PROMPT + blueprintConstraint, contractYaml, serviceCode, dtoCode);
+
+        // Planning with Files: Inject Context
+        String projectContext = contextBuilder.buildGlobalContext(job.getId());
+
+        // S2增强：注入已生成的类清单（Controller只需要Service和DTO）
+        String serviceClassList = contextBuilder.buildGeneratedClassList(
+                serviceArtifacts.stream()
+                        .filter(a -> a.getFilePath().contains("Service.java") && !a.getFilePath().contains("Impl"))
+                        .toList(),
+                "Service接口");
+        String dtoClassList = contextBuilder.buildGeneratedClassList(dtoArtifacts, "DTO");
+        String generatedClassesContext = serviceClassList + dtoClassList;
+
+        String prompt = String.format(
+                promptTemplateService.coderControllerTemplate(),
+                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + projectContext + "\n\n" + generatedClassesContext,
+                contractYaml,
+                serviceCode,
+                dtoCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
                         .temperature(0.2)
@@ -815,8 +446,93 @@ public class BackendCoderAgentImpl implements ICoderAgent {
                 "pom-fragment.xml",
                 pomFragment,
                 G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
-                generationRound
-        );
+                generationRound);
+    }
+
+    /**
+     * 生成通用基础类 (Result, BaseResponse)
+     * 解决 generated 模块缺失 common 依赖和 duplicate class 问题
+     */
+    private List<G3ArtifactEntity> generateCommonArtifacts(G3JobEntity job, int generationRound) {
+        List<G3ArtifactEntity> artifacts = new ArrayList<>();
+        java.util.UUID jobId = job.getId();
+
+        // 1. Helper: Result.java
+        String resultClass = """
+                package com.ingenio.backend.common.api;
+
+                import lombok.Data;
+                import java.io.Serializable;
+
+                /**
+                 * 通用返回结果
+                 * @param <T> 数据类型
+                 */
+                @Data
+                public class Result<T> implements Serializable {
+                    private static final long serialVersionUID = 1L;
+
+                    private Integer code;
+                    private String message;
+                    private T data;
+
+                    public static <T> Result<T> success() {
+                        Result<T> result = new Result<>();
+                        result.setCode(200);
+                        result.setMessage("Success");
+                        return result;
+                    }
+
+                    public static <T> Result<T> success(T data) {
+                        Result<T> result = new Result<>();
+                        result.setCode(200);
+                        result.setMessage("Success");
+                        result.setData(data);
+                        return result;
+                    }
+
+                    public static <T> Result<T> success(String message) {
+                        Result<T> result = new Result<>();
+                        result.setCode(200);
+                        result.setMessage(message);
+                        return result;
+                    }
+
+                    public static <T> Result<T> failed(String message) {
+                        Result<T> result = new Result<>();
+                        result.setCode(500);
+                        result.setMessage(message);
+                        return result;
+                    }
+
+                    public static <T> Result<T> error(String message) {
+                        return failed(message);
+                    }
+                }
+                """;
+        artifacts.add(G3ArtifactEntity.create(jobId, "src/main/java/com/ingenio/backend/common/api/Result.java",
+                resultClass, G3ArtifactEntity.GeneratedBy.BACKEND_CODER, generationRound));
+
+        // 2. Helper: BaseResponse.java
+        String baseResponseClass = """
+                package com.ingenio.backend.dto.generated;
+
+                import lombok.Data;
+                import java.io.Serializable;
+
+                /**
+                 * 基础响应类
+                 */
+                @Data
+                public class BaseResponse implements Serializable {
+                    private static final long serialVersionUID = 1L;
+                }
+                """;
+        artifacts
+                .add(G3ArtifactEntity.create(jobId, "src/main/java/com/ingenio/backend/dto/generated/BaseResponse.java",
+                        baseResponseClass, G3ArtifactEntity.GeneratedBy.BACKEND_CODER, generationRound));
+
+        return artifacts;
     }
 
     /**
@@ -832,7 +548,8 @@ public class BackendCoderAgentImpl implements ICoderAgent {
      * 解析AI返回的Java文件内容
      * 支持格式：// === 文件: FileName.java ===
      */
-    private List<G3ArtifactEntity> parseJavaFiles(String content, java.util.UUID jobId, int generationRound, String basePath) {
+    private List<G3ArtifactEntity> parseJavaFiles(String content, java.util.UUID jobId, int generationRound,
+            String basePath) {
         List<G3ArtifactEntity> artifacts = new ArrayList<>();
 
         if (content == null || content.isBlank()) {
@@ -845,8 +562,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
         // 使用正则匹配文件分隔符
         Pattern filePattern = Pattern.compile(
                 "(?:// ===\\s*文件[：:]\\s*|// === File:\\s*)(\\w+\\.java)\\s*===",
-                Pattern.CASE_INSENSITIVE
-        );
+                Pattern.CASE_INSENSITIVE);
 
         Matcher matcher = filePattern.matcher(content);
         List<Integer> positions = new ArrayList<>();
@@ -865,8 +581,15 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             String fileContent = content.substring(start, end);
             // 移除文件头标记
             fileContent = filePattern.matcher(fileContent).replaceFirst("").trim();
+            fileContent = sanitizeJavaSource(fileContent);
 
             String fileName = fileNames.get(i);
+
+            // Prevent overwriting Common classes provided by system (Standardization)
+            if (fileName.equals("Result.java") || fileName.equals("BaseResponse.java")) {
+                continue;
+            }
+
             String filePath = basePath + fileName;
 
             G3ArtifactEntity artifact = G3ArtifactEntity.create(
@@ -874,8 +597,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
                     filePath,
                     fileContent,
                     G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
-                    generationRound
-            );
+                    generationRound);
 
             artifacts.add(artifact);
         }
@@ -891,13 +613,13 @@ public class BackendCoderAgentImpl implements ICoderAgent {
     /**
      * 按package语句分割代码
      */
-    private List<G3ArtifactEntity> parseByPackageStatement(String content, java.util.UUID jobId, int generationRound, String basePath) {
+    private List<G3ArtifactEntity> parseByPackageStatement(String content, java.util.UUID jobId, int generationRound,
+            String basePath) {
         List<G3ArtifactEntity> artifacts = new ArrayList<>();
 
         // 匹配 public class/interface ClassName
         Pattern classPattern = Pattern.compile(
-                "package\\s+[\\w.]+;[\\s\\S]*?(?=package\\s+|$)"
-        );
+                "package\\s+[\\w.]+;[\\s\\S]*?(?=package\\s+|$)");
 
         Matcher matcher = classPattern.matcher(content);
 
@@ -911,14 +633,14 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             if (nameMatcher.find()) {
                 String className = nameMatcher.group(1);
                 String filePath = basePath + className + ".java";
+                classContent = sanitizeJavaSource(classContent);
 
                 G3ArtifactEntity artifact = G3ArtifactEntity.create(
                         jobId,
                         filePath,
                         classContent,
                         G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
-                        generationRound
-                );
+                        generationRound);
 
                 artifacts.add(artifact);
             }
@@ -928,10 +650,470 @@ public class BackendCoderAgentImpl implements ICoderAgent {
     }
 
     /**
+     * 清理Java源文件内容，避免模型把“清单/说明/符号”附加到文件末尾导致编译失败。
+     *
+     * 规则（保守裁剪）：
+     * - 若存在最后一个 '}'，则仅保留到该位置（包含该字符）
+     * - 仅裁掉文件尾部内容，避免误伤中文注释等正文
+     */
+    private String sanitizeJavaSource(String content) {
+        if (content == null)
+            return "";
+        String normalized = content.replace("\r", "").trim();
+
+        // 若模型在文件头部插入了说明文字，裁剪到第一个 package 声明处（保守处理，优先保证可编译）
+        int packagePos = normalized.indexOf("package ");
+        if (packagePos > 0) {
+            normalized = normalized.substring(packagePos).trim();
+        }
+
+        int lastBrace = normalized.lastIndexOf('}');
+        if (lastBrace >= 0 && lastBrace + 1 < normalized.length()) {
+            normalized = normalized.substring(0, lastBrace + 1).trim();
+        }
+
+        normalized = rewriteMapStructBeanConverter(normalized);
+        normalized = injectMissingLombokImports(normalized);
+        normalized = rewriteSpringDataPagination(normalized);
+        normalized = rewriteMyBatisPlusPageMismatch(normalized);
+        normalized = rewriteMyBatisPlusPageConvertReturn(normalized);
+        normalized = injectCommonImports(normalized);
+
+        return normalized + "\n";
+    }
+
+    /**
+     * 将 Spring Data 的分页类型（org.springframework.data.domain.*）改写为 MyBatis-Plus 分页实现。
+     *
+     * 覆盖场景：
+     * - import org.springframework.data.domain.Page / PageImpl / PageRequest
+     * - return new PageImpl<>(records, PageRequest.of(...), total)
+     *
+     * 说明：
+     * - 当前生成工程以 MyBatis-Plus 为主，不引入 Spring Data 依赖，直接使用会导致编译失败
+     * - 该改写为“生成后防线”，用于提升多轮修复收敛与一次性编译通过率
+     */
+    private String rewriteSpringDataPagination(String content) {
+        if (content == null || content.isBlank())
+            return content;
+
+        if (!content.contains("org.springframework.data.domain")) {
+            return content;
+        }
+
+        String updated = content;
+
+        // 1) 移除 Spring Data 分页相关 import
+        updated = updated
+                .replace("import org.springframework.data.domain.Page;\n", "")
+                .replace("import org.springframework.data.domain.PageImpl;\n", "")
+                .replace("import org.springframework.data.domain.PageRequest;\n", "")
+                .replace("import org.springframework.data.domain.Pageable;\n", "");
+
+        // 2) 确保 MyBatis-Plus Page import 存在（Controller 常见缺失）
+        if (updated.contains("Page<")
+                && !updated.contains("import com.baomidou.mybatisplus.extension.plugins.pagination.Page;")) {
+            // 尽量插在现有 import 末尾
+            updated = updated.replaceFirst(
+                    "(?m)^(import\\s+.+;\\s*)$",
+                    "$1\nimport com.baomidou.mybatisplus.extension.plugins.pagination.Page;\n");
+        }
+
+        // 3) 将 PageImpl 返回改写为 MyBatis-Plus Page
+        // 解析关键变量：recordsVar、iPageVar、dtoType
+        String dtoType = null;
+        java.util.regex.Matcher sig = java.util.regex.Pattern
+                .compile("public\\s+Page<\\s*(\\w+)\\s*>\\s+\\w+\\s*\\(", java.util.regex.Pattern.MULTILINE)
+                .matcher(updated);
+        if (sig.find()) {
+            dtoType = sig.group(1);
+        }
+
+        String iPageVar = "result";
+        java.util.regex.Matcher iPageMatcher = java.util.regex.Pattern
+                .compile("IPage<[^>]+>\\s+(\\w+)\\s*=", java.util.regex.Pattern.MULTILINE)
+                .matcher(updated);
+        while (iPageMatcher.find()) {
+            iPageVar = iPageMatcher.group(1);
+        }
+
+        java.util.regex.Matcher pageImplMatcher = java.util.regex.Pattern
+                .compile(
+                        "return\\s+new\\s+PageImpl<[^>]*>\\(\\s*(\\w+)\\s*,\\s*PageRequest\\.of\\([\\s\\S]*?\\)\\s*,\\s*([^\\)]+)\\);",
+                        java.util.regex.Pattern.MULTILINE)
+                .matcher(updated);
+
+        if (pageImplMatcher.find()) {
+            String recordsVar = pageImplMatcher.group(1);
+            String totalExpr = pageImplMatcher.group(2).trim();
+
+            String type = dtoType != null ? dtoType : "Object";
+            String replacement = ""
+                    + "Page<" + type + "> dtoPage = new Page<>(" + iPageVar + ".getCurrent(), " + iPageVar
+                    + ".getSize(), " + totalExpr + ");\n"
+                    + "        dtoPage.setRecords(" + recordsVar + ");\n"
+                    + "        return dtoPage;";
+
+            updated = pageImplMatcher.replaceFirst(replacement);
+        }
+
+        return updated;
+    }
+
+    /**
+     * 为使用了 Lombok 注解但缺少 import 的文件补齐导入，避免编译失败。
+     *
+     * 说明：
+     * - 这是“生成后防线”，用于提升一次性编译通过率
+     * - 仅补齐常见 Lombok 注解的 import，不改变业务逻辑
+     */
+    private String injectMissingLombokImports(String content) {
+        if (content == null || content.isBlank())
+            return content;
+
+        // 若已使用通配符导入，则无需补齐
+        if (content.contains("import lombok.*;")) {
+            return content;
+        }
+
+        record LombokImport(String annotation, String importLine) {
+        }
+        List<LombokImport> candidates = List.of(
+                new LombokImport("@Data", "import lombok.Data;"),
+                new LombokImport("@Builder", "import lombok.Builder;"),
+                new LombokImport("@NoArgsConstructor", "import lombok.NoArgsConstructor;"),
+                new LombokImport("@AllArgsConstructor", "import lombok.AllArgsConstructor;"),
+                new LombokImport("@RequiredArgsConstructor", "import lombok.RequiredArgsConstructor;"),
+                new LombokImport("@Getter", "import lombok.Getter;"),
+                new LombokImport("@Setter", "import lombok.Setter;"),
+                new LombokImport("@EqualsAndHashCode", "import lombok.EqualsAndHashCode;"),
+                new LombokImport("@ToString", "import lombok.ToString;"),
+                new LombokImport("@Slf4j", "import lombok.extern.slf4j.Slf4j;"));
+
+        List<String> missing = new ArrayList<>();
+        for (LombokImport cand : candidates) {
+            if (!content.contains(cand.annotation()))
+                continue;
+            if (content.contains(cand.importLine()))
+                continue;
+            missing.add(cand.importLine());
+        }
+
+        if (missing.isEmpty())
+            return content;
+
+        String[] lines = content.split("\n", -1);
+
+        int packageLine = -1;
+        int lastImportLine = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (packageLine < 0 && line.startsWith("package ") && line.endsWith(";")) {
+                packageLine = i;
+            }
+            if (line.startsWith("import ") && line.endsWith(";")) {
+                lastImportLine = i;
+            }
+        }
+
+        // 没有 package 的情况直接返回（异常输出，避免破坏）
+        if (packageLine < 0)
+            return content;
+
+        int insertAt = lastImportLine >= 0 ? (lastImportLine + 1) : (packageLine + 1);
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            if (i == insertAt) {
+                // 若紧贴 package 行且下一行非空，补一个空行再加 import
+                if (lastImportLine < 0 && (i < lines.length) && !lines[i].trim().isEmpty()) {
+                    sb.append("\n");
+                }
+                for (String imp : missing) {
+                    sb.append(imp).append("\n");
+                }
+            }
+            sb.append(lines[i]);
+            if (i < lines.length - 1)
+                sb.append("\n");
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * 为常见的“缺少 import 导致编译失败”提供生成后补齐能力（提升一次性编译通过率）。
+     *
+     * 典型失败场景：
+     * - 使用了 List/Map/Set/Instant 等类型但忘记 import
+     * - 使用了 MyBatis-Plus 的 LambdaQueryWrapper/QueryWrapper 但忘记 import
+     *
+     * 说明：
+     * - 这是“生成后防线”，不改变业务语义，仅做保守补齐
+     * - 即使出现未使用 import，Maven 默认也不会因为未使用 import 而编译失败（且优先保证可编译）
+     */
+    private String injectCommonImports(String content) {
+        if (content == null || content.isBlank())
+            return content;
+
+        // 若已使用通配符导入，则无需补齐
+        if (content.contains("import java.util.*;") || content.contains("import java.time.*;")) {
+            return content;
+        }
+
+        record CommonImport(String token, String importLine) {
+        }
+        List<CommonImport> candidates = List.of(
+                new CommonImport("IPage", "import com.baomidou.mybatisplus.core.metadata.IPage;"),
+                new CommonImport("List", "import java.util.List;"),
+                new CommonImport("Map", "import java.util.Map;"),
+                new CommonImport("Set", "import java.util.Set;"),
+                new CommonImport("Collection", "import java.util.Collection;"),
+                new CommonImport("UUID", "import java.util.UUID;"),
+                new CommonImport("Instant", "import java.time.Instant;"),
+                new CommonImport("LocalDateTime", "import java.time.LocalDateTime;"),
+                new CommonImport("LocalDate", "import java.time.LocalDate;"),
+                new CommonImport("BigDecimal", "import java.math.BigDecimal;"),
+                new CommonImport("Stream", "import java.util.stream.Stream;"),
+                new CommonImport("Collectors", "import java.util.stream.Collectors;"),
+                new CommonImport("LambdaQueryWrapper",
+                        "import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;"),
+                new CommonImport("QueryWrapper", "import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;"),
+                new CommonImport("Wrappers", "import com.baomidou.mybatisplus.core.toolkit.Wrappers;"));
+
+        List<String> missing = new ArrayList<>();
+        for (CommonImport cand : candidates) {
+            // 已经显式全限定名使用则跳过
+            if (content.contains(cand.importLine()))
+                continue;
+            if (content.contains(cand.importLine().replace("import ", "").replace(";", "")))
+                continue;
+
+            // 仅在源文件中“看起来”使用过该标识符时补齐（保守：允许命中注释）
+            Pattern tokenPattern = Pattern.compile("\\b" + Pattern.quote(cand.token()) + "\\b");
+            if (!tokenPattern.matcher(content).find())
+                continue;
+            missing.add(cand.importLine());
+        }
+
+        if (missing.isEmpty())
+            return content;
+
+        String[] lines = content.split("\n", -1);
+        int packageLine = -1;
+        int lastImportLine = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (packageLine < 0 && line.startsWith("package ") && line.endsWith(";")) {
+                packageLine = i;
+            }
+            if (line.startsWith("import ") && line.endsWith(";")) {
+                lastImportLine = i;
+            }
+        }
+
+        // 没有 package 的情况直接返回（异常输出，避免破坏）
+        if (packageLine < 0)
+            return content;
+
+        int insertAt = lastImportLine >= 0 ? (lastImportLine + 1) : (packageLine + 1);
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < lines.length; i++) {
+            if (i == insertAt) {
+                if (lastImportLine < 0 && (i < lines.length) && !lines[i].trim().isEmpty()) {
+                    sb.append("\n");
+                }
+                for (String imp : missing) {
+                    sb.append(imp).append("\n");
+                }
+            }
+            sb.append(lines[i]);
+            if (i < lines.length - 1)
+                sb.append("\n");
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * 修复 MyBatis-Plus 分页类型不一致导致的泛型推断编译错误（提升一次性编译通过率）。
+     *
+     * 典型错误：
+     * - Controller 方法签名返回 ResponseEntity<Page<DTO>>
+     * - Service 返回 IPage<DTO>
+     * - 触发 javac：inference variable T has incompatible bounds
+     *
+     * 兜底策略（保守）：
+     * - 若发现 `ResponseEntity<Page<...>>` 且直接
+     * `ResponseEntity.ok(taskService.xxx(...))`，
+     * 则将返回类型改为 `ResponseEntity<IPage<...>>`（不改动业务逻辑）
+     */
+    private String rewriteMyBatisPlusPageMismatch(String content) {
+        if (content == null || content.isBlank())
+            return content;
+
+        boolean hasResponseEntityPage = content.contains("ResponseEntity<Page<");
+        boolean returnsFromService = content.contains("ResponseEntity.ok(taskService.");
+        if (hasResponseEntityPage && returnsFromService) {
+            return content.replace("ResponseEntity<Page<", "ResponseEntity<IPage<");
+        }
+
+        boolean hasResultPage = content.contains("Result<Page<");
+        boolean returnsResultFromService = content.contains("Result.success(") && content.contains("taskService.");
+        if (hasResultPage && returnsResultFromService) {
+            return content.replace("Result<Page<", "Result<IPage<");
+        }
+
+        return content;
+    }
+
+    /**
+     * 将 MapStruct 风格的 BeanConverter 改写为最小可用实现，避免缺少 MapStruct 依赖导致编译失败。
+     *
+     * 背景：
+     * - 模型常常“自作主张”生成 `@Mapper interface BeanConverter` 并引用 `org.mapstruct.*`
+     * - 生成工程默认不引入 MapStruct，会直接编译失败
+     *
+     * 兜底策略：
+     * - 若检测到 BeanConverter + org.mapstruct，则替换为基于 Spring BeanUtils 的简单实现
+     */
+    private String rewriteMapStructBeanConverter(String content) {
+        if (content == null || content.isBlank())
+            return content;
+        if (!content.contains("org.mapstruct"))
+            return content;
+        if (!content.contains("BeanConverter"))
+            return content;
+
+        // 仅在“看起来就是 BeanConverter 定义文件”时触发（避免误伤其他 Mapper）
+        boolean looksLikeBeanConverterDefinition = Pattern.compile("\\b(interface|class)\\s+BeanConverter\\b")
+                .matcher(content).find();
+        if (!looksLikeBeanConverterDefinition) {
+            return content;
+        }
+
+        return """
+                package com.ingenio.backend.util;
+
+                import org.springframework.beans.BeanUtils;
+                import org.springframework.stereotype.Component;
+
+                import java.util.ArrayList;
+                import java.util.List;
+
+                /**
+                 * 对象转换/拷贝工具组件（G3 生成代码兜底）
+                 *
+                 * <p>用途：为生成的 Service 层提供最小可用的对象转换能力，避免引用缺失/不在依赖中的转换器导致编译失败。</p>
+                 *
+                 * <p>注意：该实现以“可编译、可运行”为第一目标；复杂映射建议在业务代码中显式编写。</p>
+                 */
+                @Component
+                public class BeanConverter {
+
+                    /**
+                     * 将 source 转换为 targetClass 类型（基于属性名拷贝）
+                     *
+                     * @param source      源对象（可为空）
+                     * @param targetClass 目标类型
+                     * @param <T>         目标类型
+                     * @return 目标对象（source 为空则返回 null）
+                     */
+                    public <T> T convert(Object source, Class<T> targetClass) {
+                        if (source == null) {
+                            return null;
+                        }
+                        try {
+                            T target = targetClass.getDeclaredConstructor().newInstance();
+                            BeanUtils.copyProperties(source, target);
+                            return target;
+                        } catch (Exception e) {
+                            throw new IllegalStateException("对象转换失败: " + targetClass.getSimpleName(), e);
+                        }
+                    }
+
+                    /**
+                     * 将 source 的同名属性拷贝到 target
+                     *
+                     * @param source 源对象（可为空）
+                     * @param target 目标对象（不可为空）
+                     */
+                    public void copyProperties(Object source, Object target) {
+                        if (source == null || target == null) {
+                            return;
+                        }
+                        BeanUtils.copyProperties(source, target);
+                    }
+
+                    /**
+                     * 列表转换（逐项 convert）
+                     *
+                     * @param sourceList  源列表（可为空）
+                     * @param targetClass 目标类型
+                     * @param <S>         源类型
+                     * @param <T>         目标类型
+                     * @return 目标列表（sourceList 为空返回空列表）
+                     */
+                    public <S, T> List<T> convertList(List<S> sourceList, Class<T> targetClass) {
+                        if (sourceList == null || sourceList.isEmpty()) {
+                            return List.of();
+                        }
+                        List<T> result = new ArrayList<>(sourceList.size());
+                        for (S item : sourceList) {
+                            result.add(convert(item, targetClass));
+                        }
+                        return result;
+                    }
+                }
+                """.trim();
+    }
+
+    /**
+     * 修复 MyBatis-Plus Page.convert(...) 的返回类型不匹配问题（提升一次性编译通过率）。
+     *
+     * 背景：
+     * - `Page<T>.convert(Function)` 在签名上返回 `IPage<R>`（而不是 `Page<R>`）
+     * - 模型常会写出 `public Page<DTO> xxx() { return page.convert(...); }` 触发编译失败
+     *
+     * 兜底策略（保守）：
+     * - 若方法返回类型是 `Page<DTO>` 且直接 `return something.convert(...)`，
+     * 则对返回表达式加一个显式强转：`return (Page<DTO>) something.convert(...)`
+     *
+     * 说明：
+     * - 对于 MyBatis-Plus 的 Page 实现，这个强转在实践中通常成立（convert 会返回 Page 的实现）
+     * - 该兜底优先保证“可编译”；更推荐在生成时让 Service/Controller 统一使用 `IPage<DTO>` 返回
+     */
+    private String rewriteMyBatisPlusPageConvertReturn(String content) {
+        if (content == null || content.isBlank())
+            return content;
+        if (!content.contains(".convert("))
+            return content;
+        if (!content.contains("public Page<"))
+            return content;
+
+        Matcher m = Pattern.compile("public\\s+Page<\\s*(\\w+)\\s*>\\s+\\w+\\s*\\(").matcher(content);
+        if (!m.find())
+            return content;
+        String dtoType = m.group(1);
+
+        // 已经加过强转则跳过
+        if (content.contains("return (Page<" + dtoType + ">)")) {
+            return content;
+        }
+
+        // 仅处理“直接 return ...convert(...)”的场景，避免误伤其他 return
+        return content.replaceFirst(
+                "(?m)^\\s*return\\s+([^;]+\\.convert\\([^;]+\\))\\s*;\\s*$",
+                "        return (Page<" + dtoType + ">) $1;");
+    }
+
+    /**
      * 清理Markdown代码块标记
      */
     private String cleanMarkdownBlocks(String content) {
-        if (content == null) return "";
+        if (content == null)
+            return "";
 
         // 移除 ```java 和 ``` 标记
         content = content.replaceAll("```java\\s*", "");
