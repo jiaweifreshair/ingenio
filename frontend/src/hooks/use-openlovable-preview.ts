@@ -36,6 +36,23 @@ import {
 } from '@/lib/openlovable/sandbox-lifecycle';
 import type { SandboxInfo } from '@/lib/openlovable/sandbox-lifecycle';
 export type { SandboxInfo } from '@/lib/openlovable/sandbox-lifecycle';
+import { useLanguage } from '@/contexts/LanguageContext';
+
+/**
+ * OpenLovable 生成模型/提示词配置（前端透传给后端代理）
+ *
+ * 说明：
+ * - 为支持“切换 deepseek / deepseek-r1-0528 + 推理模式”，这里通过 NEXT_PUBLIC 环境变量启用。
+ * - 不配置时保持现有行为（由后端/上游自行选择默认模型与提示词策略）。
+ *
+ * 可选：
+ * - NEXT_PUBLIC_OPENLOVABLE_MODEL_PRESET=deepseek-reasoning
+ *   -> promptProfile=reasoning, modelCandidates=["deepseek-r1-0528","deepseek"]
+ * - NEXT_PUBLIC_OPENLOVABLE_MODEL_PRESET=cn-abtest
+ *   -> 用于对照测试：编程(minimax/minimax-m2.1) + 意图识别(deepseek/deepseek-r1-0528) + 测试(z-ai/glm-4.7)
+ *   -> 说明：`intentModel/testModel/programmingModel` 会原样透传给 open-lovable-cn（若上游支持则生效；不支持则忽略，不影响主流程）
+ */
+const OPENLOVABLE_MODEL_PRESET = (process.env.NEXT_PUBLIC_OPENLOVABLE_MODEL_PRESET || '').trim();
 
 // ==================== 类型定义 ====================
 
@@ -123,6 +140,7 @@ export interface UseOpenLovablePreviewReturn {
 export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = null): UseOpenLovablePreviewReturn {
   // 状态
   const [stage, setStage] = useState<GenerationStage>('idle');
+  const { language } = useLanguage();
   const [sandboxInfo, setSandboxInfo] = useState<SandboxInfo | null>(null);
   const [generatedFiles, setGeneratedFiles] = useState<GeneratedFile[]>([]);
   const [currentFile, setCurrentFile] = useState<GeneratedFile | null>(null);
@@ -211,6 +229,27 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
       const apiUrl = `${API_BASE_URL}/v1/openlovable/generate/stream`;
       const token = getToken();
 
+      // 模型配置：优先使用 Gemini，DeepSeek 作为兜底
+      const modelOptions =
+        OPENLOVABLE_MODEL_PRESET === 'deepseek-reasoning'
+          ? {
+              promptProfile: 'reasoning',
+              modelCandidates: ['deepseek-r1-0528', 'deepseek'],
+            }
+          : OPENLOVABLE_MODEL_PRESET === 'cn-abtest'
+            ? {
+                // 编程模型：用于代码生成（作为候选首选）
+                modelCandidates: ['minimax/minimax-m2.1', 'deepseek/deepseek-r1-0528'],
+                // 下面三个字段用于对照测试：如果 open-lovable-cn 支持分阶段模型配置，将会生效
+                programmingModel: 'minimax/minimax-m2.1',
+                intentModel: 'deepseek/deepseek-r1-0528',
+                testModel: 'z-ai/glm-4.7',
+              }
+            : {
+                // 默认配置：使用已配置的OpenAI兼容模型
+                modelCandidates: ['gpt-4o', 'gpt-4o-mini'],
+              };
+
       let accumulationState = getInitialOpenLovableAccumulationState();
 
       fetch(apiUrl, {
@@ -219,7 +258,7 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': token } : {}),
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, ...(modelOptions || {}), language }),
       })
         .then(response => {
           if (!response.ok) {
