@@ -58,7 +58,71 @@ public class OpenLovableController {
     @Value("${ingenio.openlovable.base-url:http://localhost:3001}")
     private String openLovableBaseUrl;
 
+    /**
+     * Tailwind 颜色别名映射
+     *
+     * 是什么：将非官方色名映射到 Tailwind 内置色名的映射表。
+     * 做什么：为 sand/seafoam/sage/coral 等别名提供可用的替代色。
+     * 为什么：沙箱禁止覆盖 tailwind.config 时，这些自定义色会导致 @apply 报错白屏。
+     */
+    private static final Map<String, String> TAILWIND_COLOR_ALIAS_MAP = Map.of(
+            "sand", "stone",
+            "seafoam", "emerald",
+            "sage", "green",
+            "coral", "rose"
+    );
+
+    /**
+     * Tailwind 颜色别名匹配模式
+     *
+     * 是什么：匹配 sand/seafoam/sage/coral 等非默认色的 Tailwind 色阶写法。
+     * 做什么：定位需要替换的颜色 token（如 sand-50）。
+     * 为什么：保证自动替换只作用于颜色 token，避免误伤其他文本。
+     */
+    private static final Pattern TAILWIND_COLOR_ALIAS_PATTERN = Pattern.compile(
+            "\\b(sand|seafoam|sage|coral)-(50|100|200|300|400|500|600|700|800|900|950)\\b"
+    );
+
     private final RestTemplate restTemplate = new RestTemplate();
+
+    /**
+     * 归一化模型名（用于候选模型去重/稳定性兜底判断）
+     *
+     * 规则：
+     * - 支持 `provider/model` 形式：取最后一个 `/` 之后的尾段作为“模型 key”
+     * - 支持裸模型名：直接返回
+     *
+     * 示例：
+     * - deepseek/deepseek-r1-0528 -> deepseek-r1-0528
+     * - minimax/minimax-m2.1 -> minimax-m2.1
+     * - z-ai/glm-4.7 -> glm-4.7
+     */
+    private static String normalizeModelKey(String model) {
+        if (model == null)
+            return "";
+        String trimmed = model.trim();
+        if (trimmed.isEmpty())
+            return "";
+        int idx = trimmed.lastIndexOf('/');
+        return (idx >= 0 && idx + 1 < trimmed.length()) ? trimmed.substring(idx + 1) : trimmed;
+    }
+
+    /**
+     * 检测提示词是否残留未替换占位符
+     *
+     * 是什么：判断增强后的提示词是否仍包含字面量“%s”。
+     * 做什么：在进入上游生成前拦截异常提示词，避免上下文污染。
+     * 为什么：残留占位符会触发模型误判，导致生成内容跑偏。
+     */
+    private boolean containsUnresolvedPromptPlaceholder(String prompt, String originalPrompt) {
+        if (prompt == null || prompt.isBlank()) {
+            return false;
+        }
+        if (!prompt.contains("%s")) {
+            return false;
+        }
+        return originalPrompt == null || !originalPrompt.contains("%s");
+    }
 
     /**
      * 创建AI沙箱
@@ -67,11 +131,11 @@ public class OpenLovableController {
      *
      * 响应示例：
      * {
-     *   "success": true,
-     *   "sandboxId": "sb_xxxxx",
-     *   "url": "https://xxxxx.vercel.app",
-     *   "provider": "vercel",
-     *   "message": "Sandbox created and Vite React app initialized"
+     * "success": true,
+     * "sandboxId": "sb_xxxxx",
+     * "url": "https://xxxxx.vercel.app",
+     * "provider": "vercel",
+     * "message": "Sandbox created and Vite React app initialized"
      * }
      */
     @PostMapping("/sandbox/create")
@@ -100,8 +164,8 @@ public class OpenLovableController {
      *
      * 请求体：
      * {
-     *   "userMessage": "创建一个待办事项应用",
-     *   "model": "deepseek-v3.2"
+     * "userMessage": "创建一个待办事项应用",
+     * "model": "deepseek-v3.2"
      * }
      *
      * 响应格式：Server-Sent Events (SSE)
@@ -121,6 +185,12 @@ public class OpenLovableController {
             // 参数适配：OpenLovable期望的参数格式
             Map<String, Object> adaptedRequest = new java.util.HashMap<>(request);
 
+            // 前端透传的“策略字段”不应该直接传给上游（由代理层消费后转换为 model/prompt）
+            Object promptProfileObjRaw = adaptedRequest.remove("promptProfile");
+            Object modelCandidatesObjRaw = adaptedRequest.remove("modelCandidates");
+            Object modelPresetObjRaw = adaptedRequest.remove("modelPreset");
+            Object reasoningObjRaw = adaptedRequest.remove("reasoning");
+
             // 1. 将userMessage/userRequirement转换为prompt
             String originalPrompt = null;
             if (adaptedRequest.containsKey("userMessage")) {
@@ -133,6 +203,57 @@ public class OpenLovableController {
                 originalPrompt = (String) adaptedRequest.get("prompt");
             }
 
+            // 快速预览生成（prototype preview）判断：
+            // - 前端快速预览在生成代码时会传 sandboxId=pending（表示先生成代码，后创建沙箱并 apply）
+            // - 对这类请求：优先稳定/速度，避免长提示词 + 慢模型导致上游 240s 超时
+            boolean isFastPreview = false;
+            Object fastPreviewObj = request.get("fastPreview");
+            if (fastPreviewObj instanceof Boolean b && b) {
+                isFastPreview = true;
+            }
+            Object sandboxIdObjForDetect = request.get("sandboxId");
+            if (sandboxIdObjForDetect instanceof String s && "pending".equalsIgnoreCase(s.trim())) {
+                isFastPreview = true;
+            }
+
+            // 推理模式（显式请求优先，不被 fast preview 覆盖）
+            String promptProfile = null;
+            if (promptProfileObjRaw instanceof String s && !s.isBlank()) {
+                promptProfile = s.trim();
+            } else if (modelPresetObjRaw instanceof String s && !s.isBlank()) {
+                // 兼容 preset：deepseek-reasoning
+                if ("deepseek-reasoning".equalsIgnoreCase(s.trim())) {
+                    promptProfile = "reasoning";
+                }
+            } else if (reasoningObjRaw instanceof Boolean b && b) {
+                promptProfile = "reasoning";
+            }
+
+            if ("fast".equalsIgnoreCase(promptProfile)) {
+                isFastPreview = true;
+            }
+
+            final String effectivePromptProfile;
+            if ("reasoning".equalsIgnoreCase(promptProfile)) {
+                effectivePromptProfile = "reasoning";
+            } else if (isFastPreview) {
+                // 需求变更：快速预览默认质量优先（推理模式），仅在用户显式选择 fast 时才走快档
+                effectivePromptProfile = "reasoning";
+            } else {
+                effectivePromptProfile = "quality";
+            }
+
+            // 1.6 提取语言设置（用于动态适配生成网站的语言）
+            // - "zh" 表示中文网站（默认）
+            // - "en" 表示英文网站
+            String targetLanguage = "zh"; // 默认中文
+            Object languageObj = adaptedRequest.remove("language");
+            if (languageObj instanceof String lang && !lang.isBlank()) {
+                targetLanguage = lang.trim().toLowerCase();
+                log.info("目标语言设置: {}", targetLanguage);
+            }
+            final String effectiveLanguage = targetLanguage;
+
             // 1.5 处理 Scout 模版上下文 (Phase 7 Integration)
             if (adaptedRequest.containsKey("templateContext")) {
                 String templateContext = (String) adaptedRequest.remove("templateContext");
@@ -142,26 +263,108 @@ public class OpenLovableController {
                 }
             }
 
-            // 2. 【方案A核心】增强提示词 - 添加结构化思维要求
-            if (originalPrompt != null && !originalPrompt.isEmpty()) {
-                String enhancedPrompt = enhancePromptWithStructuredThinking(originalPrompt);
-                adaptedRequest.put("prompt", enhancedPrompt);
-                log.info("提示词增强: 原长度={}, 增强后长度={}", originalPrompt.length(), enhancedPrompt.length());
+            // 1.7 领域引导：需求明确时追加结构化约束，避免模板跑偏
+            if (originalPrompt != null && !originalPrompt.isBlank()) {
+                String domainGuidance = buildDomainGuidance(originalPrompt, effectiveLanguage);
+                if (domainGuidance != null && !domainGuidance.isBlank()) {
+                    originalPrompt = originalPrompt + "\n\n" + domainGuidance;
+                    log.info("已注入领域引导");
+                }
             }
 
-            // 2.1 默认模型：优先走 Gemini 3 Pro（OpenLovable-CN 的 gemini- 前缀模型）
-            // 若前端未指定 model，这里不强制设置默认值，交由 OpenLovable-CN 依据自身配置决定（避免代理层默认值与上游可用模型不一致）。
+            // 2. 增强提示词（传入语言参数）
+            if (originalPrompt != null && !originalPrompt.isEmpty()) {
+                String enhancedPrompt = switch (effectivePromptProfile) {
+                    case "reasoning" -> enhancePromptForReasoning(originalPrompt, effectiveLanguage);
+                    case "fast" -> enhancePromptForFastPreview(originalPrompt, effectiveLanguage);
+                    default -> enhancePromptWithStructuredThinking(originalPrompt, effectiveLanguage);
+                };
+                if (containsUnresolvedPromptPlaceholder(enhancedPrompt, originalPrompt)) {
+                    String message = "提示词模板包含未替换的占位符(%s)，已拒绝生成，请检查后端提示词模板。";
+                    log.error("提示词校验失败: {}", message);
+                    StreamingResponseBody errorStream = outputStream -> {
+                        String errorEvent = "data: {\"type\":\"error\",\"error\":\"" + message + "\"}\n\n";
+                        outputStream.write(errorEvent.getBytes(StandardCharsets.UTF_8));
+                        outputStream.flush();
+                    };
+                    return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                            .contentType(MediaType.TEXT_EVENT_STREAM)
+                            .header(HttpHeaders.CACHE_CONTROL, "no-cache")
+                            .header(HttpHeaders.CONNECTION, "keep-alive")
+                            .body(errorStream);
+                }
+                adaptedRequest.put("prompt", enhancedPrompt);
+                log.info("提示词增强: profile={}, language={}, 原长度={}, 增强后长度={}",
+                        effectivePromptProfile,
+                        effectiveLanguage,
+                        originalPrompt.length(),
+                        enhancedPrompt.length());
+            }
+
+            // 2.1 模型策略：支持候选模型切换（deepseek / deepseek-r1-0528）
+            // 规则：
+            // - 若请求显式传 model，则以该 model 为首选（不会强行覆盖）
+            // - 若传 modelCandidates，则按候选顺序尝试
+            // - 推理模式默认候选：deepseek-r1-0528 -> deepseek
+            // - fast 默认候选：deepseek-v3（兼容当前稳定快路径）
+            java.util.List<String> modelCandidates = new java.util.ArrayList<>();
+            if (modelCandidatesObjRaw instanceof java.util.List<?> list) {
+                for (Object item : list) {
+                    if (item instanceof String s && !s.isBlank()) {
+                        modelCandidates.add(s.trim());
+                    }
+                }
+            }
+
             Object modelObj = adaptedRequest.get("model");
             boolean hasValidModel = modelObj instanceof String && !((String) modelObj).isBlank();
-            if (!hasValidModel) {
-                adaptedRequest.remove("model");
-                log.debug("参数适配: 未指定model，交由 OpenLovable-CN 选择默认模型");
+            if (hasValidModel) {
+                // 若已经指定了 model，并且候选为空，则仅使用该 model（避免意外切换）
+                if (modelCandidates.isEmpty()) {
+                    modelCandidates.add(((String) modelObj).trim());
+                }
+            } else {
+                // 未指定 model：根据 profile 选择默认候选
+                if (modelCandidates.isEmpty()) {
+                    if ("reasoning".equalsIgnoreCase(effectivePromptProfile)) {
+                        modelCandidates.add("deepseek-r1-0528");
+                        modelCandidates.add("deepseek");
+                    } else if ("fast".equalsIgnoreCase(effectivePromptProfile)) {
+                        modelCandidates.add("deepseek-v3");
+                    }
+                }
+                // 如果仍为空，则交由上游默认选择
+                if (!modelCandidates.isEmpty()) {
+                    adaptedRequest.put("model", modelCandidates.get(0));
+                } else {
+                    adaptedRequest.remove("model");
+                    log.debug("参数适配: 未指定model，交由 OpenLovable-CN 选择默认模型");
+                }
+            }
+
+            // 稳定性兜底：当显式指定的模型不可用/不返回代码时，追加一个已验证可工作的候选，避免用户直接失败
+            // 注意：不覆盖用户候选，仅作为最后一次自动尝试
+            //
+            // 兼容说明：
+            // - UniAix/聚合网关常用 `provider/model` 形式（如 deepseek/deepseek-r1-0528）
+            // - 上游 open-lovable-cn 也可能接受“裸模型名”（如 deepseek-v3）
+            // 因此这里做“尾段模型名”归一化判断，避免重复追加或追加错误前缀。
+            if ("reasoning".equalsIgnoreCase(effectivePromptProfile)) {
+                boolean hasStable = modelCandidates.stream()
+                        .map(OpenLovableController::normalizeModelKey)
+                        .anyMatch("deepseek-v3"::equalsIgnoreCase);
+                if (!hasStable) {
+                    boolean useDeepseekNamespace = modelCandidates.stream()
+                            .anyMatch(m -> m != null && m.trim().toLowerCase().startsWith("deepseek/"));
+                    modelCandidates.add(useDeepseekNamespace ? "deepseek/deepseek-v3" : "deepseek-v3");
+                }
             }
 
             // 3. 将sandboxId包装到context对象中
             if (adaptedRequest.containsKey("sandboxId")) {
                 Object sandboxIdObj = adaptedRequest.remove("sandboxId");
-                if (sandboxIdObj instanceof String sandboxId && !sandboxId.isBlank() && !"pending".equalsIgnoreCase(sandboxId)) {
+                if (sandboxIdObj instanceof String sandboxId && !sandboxId.isBlank()
+                        && !"pending".equalsIgnoreCase(sandboxId)) {
                     Map<String, Object> context = new HashMap<>();
                     context.put("sandboxId", sandboxId);
                     adaptedRequest.put("context", context);
@@ -172,25 +375,66 @@ public class OpenLovableController {
             }
 
             log.debug("适配后请求体: {}", adaptedRequest);
+            log.info("OpenLovable生成策略: profile={}, candidates={}", effectivePromptProfile, modelCandidates);
+
+            final String originalPromptFinal = originalPrompt;
 
             StreamingResponseBody stream = outputStream -> {
                 try {
-                    // 第一次转发：按原始请求走上游
-                    ForwardSseResult first = forwardGenerateSse(url, adaptedRequest, outputStream, true);
+                    java.util.List<String> candidates = modelCandidates.isEmpty() ? java.util.List.of()
+                            : java.util.List.copyOf(modelCandidates);
+                    int attempts = candidates.isEmpty() ? 1 : candidates.size();
 
-                    // 🔧 修复：上游偶发返回 complete 但 generatedCode 为空，且没有任何 stream/content 增量
-                    // 这种情况下前端会判定“AI生成的代码为空”。这里在代理层做一次自动重试（模型回退），避免用户手动重试。
-                    if (!first.hasAnyCode()) {
-                        String notice = "data: {\"type\":\"status\",\"message\":\"⚠️ 上游返回空代码，正在自动重试（模型回退: deepseek-r1）...\"}\n\n";
+                    ForwardSseResult lastResult = null;
+                    for (int attempt = 0; attempt < attempts; attempt++) {
+                        boolean hasNext = attempt + 1 < attempts;
+
+                        Map<String, Object> attemptRequest = new HashMap<>(adaptedRequest);
+                        if (!candidates.isEmpty()) {
+                            attemptRequest.put("model", candidates.get(attempt));
+                        }
+
+                        // 推理模式首轮可能更慢：若发生超时/空代码，后续尝试走更快提示词，降低继续超时概率
+                        if (hasNext && "reasoning".equalsIgnoreCase(effectivePromptProfile)) {
+                            if (originalPromptFinal != null && !originalPromptFinal.isBlank()) {
+                                attemptRequest.put("prompt",
+                                        enhancePromptForReasoning(originalPromptFinal, effectiveLanguage));
+                            }
+                        }
+
+                        boolean suppressEmptyComplete = hasNext; // 有后续才抑制“空complete”
+                        boolean suppressTimeoutError = hasNext; // 有后续才抑制“超时error”
+
+                        String prefix = "reasoning".equalsIgnoreCase(effectivePromptProfile) ? "🧠 深度思考中" : "🤖 生成中";
+                        String notice = attempt == 0
+                                ? "data: {\"type\":\"status\",\"message\":\"" + prefix + "...\"}\n\n"
+                                : "data: {\"type\":\"status\",\"message\":\"🔁 自动重试中...\"}\n\n";
                         outputStream.write(notice.getBytes(StandardCharsets.UTF_8));
                         outputStream.flush();
 
-                        Map<String, Object> retryRequest = new HashMap<>(adaptedRequest);
-                        retryRequest.put("model", "deepseek-r1");
+                        ForwardSseResult result = forwardGenerateSse(url, attemptRequest, outputStream,
+                                suppressEmptyComplete, suppressTimeoutError);
+                        lastResult = result;
 
-                        ForwardSseResult second = forwardGenerateSse(url, retryRequest, outputStream, false);
-                        if (!second.hasAnyCode()) {
-                            log.warn("OpenLovable 两次生成均返回空代码，请检查上游模型/密钥配置或 OpenLovable 日志");
+                        boolean shouldRetry = !result.hasAnyCode()
+                                || (result.hasTimeoutError() && !result.hasCompleteCode());
+
+                        if (!shouldRetry) {
+                            break;
+                        }
+                    }
+
+                    if (lastResult != null) {
+                        boolean failed = !lastResult.hasAnyCode()
+                                || (lastResult.hasTimeoutError() && !lastResult.hasCompleteCode());
+                        if (failed) {
+                            String msg = lastResult.hasTimeoutError()
+                                    ? "OpenLovable 生成超时（240s），建议切换模型或降低生成复杂度后重试"
+                                    : "OpenLovable 返回空代码，请检查上游模型/密钥配置或稍后重试";
+                            log.warn(msg);
+                            String errorMessage = "data: {\"type\":\"error\",\"error\":\"" + msg + "\"}\n\n";
+                            outputStream.write(errorMessage.getBytes(StandardCharsets.UTF_8));
+                            outputStream.flush();
                         }
                     }
 
@@ -227,9 +471,9 @@ public class OpenLovableController {
      *
      * 响应示例：
      * {
-     *   "sandboxId": "sb_xxxxx",
-     *   "status": "running",
-     *   "url": "https://xxxxx.vercel.app"
+     * "sandboxId": "sb_xxxxx",
+     * "status": "running",
+     * "url": "https://xxxxx.vercel.app"
      * }
      */
     @GetMapping("/sandbox/status")
@@ -261,8 +505,8 @@ public class OpenLovableController {
      *
      * 响应示例：
      * {
-     *   "success": true,
-     *   "message": "Sandbox terminated"
+     * "success": true,
+     * "message": "Sandbox terminated"
      * }
      */
     @PostMapping("/sandbox/kill")
@@ -289,7 +533,7 @@ public class OpenLovableController {
      *
      * 请求体：
      * {
-     *   "sandboxId": "sb_xxxxx"
+     * "sandboxId": "sb_xxxxx"
      * }
      *
      * 说明：
@@ -327,7 +571,7 @@ public class OpenLovableController {
      *
      * 请求体：
      * {
-     *   "sandboxId": "sb_xxxxx"
+     * "sandboxId": "sb_xxxxx"
      * }
      *
      * 说明：
@@ -352,8 +596,7 @@ public class OpenLovableController {
 
             HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(
                     Map.of("sandboxId", sandboxId),
-                    headers
-            );
+                    headers);
 
             log.info("清理Sandbox: sandboxId={}, url={}", sandboxId, url);
 
@@ -373,9 +616,9 @@ public class OpenLovableController {
      *
      * 响应示例：
      * {
-     *   "status": "ok",
-     *   "service": "open-lovable",
-     *   "baseUrl": "http://localhost:3001"
+     * "status": "ok",
+     * "service": "open-lovable",
+     * "baseUrl": "http://localhost:3001"
      * }
      */
     @GetMapping("/health")
@@ -388,8 +631,7 @@ public class OpenLovableController {
                     "status", "ok",
                     "service", "open-lovable",
                     "baseUrl", openLovableBaseUrl,
-                    "upstream", response.getBody()
-            )));
+                    "upstream", response.getBody())));
 
         } catch (Exception e) {
             log.error("健康检查失败", e);
@@ -405,16 +647,16 @@ public class OpenLovableController {
      *
      * 请求体示例：
      * {
-     *   "sandboxId": "idk3msrrff9vnoboa9e34",
-     *   "response": "<file path=\"src/App.jsx\">...</file>..."
+     * "sandboxId": "idk3msrrff9vnoboa9e34",
+     * "response": "<file path=\"src/App.jsx\">...</file>..."
      * }
      *
      * 响应示例：
      * {
-     *   "success": true,
-     *   "filesWritten": 5,
-     *   "packagesInstalled": ["react-router-dom"],
-     *   "message": "代码已成功应用到沙箱"
+     * "success": true,
+     * "filesWritten": 5,
+     * "packagesInstalled": ["react-router-dom"],
+     * "message": "代码已成功应用到沙箱"
      * }
      */
     @PostMapping("/apply")
@@ -454,14 +696,46 @@ public class OpenLovableController {
             }
 
             // V2.2增强：保护沙箱基础配置，避免 AI 覆盖关键配置导致预览白屏
-            OpenLovableResponseSanitizer.SanitizeResult sanitizeResult =
-                    OpenLovableResponseSanitizer.sanitizeForSandboxApply(aiResponse);
+            // V2.3增强：package.json 智能合并，保留模板配置并添加AI生成的依赖
+            OpenLovableResponseSanitizer.SanitizeResult sanitizeResult = OpenLovableResponseSanitizer
+                    .sanitizeForSandboxApply(aiResponse);
             if (sanitizeResult.removedPaths() != null && !sanitizeResult.removedPaths().isEmpty()) {
                 log.info("已过滤 {} 个高风险配置文件，防止破坏沙箱模板: {}",
                         sanitizeResult.removedPaths().size(),
                         sanitizeResult.removedPaths());
-                aiResponse = sanitizeResult.sanitizedResponse();
             }
+            if (sanitizeResult.mergedPaths() != null && !sanitizeResult.mergedPaths().isEmpty()) {
+                log.info("已智能合并 {} 个配置文件（保留模板配置，添加AI依赖）: {}",
+                        sanitizeResult.mergedPaths().size(),
+                        sanitizeResult.mergedPaths());
+            }
+            if (sanitizeResult.truncatedPaths() != null && !sanitizeResult.truncatedPaths().isEmpty()) {
+                log.error("检测到 {} 个截断文件，拒绝写入: {}",
+                        sanitizeResult.truncatedPaths().size(),
+                        sanitizeResult.truncatedPaths());
+                return ResponseEntity.badRequest()
+                        .body(Result.error(400, String.format(
+                                "AI代码生成不完整：检测到 %d 个截断文件（%s）。请重新生成以获取完整代码。",
+                                sanitizeResult.truncatedPaths().size(),
+                                String.join(", ", sanitizeResult.truncatedPaths())
+                        )));
+            }
+            aiResponse = sanitizeResult.sanitizedResponse();
+
+            // V2.4增强：仅保留 <file ...>...</file>，剥离非文件文本，避免上游解析误判
+            java.util.List<OpenLovableResponseSanitizer.FileBlock> fileBlocks =
+                    OpenLovableResponseSanitizer.extractFileBlocks(aiResponse);
+            if (fileBlocks.isEmpty()) {
+                log.warn("apply请求未解析到任何文件块，已拒绝写入");
+                return ResponseEntity.badRequest()
+                        .body(Result.error(400, "AI代码格式异常：未解析到有效的 <file path=\"...\"> 文件块"));
+            }
+            fileBlocks = normalizeTailwindColorAliasesInBlocks(fileBlocks);
+            String strippedResponse = OpenLovableResponseSanitizer.buildResponseFromFileBlocks(fileBlocks);
+            if (!strippedResponse.equals(aiResponse)) {
+                log.info("已剥离非文件文本: 原长度={} 新长度={}", aiResponse.length(), strippedResponse.length());
+            }
+            aiResponse = strippedResponse;
 
             // 基础校验：OpenLovable apply 依赖 <file path="...">...</file> 结构
             if (!aiResponse.contains("<file")) {
@@ -474,9 +748,55 @@ public class OpenLovableController {
             request.put("response", aiResponse);
 
             // 从AI响应中解析文件数量（作为备用）
-            int parsedFilesCount = countFilesInResponse(aiResponse);
+            int parsedFilesCount = fileBlocks.size();
             log.info("从AI响应中解析到 {} 个文件", parsedFilesCount);
 
+            ApplyOutcome applyOutcome = executeOpenLovableApply(request);
+            if (!applyOutcome.success()) {
+                return ResponseEntity.status(applyOutcome.httpStatus())
+                        .body(Result.error(applyOutcome.httpStatus(), applyOutcome.errorMessage()));
+            }
+
+            Map<String, Object> finalResult = applyOutcome.result();
+            boolean repaired = verifyAndRepairMockDataExports(
+                    fileBlocks,
+                    finalResult,
+                    request.get("sandboxId") instanceof String sid ? sid : null
+            );
+            if (repaired) {
+                log.info("mockData 导出异常已自动修复");
+            }
+
+            return ResponseEntity.ok(Result.success(finalResult));
+
+        } catch (Exception e) {
+            log.error("应用AI代码失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Result.error("应用代码失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * OpenLovable apply 执行结果
+     *
+     * 是什么：封装 apply 调用的核心结果与错误信息。
+     * 做什么：让主流程与修复流程复用统一的 apply 逻辑。
+     * 为什么：避免重复解析 SSE 带来的维护风险。
+     */
+    private record ApplyOutcome(boolean success, int httpStatus, String errorMessage,
+                                Map<String, Object> result, int filesWritten) {}
+
+    /**
+     * 执行 OpenLovable apply 并解析 SSE 响应
+     *
+     * 是什么：封装调用 open-lovable-cn 的 apply 流程。
+     * 做什么：将请求发给上游并提取最终结果/错误信息。
+     * 为什么：支撑主流程与修复流程一致性。
+     */
+    private ApplyOutcome executeOpenLovableApply(Map<String, Object> request) {
+        String url = openLovableBaseUrl + "/api/apply-ai-code-stream";
+
+        try {
             // 使用HttpURLConnection处理SSE流式响应
             URL targetUrl = new URL(url);
             HttpURLConnection connection = (HttpURLConnection) targetUrl.openConnection();
@@ -488,8 +808,8 @@ public class OpenLovableController {
             // 设置超时：apply操作需要写入文件、安装依赖 - V2.0优化
             // readTimeout是指两次read()之间的最大间隔，SSE流持续有数据时不会触发
             // 设置为2分钟作为兜底，如果操作卡住则快速失败
-            connection.setConnectTimeout(30000);   // 连接超时30秒
-            connection.setReadTimeout(120000);     // 读取超时2分钟（120秒）- V2.0优化
+            connection.setConnectTimeout(30000); // 连接超时30秒
+            connection.setReadTimeout(120000); // 读取超时2分钟（120秒）- V2.0优化
 
             // 发送请求体
             String jsonBody = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(request);
@@ -511,8 +831,8 @@ public class OpenLovableController {
                 }
                 String preview = upstreamBody.length() > 500 ? upstreamBody.substring(0, 500) + "..." : upstreamBody;
                 log.error("OpenLovable apply返回错误: status={}, body={}", upstreamStatus, preview);
-                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                        .body(Result.error(502, "OpenLovable apply失败: " + upstreamStatus));
+                return new ApplyOutcome(false, HttpStatus.BAD_GATEWAY.value(),
+                        "OpenLovable apply失败: " + upstreamStatus, null, 0);
             }
 
             // 读取SSE流式响应
@@ -526,7 +846,8 @@ public class OpenLovableController {
             java.util.List<String> warnings = new java.util.ArrayList<>();
 
             try (InputStream inputStream = connection.getInputStream();
-                 BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+                    BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
 
                 String line;
                 while ((line = reader.readLine()) != null) {
@@ -551,7 +872,8 @@ public class OpenLovableController {
                                     // 兼容前端通用字段
                                     finalResult.put("url", urlStr);
                                 }
-                                if (eventData.get("replacedSandboxId") instanceof String replaced && !replaced.isBlank()) {
+                                if (eventData.get("replacedSandboxId") instanceof String replaced
+                                        && !replaced.isBlank()) {
                                     finalResult.put("replacedSandboxId", replaced);
                                 }
                                 if (eventData.get("provider") instanceof String provider && !provider.isBlank()) {
@@ -595,8 +917,10 @@ public class OpenLovableController {
                                 Object filePathAlt = eventData.get("path");
                                 Object errorMsg = eventData.get("error");
                                 Object errorMsgAlt = eventData.get("message");
-                                String path = (filePath != null) ? filePath.toString() : (filePathAlt != null ? filePathAlt.toString() : "unknown");
-                                String err = (errorMsg != null) ? errorMsg.toString() : (errorMsgAlt != null ? errorMsgAlt.toString() : "未知错误");
+                                String path = (filePath != null) ? filePath.toString()
+                                        : (filePathAlt != null ? filePathAlt.toString() : "unknown");
+                                String err = (errorMsg != null) ? errorMsg.toString()
+                                        : (errorMsgAlt != null ? errorMsgAlt.toString() : "未知错误");
                                 String fileErrorInfo = String.format("文件 %s 写入失败: %s", path, err);
                                 fileErrors.add(fileErrorInfo);
                                 log.warn("SSE file-error: {}", fileErrorInfo);
@@ -622,14 +946,14 @@ public class OpenLovableController {
 
             if (upstreamErrorMessage != null && !upstreamErrorMessage.isBlank()) {
                 log.error("OpenLovable apply 失败（error事件）: {}", upstreamErrorMessage);
-                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                        .body(Result.error(502, "OpenLovable apply失败: " + upstreamErrorMessage));
+                return new ApplyOutcome(false, HttpStatus.BAD_GATEWAY.value(),
+                        "OpenLovable apply失败: " + upstreamErrorMessage, null, 0);
             }
 
             if (!receivedComplete) {
                 log.error("OpenLovable apply 未返回 complete 事件，已拒绝返回假成功");
-                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                        .body(Result.error(502, "OpenLovable apply未返回complete事件，请稍后重试"));
+                return new ApplyOutcome(false, HttpStatus.BAD_GATEWAY.value(),
+                        "OpenLovable apply未返回complete事件，请稍后重试", null, 0);
             }
 
             // 计算写入文件数
@@ -654,26 +978,247 @@ public class OpenLovableController {
                     log.error("OpenLovable apply 完成但写入文件数为0，疑似上游异常（无file-error事件）");
                 }
                 if (!warnings.isEmpty()) {
-                    errorDetail.append("警告信息:\n");
+                    errorDetail.append("\n警告信息:\n");
                     for (String w : warnings) {
                         errorDetail.append("  - ").append(w).append("\n");
                     }
                     log.warn("OpenLovable apply warnings: {}", warnings);
                 }
-                return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
-                        .body(Result.error(502, errorDetail.toString().trim()));
+                return new ApplyOutcome(false, HttpStatus.BAD_GATEWAY.value(), errorDetail.toString().trim(), null, 0);
             }
 
             finalResult.put("filesWritten", filesWritten);
-
             log.info("代码应用成功: 写入{}个文件 (receivedComplete={})", filesWritten, receivedComplete);
-            return ResponseEntity.ok(Result.success(finalResult));
-
+            return new ApplyOutcome(true, HttpStatus.OK.value(), "", finalResult, filesWritten);
         } catch (Exception e) {
-            log.error("应用AI代码失败", e);
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(Result.error("应用代码失败: " + e.getMessage()));
+            log.error("OpenLovable apply 请求异常", e);
+            return new ApplyOutcome(false, HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                    "OpenLovable apply请求异常: " + e.getMessage(), null, 0);
         }
+    }
+
+    /**
+     * 校验并修复 mockData 导出一致性
+     *
+     * 是什么：检查沙箱中的 src/data/mockData.jsx 是否包含必需导出。
+     * 做什么：若缺失导出则自动重试 apply 一次进行修复。
+     * 为什么：避免 import 命名导出失败导致预览白屏。
+     */
+    private boolean verifyAndRepairMockDataExports(
+            java.util.List<OpenLovableResponseSanitizer.FileBlock> fileBlocks,
+            Map<String, Object> applyResult,
+            String fallbackSandboxId
+    ) {
+        if (fileBlocks == null || fileBlocks.isEmpty()) {
+            return false;
+        }
+
+        Map<String, String> fileContentMap = new java.util.HashMap<>();
+        boolean referencesMockData = false;
+        for (OpenLovableResponseSanitizer.FileBlock block : fileBlocks) {
+            fileContentMap.put(block.normalizedPath(), block.content());
+            if (block.content() != null && block.content().contains("mockData")) {
+                referencesMockData = true;
+            }
+        }
+
+        String expectedContent = fileContentMap.get("src/data/mockData.jsx");
+        if (!referencesMockData && (expectedContent == null || expectedContent.isBlank())) {
+            return false;
+        }
+
+        String sandboxUrl = null;
+        if (applyResult != null) {
+            Object urlObj = applyResult.get("sandboxUrl");
+            if (!(urlObj instanceof String urlStr) || urlStr.isBlank()) {
+                urlObj = applyResult.get("url");
+            }
+            if (urlObj instanceof String urlStr && !urlStr.isBlank()) {
+                sandboxUrl = urlStr;
+            }
+        }
+
+        String sandboxId = null;
+        if (applyResult != null && applyResult.get("sandboxId") instanceof String sid && !sid.isBlank()) {
+            sandboxId = sid;
+        } else if (fallbackSandboxId != null && !fallbackSandboxId.isBlank()) {
+            sandboxId = fallbackSandboxId;
+        }
+
+        if (sandboxUrl == null || sandboxId == null) {
+            log.warn("mockData 校验跳过：缺少 sandboxUrl/sandboxId");
+            return false;
+        }
+
+        String actualContent = fetchSandboxFileContent(sandboxUrl, "src/data/mockData.jsx");
+        if (actualContent != null && hasRequiredMockDataExports(actualContent)) {
+            return false;
+        }
+
+        String repairContent = expectedContent;
+        if (repairContent == null || repairContent.isBlank() || !hasRequiredMockDataExports(repairContent)) {
+            repairContent = buildMockDataFallbackContent();
+            log.warn("mockData 原始内容缺少必要导出，已回退到最小可运行占位数据");
+        }
+
+        String patchResponse = "<file path=\"src/data/mockData.jsx\">\n" + repairContent + "\n</file>";
+        Map<String, Object> patchRequest = new HashMap<>();
+        patchRequest.put("sandboxId", sandboxId);
+        patchRequest.put("response", patchResponse);
+
+        ApplyOutcome patchOutcome = executeOpenLovableApply(patchRequest);
+        if (!patchOutcome.success()) {
+            log.warn("mockData 修复失败: {}", patchOutcome.errorMessage());
+            return false;
+        }
+
+        log.info("mockData 修复成功: sandboxId={}", sandboxId);
+        return true;
+    }
+
+    /**
+     * 拉取沙箱中的文件内容
+     *
+     * 是什么：通过沙箱预览地址获取指定文件的源码。
+     * 做什么：用于校验应用实际加载的文件内容。
+     * 为什么：避免只靠 AI 输出判断，忽略上游覆盖导致的白屏。
+     */
+    private String fetchSandboxFileContent(String sandboxUrl, String filePath) {
+        String normalizedBase = sandboxUrl.endsWith("/") ? sandboxUrl.substring(0, sandboxUrl.length() - 1) : sandboxUrl;
+        String target = normalizedBase + "/" + filePath;
+
+        try {
+            HttpURLConnection connection = (HttpURLConnection) new URL(target).openConnection();
+            connection.setRequestMethod("GET");
+            connection.setConnectTimeout(5000);
+            connection.setReadTimeout(5000);
+
+            int status = connection.getResponseCode();
+            if (status < 200 || status >= 300) {
+                log.warn("读取沙箱文件失败: url={}, status={}", target, status);
+                return null;
+            }
+
+            try (InputStream inputStream = connection.getInputStream();
+                    BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+                return reader.lines().collect(Collectors.joining("\n"));
+            }
+        } catch (Exception e) {
+            log.warn("读取沙箱文件异常: url={}, err={}", target, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 判断 mockData 是否包含必需导出
+     *
+     * 是什么：检查 currentUser/currentRepo 等核心导出是否存在。
+     * 做什么：作为“预览白屏”快速兜底的判断条件。
+     * 为什么：命名导出缺失会直接导致 import 失败。
+     */
+    private boolean hasRequiredMockDataExports(String content) {
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+        return content.contains("export const currentUser")
+                && content.contains("export const currentRepo");
+    }
+
+    /**
+     * 构建 mockData 最小占位数据
+     *
+     * 是什么：提供一个最小可运行的数据模块内容。
+     * 做什么：在 AI 输出缺失导出时兜底，避免运行时崩溃。
+     * 为什么：保障预览稳定性，避免白屏影响用户流程。
+     */
+    private String buildMockDataFallbackContent() {
+        return """
+                import { AlertCircle, FileCode, ShieldAlert, Zap } from 'lucide-react';
+
+                export const currentUser = {
+                  login: 'user',
+                  avatarUrl: ''
+                };
+
+                export const currentRepo = {
+                  owner: 'demo',
+                  name: 'demo-repo',
+                  isPublic: true,
+                  description: '占位数据：用于保证预览可运行',
+                  stars: '0',
+                  forks: '0',
+                  watching: '0',
+                  tags: [],
+                  lastUpdate: '刚刚'
+                };
+
+                export const fileStructure = [];
+
+                export const aiReviewSummary = {
+                  grade: 'N/A',
+                  score: 0,
+                  issuesFound: 0,
+                  critical: 0,
+                  warnings: 0,
+                  suggestions: 0,
+                  lastScan: '未扫描'
+                };
+
+                export const aiIssues = [
+                  {
+                    id: 1,
+                    severity: 'warning',
+                    type: 'placeholder',
+                    title: '占位告警',
+                    file: 'src/data/mockData.jsx',
+                    line: 1,
+                    description: '当前为占位数据，等待 AI 输出完整内容。',
+                    suggestion: '请重新生成或手动补全数据。',
+                    icon: AlertCircle,
+                    color: 'text-yellow-600',
+                    bgColor: 'bg-yellow-50'
+                  },
+                  {
+                    id: 2,
+                    severity: 'info',
+                    type: 'placeholder',
+                    title: '占位提示',
+                    file: 'src/data/mockData.jsx',
+                    line: 1,
+                    description: '此文件为兜底生成，确保页面可渲染。',
+                    suggestion: '请检查模型输出质量。',
+                    icon: ShieldAlert,
+                    color: 'text-blue-600',
+                    bgColor: 'bg-blue-50'
+                  },
+                  {
+                    id: 3,
+                    severity: 'info',
+                    type: 'placeholder',
+                    title: '占位提示',
+                    file: 'src/data/mockData.jsx',
+                    line: 1,
+                    description: '可在生成完成后替换为真实数据。',
+                    suggestion: '保持文件导出完整。',
+                    icon: FileCode,
+                    color: 'text-green-600',
+                    bgColor: 'bg-green-50'
+                  },
+                  {
+                    id: 4,
+                    severity: 'info',
+                    type: 'placeholder',
+                    title: '占位提示',
+                    file: 'src/data/mockData.jsx',
+                    line: 1,
+                    description: '当前模块用于避免 import 失败。',
+                    suggestion: '重新生成以覆盖。',
+                    icon: Zap,
+                    color: 'text-purple-600',
+                    bgColor: 'bg-purple-50'
+                  }
+                ];
+                """;
     }
 
     /**
@@ -685,13 +1230,13 @@ public class OpenLovableController {
      *
      * 请求体（可选）：
      * {
-     *   "sandboxId": "imvbokfo0hay4na5cxqrq"  // 指定sandbox ID，确保重启正确的sandbox
+     * "sandboxId": "imvbokfo0hay4na5cxqrq" // 指定sandbox ID，确保重启正确的sandbox
      * }
      *
      * 响应示例：
      * {
-     *   "success": true,
-     *   "message": "Vite server restarted successfully"
+     * "success": true,
+     * "message": "Vite server restarted successfully"
      * }
      */
     @PostMapping("/restart-vite")
@@ -744,7 +1289,8 @@ public class OpenLovableController {
         }
 
         // 匹配 <file path="...">...</file> 块，支持单引号/双引号，保留原始 open tag
-        Pattern filePattern = Pattern.compile("(<file\\s+path=['\"]([^'\"]+)['\"][^>]*>)([\\s\\S]*?)(</file>)", Pattern.CASE_INSENSITIVE);
+        Pattern filePattern = Pattern.compile("(<file\\s+path=['\"]([^'\"]+)['\"][^>]*>)([\\s\\S]*?)(</file>)",
+                Pattern.CASE_INSENSITIVE);
         Matcher matcher = filePattern.matcher(response);
         StringBuffer sb = new StringBuffer();
         boolean changed = false;
@@ -807,7 +1353,8 @@ public class OpenLovableController {
         }
 
         // 检查是否已经从 react 导入了这些 Hook
-        Pattern reactImportPattern = Pattern.compile("^import\\s+[^;]*\\s+from\\s+['\"]react['\"];?\\s*$", Pattern.MULTILINE);
+        Pattern reactImportPattern = Pattern.compile("^import\\s+[^;]*\\s+from\\s+['\"]react['\"];?\\s*$",
+                Pattern.MULTILINE);
         Matcher reactImportMatcher = reactImportPattern.matcher(fileContent);
 
         if (!reactImportMatcher.find()) {
@@ -848,8 +1395,10 @@ public class OpenLovableController {
                 updatedImportLine = importLine + extra;
             } else {
                 // 默认导入或无默认导入，统一改成 React + 命名导入
-                updatedImportLine = importLine.replace("from 'react'", ", { " + String.join(", ", required) + " } from 'react'");
-                updatedImportLine = updatedImportLine.replace("from \"react\"", ", { " + String.join(", ", required) + " } from \"react\"");
+                updatedImportLine = importLine.replace("from 'react'",
+                        ", { " + String.join(", ", required) + " } from 'react'");
+                updatedImportLine = updatedImportLine.replace("from \"react\"",
+                        ", { " + String.join(", ", required) + " } from \"react\"");
             }
         }
 
@@ -873,7 +1422,8 @@ public class OpenLovableController {
         // 使用Set去重，防止重复文件
         java.util.Set<String> filePaths = new java.util.HashSet<>();
         // 兼容单/双引号与大小写差异
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("<file\\s+path=['\"]([^'\"]+)['\"]", java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("<file\\s+path=['\"]([^'\"]+)['\"]",
+                java.util.regex.Pattern.CASE_INSENSITIVE);
         java.util.regex.Matcher matcher = pattern.matcher(response);
 
         while (matcher.find()) {
@@ -911,7 +1461,8 @@ public class OpenLovableController {
         }
 
         // 检查 main.jsx 是否存在且非空
-        Pattern mainJsxPattern = Pattern.compile("<file\\s+path=['\"]src/main\\.jsx['\"][^>]*>([\\s\\S]*?)</file>", Pattern.CASE_INSENSITIVE);
+        Pattern mainJsxPattern = Pattern.compile("<file\\s+path=['\"]src/main\\.jsx['\"][^>]*>([\\s\\S]*?)</file>",
+                Pattern.CASE_INSENSITIVE);
         Matcher mainJsxMatcher = mainJsxPattern.matcher(response);
 
         boolean hasMainJsx = false;
@@ -931,8 +1482,7 @@ public class OpenLovableController {
             if (hasMainJsx && mainJsxIsEmpty) {
                 // 替换空的main.jsx
                 response = mainJsxMatcher.replaceFirst(
-                    Matcher.quoteReplacement("<file path=\"src/main.jsx\">\n" + standardMainJsx + "\n</file>")
-                );
+                        Matcher.quoteReplacement("<file path=\"src/main.jsx\">\n" + standardMainJsx + "\n</file>"));
             } else {
                 // 追加main.jsx
                 // 在最后一个 </file> 后面追加
@@ -953,15 +1503,15 @@ public class OpenLovableController {
      */
     private String generateStandardMainJsx() {
         return "import React from 'react'\n" +
-               "import ReactDOM from 'react-dom/client'\n" +
-               "import App from './App'\n" +
-               "import './index.css'\n" +
-               "\n" +
-               "ReactDOM.createRoot(document.getElementById('root')).render(\n" +
-               "  <React.StrictMode>\n" +
-               "    <App />\n" +
-               "  </React.StrictMode>,\n" +
-               ")";
+                "import ReactDOM from 'react-dom/client'\n" +
+                "import App from './App'\n" +
+                "import './index.css'\n" +
+                "\n" +
+                "ReactDOM.createRoot(document.getElementById('root')).render(\n" +
+                "  <React.StrictMode>\n" +
+                "    <App />\n" +
+                "  </React.StrictMode>,\n" +
+                ")";
     }
 
     /**
@@ -976,7 +1526,8 @@ public class OpenLovableController {
         }
 
         // 匹配空文件：<file path="..."></file> 或内容只有空白字符
-        Pattern emptyFilePattern = Pattern.compile("<file\\s+path=['\"]([^'\"]+)['\"][^>]*>\\s*</file>", Pattern.CASE_INSENSITIVE);
+        Pattern emptyFilePattern = Pattern.compile("<file\\s+path=['\"]([^'\"]+)['\"][^>]*>\\s*</file>",
+                Pattern.CASE_INSENSITIVE);
         Matcher emptyFileMatcher = emptyFilePattern.matcher(response);
 
         StringBuffer sb = new StringBuffer();
@@ -1028,7 +1579,8 @@ public class OpenLovableController {
             }
 
             // 检查main.jsx是否为空
-            Pattern mainJsxPattern = Pattern.compile("<file\\s+path=['\"]src/main\\.jsx['\"][^>]*>([\\s\\S]*?)</file>", Pattern.CASE_INSENSITIVE);
+            Pattern mainJsxPattern = Pattern.compile("<file\\s+path=['\"]src/main\\.jsx['\"][^>]*>([\\s\\S]*?)</file>",
+                    Pattern.CASE_INSENSITIVE);
             Matcher mainJsxMatcher = mainJsxPattern.matcher(generatedCode);
 
             if (mainJsxMatcher.find()) {
@@ -1037,8 +1589,7 @@ public class OpenLovableController {
                     // main.jsx为空，替换为完整内容
                     String standardMainJsx = generateStandardMainJsx();
                     String fixedCode = mainJsxMatcher.replaceFirst(
-                        Matcher.quoteReplacement("<file path=\"src/main.jsx\">\n" + standardMainJsx + "\n</file>")
-                    );
+                            Matcher.quoteReplacement("<file path=\"src/main.jsx\">\n" + standardMainJsx + "\n</file>"));
                     eventData.put("generatedCode", fixedCode);
                     log.info("✅ generate阶段修复: main.jsx为空 -> 已注入完整入口文件");
 
@@ -1080,15 +1631,27 @@ public class OpenLovableController {
     private static final class ForwardSseResult {
         private final boolean hasDelta;
         private final boolean hasCompleteCode;
+        private final boolean hasTimeoutError;
+        private final String lastError;
 
-        private ForwardSseResult(boolean hasDelta, boolean hasCompleteCode) {
+        private ForwardSseResult(boolean hasDelta, boolean hasCompleteCode, boolean hasTimeoutError, String lastError) {
             this.hasDelta = hasDelta;
             this.hasCompleteCode = hasCompleteCode;
+            this.hasTimeoutError = hasTimeoutError;
+            this.lastError = lastError;
         }
 
         /** 是否已拿到任何可用于 apply 的代码输出。 */
         private boolean hasAnyCode() {
             return hasDelta || hasCompleteCode;
+        }
+
+        private boolean hasCompleteCode() {
+            return hasCompleteCode;
+        }
+
+        private boolean hasTimeoutError() {
+            return hasTimeoutError;
         }
     }
 
@@ -1097,22 +1660,26 @@ public class OpenLovableController {
      *
      * 统计规则：
      * - 只要出现过 type=stream/type=content 的增量事件，即认为上游输出了代码（hasDelta=true）。
-     * - 若 type=complete 的 generatedCode 非空且包含 <file 标签，则认为上游输出了最终代码（hasCompleteCode=true）。
+     * - 若 type=complete 的 generatedCode 非空且包含 <file
+     * 标签，则认为上游输出了最终代码（hasCompleteCode=true）。
      *
-     * @param url OpenLovable generate SSE 上游地址
-     * @param requestBody 适配后的请求体
-     * @param outputStream 代理输出流（返回给前端的 SSE）
-     * @param suppressEmptyComplete 是否在“无增量且 complete.generatedCode 为空”时抑制该 complete 事件（避免前端误判已完成）
+     * @param url                   OpenLovable generate SSE 上游地址
+     * @param requestBody           适配后的请求体
+     * @param outputStream          代理输出流（返回给前端的 SSE）
+     * @param suppressEmptyComplete 是否在“无增量且 complete.generatedCode 为空”时抑制该 complete
+     *                              事件（避免前端误判已完成）
      * @return 转发统计结果
      */
     private ForwardSseResult forwardGenerateSse(
             String url,
             Map<String, Object> requestBody,
             OutputStream outputStream,
-            boolean suppressEmptyComplete
-    ) throws IOException {
+            boolean suppressEmptyComplete,
+            boolean suppressTimeoutError) throws IOException {
         boolean hasDelta = false;
         boolean hasCompleteCode = false;
+        boolean hasTimeoutError = false;
+        String lastError = null;
 
         URL targetUrl = new URL(url);
         HttpURLConnection connection = (HttpURLConnection) targetUrl.openConnection();
@@ -1130,7 +1697,8 @@ public class OpenLovableController {
 
         // 读取SSE流式响应（以空行分隔事件），逐行转发给前端
         try (InputStream inputStream = connection.getInputStream();
-             BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+                BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
 
             String line;
             while ((line = reader.readLine()) != null) {
@@ -1140,6 +1708,24 @@ public class OpenLovableController {
                     // 轻量统计：避免对每个 chunk 做 JSON 解析
                     if (line.contains("\"type\":\"stream\"") || line.contains("\"type\":\"content\"")) {
                         hasDelta = true;
+                    }
+
+                    if (line.contains("\"type\":\"error\"")) {
+                        String error = extractErrorFromSseDataLine(line);
+                        lastError = error;
+                        if (error != null && error.contains("Stream total timeout")) {
+                            hasTimeoutError = true;
+                            if (suppressTimeoutError) {
+                                shouldForward = false;
+                            }
+                        }
+
+                        // error 事件一般为终止性事件：转发（或抑制）后中断读取，让外层决定是否重试
+                        if (shouldForward) {
+                            outputStream.write((line + "\n\n").getBytes(StandardCharsets.UTF_8));
+                            outputStream.flush();
+                        }
+                        break;
                     }
 
                     if (line.contains("\"type\":\"complete\"")) {
@@ -1153,7 +1739,8 @@ public class OpenLovableController {
                             Map<String, Object> eventData = mapper.readValue(jsonStr, Map.class);
                             Object generatedCodeObj = eventData.get("generatedCode");
                             String generatedCode = generatedCodeObj instanceof String ? (String) generatedCodeObj : "";
-                            if (generatedCode != null && !generatedCode.trim().isEmpty() && generatedCode.contains("<file")) {
+                            if (generatedCode != null && !generatedCode.trim().isEmpty()
+                                    && generatedCode.contains("<file")) {
                                 hasCompleteCode = true;
                             } else if (!hasDelta && suppressEmptyComplete) {
                                 // 无增量且 complete 无有效代码：抑制该 complete，后续在外层触发自动重试
@@ -1182,10 +1769,262 @@ public class OpenLovableController {
                     outputStream.flush();
                 }
             }
+        } finally {
+            connection.disconnect();
         }
 
         log.info("AI代码生成流式响应完成");
-        return new ForwardSseResult(hasDelta, hasCompleteCode);
+        return new ForwardSseResult(hasDelta, hasCompleteCode, hasTimeoutError, lastError);
+    }
+
+    /**
+     * 从 SSE 的 data 行中提取 error 字段（仅用于兜底重试判断）
+     *
+     * @param line 形如 "data: {\"type\":\"error\",\"error\":\"...\"}"
+     * @return error 内容（解析失败返回 null）
+     */
+    private String extractErrorFromSseDataLine(String line) {
+        if (line == null || !line.startsWith("data:")) {
+            return null;
+        }
+        String jsonStr = line.substring(5).trim();
+        if (jsonStr.startsWith("{")) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                Map<String, Object> eventData = mapper.readValue(jsonStr, Map.class);
+                Object errorObj = eventData.get("error");
+                return errorObj instanceof String ? (String) errorObj : null;
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 快速预览专用提示词（强调：可运行/少文件/短输出/避免超时）
+     */
+    /**
+     * 获取通用的UI设计规范指令
+     */
+    private String getCommonDesignInstructions(String langName) {
+        return String.format(
+                """
+                        ## 🎨 UI Design Standards (Mandatory)
+
+                        ### 1. Visual Direction
+                        - **Clear Direction**: Pick a bold, domain-appropriate visual direction; avoid generic SaaS styling.
+                        - **Color Palette**: Avoid purple-first palettes. Prefer calm, modern combinations using Tailwind default colors (stone + amber + emerald, or sky + amber + slate). Do not invent custom color names.
+                        - **Atmosphere**: Use layered gradients, soft radial glows, and subtle noise/patterns; avoid flat single-color backgrounds.
+
+                        ### 2. Typography
+                        - **Expressive Fonts**: Avoid Inter/Roboto/system. Import two Google Fonts and define heading/body families.
+                        - **Examples**: Chinese → "Noto Serif SC" + "Noto Sans SC"; English → "Space Grotesk" + "Manrope".
+
+                        ### 3. Components (Tailwind)
+                        - **Cards**: `rounded-2xl`, soft shadows, thin borders, generous padding.
+                        - **Buttons**: high-contrast, `rounded-lg`, subtle lift (`hover:translate-y-[-1px] hover:shadow-lg`).
+                        - **Inputs**: clear focus ring and roomy spacing.
+
+                        ### 4. Motion
+                        - **Meaningful**: Add 1-2 animations (page-load + staggered reveal). Use `motion-safe` and keep 300-600ms durations.
+
+                        ### 5. Layout & Responsiveness
+                        - **Mobile-First**: Always use `md:` `lg:` prefixes for larger screens.
+                        - **Container**: `max-w-7xl mx-auto px-4 sm:px-6 lg:px-8`.
+                        - **Grid**: Use `grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6`.
+
+                        ### 6. Icons
+                        - Use `lucide-react` for all icons.
+                        - Example: `<Activity className="w-5 h-5 text-emerald-500" />`
+                        """,
+                langName);
+    }
+
+    /**
+     * 构建领域引导文本
+     * 用途：当需求明显属于心理健康/青少年压力场景时，追加结构约束避免跑偏。
+     */
+    private String buildDomainGuidance(String requirement, String language) {
+        if (!isYouthStressRequirement(requirement)) {
+            return "";
+        }
+
+        String langName = "en".equalsIgnoreCase(language) ? "English" : "中文";
+        return String.format(
+                """
+                        ## Domain Guardrails (Youth Stress Management)
+                        - This product is a youth stress management system. Do NOT clone or reference unrelated industries (travel/booking/e-commerce), and never mention Airbnb unless explicitly requested.
+                        - Include separate surfaces for **Student** and **Teacher/Counselor**.
+                        - Must cover: stress self-assessment, mood diary, personalized exercises, risk alerts, and multi-agent collaboration (assessment / advice / alert).
+                        - Explicitly include data privacy and anonymized insights.
+                        - Visual tone: warm, calming, trustworthy, youth-friendly.
+                        - Typography: choose expressive fonts suitable for %s (e.g., "Noto Serif SC" + "Noto Sans SC").
+                        - Color direction: use Tailwind default colors (stone/amber/emerald or sky/amber/slate); avoid purple-first palettes.
+                        """,
+                langName);
+    }
+
+    /**
+     * 规范化文件块中的 Tailwind 颜色别名
+     *
+     * 是什么：遍历 AI 生成的文件块内容并进行颜色别名替换。
+     * 做什么：将 sand/seafoam/sage/coral 等别名替换为 Tailwind 内置色名。
+     * 为什么：避免 @apply 使用不存在的类导致 Vite/Tailwind 构建失败。
+     */
+    private java.util.List<OpenLovableResponseSanitizer.FileBlock> normalizeTailwindColorAliasesInBlocks(
+            java.util.List<OpenLovableResponseSanitizer.FileBlock> fileBlocks) {
+        if (fileBlocks == null || fileBlocks.isEmpty()) {
+            return fileBlocks;
+        }
+
+        java.util.List<OpenLovableResponseSanitizer.FileBlock> normalizedBlocks =
+                new java.util.ArrayList<>(fileBlocks.size());
+        boolean changed = false;
+
+        for (OpenLovableResponseSanitizer.FileBlock block : fileBlocks) {
+            String normalizedContent = normalizeTailwindColorAliases(block.content());
+            if (!java.util.Objects.equals(block.content(), normalizedContent)) {
+                changed = true;
+                block = new OpenLovableResponseSanitizer.FileBlock(
+                        block.normalizedPath(),
+                        block.rawPath(),
+                        block.openTag(),
+                        normalizedContent,
+                        block.closeTag()
+                );
+            }
+            normalizedBlocks.add(block);
+        }
+
+        if (changed) {
+            log.info("已自动规范化AI输出中的Tailwind颜色别名，避免自定义色名导致白屏");
+        }
+
+        return changed ? normalizedBlocks : fileBlocks;
+    }
+
+    /**
+     * 规范化内容中的 Tailwind 颜色别名
+     *
+     * 是什么：对单个文件内容进行颜色别名替换。
+     * 做什么：将 sand/seafoam/sage/coral 色阶映射为内置颜色色阶。
+     * 为什么：保证 @apply/bg/text 等 Tailwind 类不会因自定义色名而崩溃。
+     */
+    private String normalizeTailwindColorAliases(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+
+        Matcher matcher = TAILWIND_COLOR_ALIAS_PATTERN.matcher(content);
+        StringBuffer buffer = new StringBuffer();
+        boolean changed = false;
+
+        while (matcher.find()) {
+            String alias = matcher.group(1);
+            String shade = matcher.group(2);
+            String mapped = TAILWIND_COLOR_ALIAS_MAP.get(alias);
+            if (mapped == null) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group(0)));
+                continue;
+            }
+            String replacement = mapped + "-" + shade;
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
+            changed = true;
+        }
+
+        if (!changed) {
+            return content;
+        }
+
+        matcher.appendTail(buffer);
+        return buffer.toString();
+    }
+
+    /**
+     * 判断需求是否为青少年压力管理类
+     * 用途：决定是否注入心理健康领域提示，减少模型误判。
+     */
+    private boolean isYouthStressRequirement(String requirement) {
+        if (requirement == null || requirement.isBlank()) {
+            return false;
+        }
+
+        String lower = requirement.toLowerCase();
+        String[] keywords = new String[] {
+                "压力", "情绪", "心理", "青少年", "学生", "班主任", "心理老师", "焦虑", "抑郁",
+                "stress", "mental", "mood", "emotion", "counselor", "teen", "adolescent"
+        };
+        for (String keyword : keywords) {
+            if (lower.contains(keyword.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 快速预览专用提示词（强调：可运行/少文件/短输出/避免超时）
+     */
+    private String enhancePromptForFastPreview(String originalPrompt, String language) {
+        String langName = "en".equalsIgnoreCase(language) ? "English" : "中文";
+        String designSpecs = getCommonDesignInstructions(langName);
+
+        return String.format("""
+                你是资深前端工程师。目标：在 180 秒内生成“可运行”的 Vite + React Web 应用预览代码，优先保证可编译/可启动。
+
+                用户需求：
+                %s
+
+                强制要求：
+                1) **语言要求**：生成的网页UI文案必须强制使用**%s**。
+                2) 只输出代码，不要解释文字；输出必须使用 OpenLovable 格式：<file path="...">... </file>
+                3) 文件数量尽量少（建议 ≤ 12 个）；避免引入重量依赖（不要新增 UI 框架、不要 MapStruct/后端代码）
+                4) 先确保基础可运行：index.html、package.json、vite 配置、src/main.jsx、src/App.jsx
+                5) 必须使用 **Tailwind CSS** 实现设计，严禁写原生 CSS 文件。
+                6) 必须参考下方的 [UI Design Standards] 实现美观的界面，拒绝简陋设计。
+
+                %s
+
+                输出格式示例（仅示例，不要重复示例文字）：
+                <file path="src/App.jsx">...</file>
+                """, originalPrompt, langName, designSpecs);
+    }
+
+    /**
+     * 推理模式提示词（用于深度思考/更高质量代码生成）
+     *
+     * 说明：
+     * - “推理模式”要求模型在内部先做规划与推理，但输出中不要泄露思考过程，只输出代码
+     * - 对接 deepseek / deepseek-r1-0528 这类推理/代码能力更强的模型
+     * - 相比 quality 提示词：更聚焦“可运行 + 架构清晰 + 不超时”，避免过长的 UI 规范导致上游 240s 总超时
+     */
+    private String enhancePromptForReasoning(String originalPrompt, String language) {
+        String langName = "en".equalsIgnoreCase(language) ? "English" : "中文";
+        String designSpecs = getCommonDesignInstructions(langName);
+
+        return String.format(
+                """
+                        你是资深全栈工程师，请使用“推理模式”在内部先完成规划（不要把推理过程输出给用户），然后输出可运行的代码。
+
+                        用户需求：
+                        %s
+
+                        强制要求：
+                        1) **语言要求**：生成的网页UI文案必须强制使用**%s**。
+                        2) 只输出代码，不要输出解释/分析/清单；输出必须使用 OpenLovable 格式：<file path="...">...</file>
+                        3) 先规划文件与依赖顺序（在内部完成），保证项目可直接 `pnpm install && pnpm dev` 启动
+                        4) 产物必须包含：index.html、package.json、vite 配置、src/main.jsx、src/App.jsx（可再加少量组件/CSS）
+                        5) 控制输出规模：文件数建议 ≤ 18，避免引入重量依赖（不要新增 UI 框架）
+                        6) 生成过程中保持持续流式输出，优先写入关键入口文件（src/main.jsx / src/App.jsx）
+                        7) **Visuals**: Implement a polished, professional UI using Tailwind CSS. Follow the [UI Design Standards] below strictly.
+
+                        %s
+
+                        输出格式示例（仅示例，不要重复示例文字）：
+                        <file path="src/App.jsx">...</file>
+                        """,
+                originalPrompt, langName, designSpecs);
     }
 
     /**
@@ -1202,181 +2041,188 @@ public class OpenLovableController {
      * @param originalPrompt 用户原始需求
      * @return 增强后的提示词
      */
-    private String enhancePromptWithStructuredThinking(String originalPrompt) {
-        return String.format("""
-## 🎯 代码生成任务
+    private String enhancePromptWithStructuredThinking(String originalPrompt, String language) {
+        String langName = "en".equalsIgnoreCase(language) ? "English" : "中文";
+        return String.format(
+                """
+                        ## 🎯 代码生成任务
 
-### 用户需求
-%s
+                        ### 用户需求
+                        %s
 
----
+                        ---
 
-## 🎨 UI设计规范（强制遵守）
+                        ## 🎨 UI设计规范（强制遵守）
 
-### 1. 视觉风格
-- **现代简约设计**：干净、留白充足、视觉层次清晰
-- **配色方案**：使用专业的渐变色（如 from-indigo-500 to-purple-600），禁止使用单调的纯色背景
-- **卡片设计**：使用 rounded-xl shadow-lg 圆角阴影，hover时添加 hover:shadow-xl transition-all
-- **背景**：主背景使用 bg-gradient-to-br from-slate-50 to-slate-100，深色模式用 dark:from-slate-900 dark:to-slate-800
+                        ### 0. 语言与文案
+                        - **语言**：所有已显示的文案必须使用**%s**。
 
-### 2. 排版规范
-- **标题**：使用 text-2xl md:text-4xl font-bold，搭配渐变色 bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent
-- **正文**：text-gray-600 dark:text-gray-300，行高 leading-relaxed
-- **间距**：组件之间使用 space-y-6 或 gap-6，页面边距 px-4 md:px-8 py-8
+                        ### 1. 视觉风格
+                        - **现代简约设计**：干净、留白充足、视觉层次清晰
+                        - **配色方案**：使用有方向性的渐变与配色（如 from-emerald-500 via-amber-400 to-rose-400 或 from-sky-500 via-teal-400 to-amber-300），避免紫色主导与单调纯色背景
+                        - **卡片设计**：使用 rounded-2xl shadow-lg 圆角阴影，hover时添加 hover:shadow-xl transition-all
+                        - **背景**：主背景使用渐变 + 轻量纹理/径向光斑（示例：bg-gradient-to-br from-slate-50 to-stone-100 + bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))]）
 
-### 3. 交互动效
-- **按钮**：主按钮使用渐变色 bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white rounded-lg shadow-md hover:shadow-lg transition-all
-- **卡片悬停**：hover:scale-[1.02] hover:shadow-xl transition-all duration-300
-- **输入框**：focus:ring-2 focus:ring-indigo-500 focus:border-transparent rounded-lg border-gray-300
+                        ### 2. 排版规范
+                        - **字体**：选择两种非默认字体（避免 Inter/Roboto/system），标题可用衬线或几何风格，正文用高可读字体（示例：Noto Serif SC + Noto Sans SC）
+                        - **标题**：使用 text-2xl md:text-4xl font-bold，搭配渐变色 bg-gradient-to-r from-emerald-600 via-amber-500 to-rose-500 bg-clip-text text-transparent
+                        - **正文**：text-gray-600 dark:text-gray-300，行高 leading-relaxed
+                        - **间距**：组件之间使用 space-y-6 或 gap-6，页面边距 px-4 md:px-8 py-8
 
-### 4. 图标使用
-- **图标库**：优先使用 lucide-react（安装后导入）
-- **图标样式**：w-5 h-5 或 w-6 h-6，与文字配合时使用 inline-flex items-center gap-2
+                        ### 3. 交互动效
+                        - **按钮**：主按钮使用渐变色 bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-400 hover:from-emerald-600 hover:to-rose-500 text-white rounded-lg shadow-md hover:shadow-lg transition-all
+                        - **卡片悬停**：hover:scale-[1.02] hover:shadow-xl transition-all duration-300
+                        - **输入框**：focus:ring-2 focus:ring-emerald-500 focus:border-transparent rounded-lg border-gray-300
 
-### 5. 响应式设计
-- **移动优先**：基础样式为移动端，md: 前缀用于平板，lg: 前缀用于桌面
-- **网格布局**：grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6
-- **最大宽度**：max-w-7xl mx-auto 居中容器
+                        ### 4. 图标使用
+                        - **图标库**：优先使用 lucide-react（安装后导入）
+                        - **图标样式**：w-5 h-5 或 w-6 h-6，与文字配合时使用 inline-flex items-center gap-2
 
-### 6. 组件示例样式
+                        ### 5. 响应式设计
+                        - **移动优先**：基础样式为移动端，md: 前缀用于平板，lg: 前缀用于桌面
+                        - **网格布局**：grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6
+                        - **最大宽度**：max-w-7xl mx-auto 居中容器
 
-#### 英雄区(Hero Section)
-```jsx
-<section className="relative overflow-hidden bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 text-white py-20 md:py-32">
-  <div className="absolute inset-0 bg-black/10"></div>
-  <div className="relative max-w-7xl mx-auto px-4 text-center">
-    <h1 className="text-4xl md:text-6xl font-bold mb-6">标题文字</h1>
-    <p className="text-xl md:text-2xl text-white/80 mb-8 max-w-2xl mx-auto">描述文字</p>
-    <button className="bg-white text-indigo-600 px-8 py-3 rounded-full font-semibold hover:bg-gray-100 transition-all shadow-lg hover:shadow-xl">
-      开始使用
-    </button>
-  </div>
-</section>
-```
+                        ### 6. 组件示例样式
 
-#### 功能卡片
-```jsx
-<div className="group bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border border-gray-100">
-  <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center mb-4">
-    <Icon className="w-6 h-6 text-white" />
-  </div>
-  <h3 className="text-xl font-semibold text-gray-900 mb-2">功能标题</h3>
-  <p className="text-gray-600">功能描述文字</p>
-</div>
-```
+                        #### 英雄区(Hero Section)
+                        ```jsx
+                        <section className="relative overflow-hidden bg-gradient-to-br from-emerald-500 via-amber-400 to-rose-400 text-white py-20 md:py-32">
+                          <div className="absolute inset-0 bg-black/10"></div>
+                          <div className="relative max-w-7xl mx-auto px-4 text-center">
+                            <h1 className="text-4xl md:text-6xl font-bold mb-6">标题文字</h1>
+                            <p className="text-xl md:text-2xl text-white/80 mb-8 max-w-2xl mx-auto">描述文字</p>
+                            <button className="bg-white text-indigo-600 px-8 py-3 rounded-full font-semibold hover:bg-gray-100 transition-all shadow-lg hover:shadow-xl">
+                              开始使用
+                            </button>
+                          </div>
+                        </section>
+                        ```
 
----
+                        #### 功能卡片
+                        ```jsx
+                        <div className="group bg-white rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02] border border-gray-100">
+                          <div className="w-12 h-12 bg-gradient-to-br from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center mb-4">
+                            <Icon className="w-6 h-6 text-white" />
+                          </div>
+                          <h3 className="text-xl font-semibold text-gray-900 mb-2">功能标题</h3>
+                          <p className="text-gray-600">功能描述文字</p>
+                        </div>
+                        ```
 
-## 📋 强制执行：结构化思维过程
+                        ---
 
-在生成任何代码之前，你**必须**在 `<thinking>` 标签中完成以下分析：
+                        ## 📋 强制执行：结构化思维过程
 
-### Step 1: 需求理解
-- 用户要构建什么应用？核心功能有哪些？
+                        在生成任何代码之前，你**必须**在 `<thinking>` 标签中完成以下分析：
 
-### Step 2: UI设计规划
-- 页面布局结构（Hero、Features、Footer等）
-- 配色方案和视觉风格
-- 关键交互效果
+                        ### Step 1: 需求理解
+                        - 用户要构建什么应用？核心功能有哪些？
 
-### Step 3: 文件规划
-列出需要创建的文件（不含main.jsx，它是固定的）
+                        ### Step 2: UI设计规划
+                        - 页面布局结构（Hero、Features、Footer等）
+                        - 配色方案和视觉风格
+                        - 关键交互效果
 
-### Step 4: 依赖分析
-- 需要安装哪些第三方包？（lucide-react等）
+                        ### Step 3: 文件规划
+                        列出需要创建的文件（不含main.jsx，它是固定的）
 
----
+                        ### Step 4: 依赖分析
+                        - 需要安装哪些第三方包？（lucide-react等）
 
-## ⚠️ 关键要求
+                        ---
 
-1. **main.jsx是固定模板** - 直接使用下方提供的代码，**第一个输出**
-2. **代码必须完整** - 每个文件从第一行写到最后一行，禁止截断或省略
-3. **使用标准Tailwind类** - 遵循上方UI设计规范（禁止bg-background等自定义类）
-4. **视觉效果优先** - 必须使用渐变色、阴影、圆角、动画，让页面看起来专业美观
+                        ## ⚠️ 关键要求
 
----
+                        1. **main.jsx是固定模板** - 直接使用下方提供的代码，**第一个输出**
+                        2. **代码必须完整** - 每个文件从第一行写到最后一行，禁止截断或省略
+                        3. **使用标准Tailwind类** - 遵循上方UI设计规范（禁止bg-background等自定义类）
+                        4. **视觉效果优先** - 必须使用渐变色、阴影、圆角、动画，让页面看起来专业美观
 
-## 📤 输出格式（严格按此顺序）
+                        ---
 
-### 第一步：输出思考过程
-```xml
-<thinking>
-[简要分析：需求理解、UI设计规划、文件规划、依赖分析]
-</thinking>
-```
+                        ## 📤 输出格式（严格按此顺序）
 
-### 第二步：**首先输出main.jsx（固定代码，直接复制）**
-```xml
-<file path="src/main.jsx">
-import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App'
-import './index.css'
+                        ### 第一步：输出思考过程
+                        ```xml
+                        <thinking>
+                        [简要分析：需求理解、UI设计规划、文件规划、依赖分析]
+                        </thinking>
+                        ```
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
-</file>
-```
+                        ### 第二步：**首先输出main.jsx（固定代码，直接复制）**
+                        ```xml
+                        <file path="src/main.jsx">
+                        import React from 'react'
+                        import ReactDOM from 'react-dom/client'
+                        import App from './App'
+                        import './index.css'
 
-### 第三步：输出index.css（包含自定义动画）
-```xml
-<file path="src/index.css">
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+                        ReactDOM.createRoot(document.getElementById('root')).render(
+                          <React.StrictMode>
+                            <App />
+                          </React.StrictMode>,
+                        )
+                        </file>
+                        ```
 
-/* 自定义动画 */
-@keyframes float {
-  0%%, 100%% { transform: translateY(0); }
-  50%% { transform: translateY(-10px); }
-}
+                        ### 第三步：输出index.css（包含自定义动画）
+                        ```xml
+                        <file path="src/index.css">
+                        @tailwind base;
+                        @tailwind components;
+                        @tailwind utilities;
 
-@keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+                        /* 自定义动画 */
+                        @keyframes float {
+                          0%%, 100%% { transform: translateY(0); }
+                          50%% { transform: translateY(-10px); }
+                        }
 
-.animate-float { animation: float 3s ease-in-out infinite; }
-.animate-fade-in-up { animation: fadeInUp 0.6s ease-out forwards; }
+                        @keyframes fadeInUp {
+                          from { opacity: 0; transform: translateY(20px); }
+                          to { opacity: 1; transform: translateY(0); }
+                        }
 
-/* 渐变文字 */
-.gradient-text {
-  @apply bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent;
-}
+                        .animate-float { animation: float 3s ease-in-out infinite; }
+                        .animate-fade-in-up { animation: fadeInUp 0.6s ease-out forwards; }
 
-/* 玻璃态效果 */
-.glass {
-  @apply bg-white/80 backdrop-blur-lg border border-white/20;
-}
-</file>
-```
+                        /* 渐变文字 */
+                        .gradient-text {
+                          @apply bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent;
+                        }
 
-### 第四步：输出组件文件
-```xml
-<file path="src/components/XXX.jsx">
-[完整组件代码 - 必须遵循UI设计规范]
-</file>
-```
+                        /* 玻璃态效果 */
+                        .glass {
+                          @apply bg-white/80 backdrop-blur-lg border border-white/20;
+                        }
+                        </file>
+                        ```
 
-### 第五步：输出App.jsx
-```xml
-<file path="src/App.jsx">
-[完整主组件代码 - 整合所有组件，页面布局美观]
-</file>
-```
+                        ### 第四步：输出组件文件
+                        ```xml
+                        <file path="src/components/XXX.jsx">
+                        [完整组件代码 - 必须遵循UI设计规范]
+                        </file>
+                        ```
 
----
+                        ### 第五步：输出App.jsx
+                        ```xml
+                        <file path="src/App.jsx">
+                        [完整主组件代码 - 整合所有组件，页面布局美观]
+                        </file>
+                        ```
 
-## 🚨 再次强调
+                        ---
 
-1. **main.jsx必须第一个输出！** 它是Vite应用入口，代码固定不变
-2. **UI必须美观！** 严格遵循上方UI设计规范，使用渐变色、阴影、动画等现代设计元素
-3. **禁止使用丑陋的纯白背景！** 至少使用 bg-gradient-to-br from-slate-50 to-slate-100
+                        ## 🚨 再次强调
 
-现在请开始：先<thinking>，然后按顺序输出所有文件（main.jsx第一个）。
-""", originalPrompt);
+                        1. **main.jsx必须第一个输出！** 它是Vite应用入口，代码固定不变
+                        2. **UI必须美观！** 严格遵循上方UI设计规范，使用渐变色、阴影、动画等现代设计元素
+                        3. **禁止使用丑陋的纯白背景！** 至少使用 bg-gradient-to-br from-slate-50 to-slate-100
+
+                        现在请开始：先<thinking>，然后按顺序输出所有文件（main.jsx第一个）。
+                        """,
+                originalPrompt, langName);
     }
 }
