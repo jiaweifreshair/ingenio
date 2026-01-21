@@ -152,7 +152,7 @@ public class ProjectE2ETest extends BaseE2ETest {
         String requestJson = objectMapper.writeValueAsString(requestBody);
 
         // 执行POST请求
-        MvcResult result = mockMvc.perform(post("/api/v1/projects")
+        MvcResult result = mockMvc.perform(post("/v1/projects")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isOk())
@@ -178,7 +178,7 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试2: 查询项目详情 - 成功场景")
     public void testGetProject_Success() throws Exception {
         // 执行GET请求
-        mockMvc.perform(get("/api/v1/projects/{id}", testProjectId)
+        mockMvc.perform(get("/v1/projects/{id}", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -205,7 +205,7 @@ public class ProjectE2ETest extends BaseE2ETest {
         String requestJson = objectMapper.writeValueAsString(requestBody);
 
         // 执行PUT请求
-        mockMvc.perform(put("/api/v1/projects/{id}", testProjectId)
+        mockMvc.perform(put("/v1/projects/{id}", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isOk())
@@ -223,7 +223,7 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试4: 删除项目 - 软删除成功")
     public void testDeleteProject_Success() throws Exception {
         // 执行DELETE请求
-        mockMvc.perform(delete("/api/v1/projects/{id}", testProjectId)
+        mockMvc.perform(delete("/v1/projects/{id}", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -260,7 +260,7 @@ public class ProjectE2ETest extends BaseE2ETest {
         }
 
         // 执行GET请求查询列表
-        mockMvc.perform(get("/api/v1/projects")
+        mockMvc.perform(get("/v1/projects")
                 .param("current", "1")
                 .param("size", "10")
                 .contentType(MediaType.APPLICATION_JSON))
@@ -296,7 +296,7 @@ public class ProjectE2ETest extends BaseE2ETest {
         projectMapper.insert(publicProject);
 
         // 执行GET请求查询公开项目（无需登录）
-        mockMvc.perform(get("/api/v1/projects/public")
+        mockMvc.perform(get("/v1/projects/public")
                 .param("current", "1")
                 .param("size", "10")
                 .contentType(MediaType.APPLICATION_JSON))
@@ -309,7 +309,7 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试7: 派生项目（Fork）- 成功场景")
     public void testForkProject_Success() throws Exception {
         // 执行POST请求派生项目
-        MvcResult result = mockMvc.perform(post("/api/v1/projects/{id}/fork", testProjectId)
+        MvcResult result = mockMvc.perform(post("/v1/projects/{id}/fork", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -336,7 +336,7 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试8: 点赞项目 - 成功场景")
     public void testLikeProject_Success() throws Exception {
         // 执行POST请求点赞
-        mockMvc.perform(post("/api/v1/projects/{id}/like", testProjectId)
+        mockMvc.perform(post("/v1/projects/{id}/like", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -351,10 +351,10 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试9: 取消点赞项目 - 成功场景")
     public void testUnlikeProject_Success() throws Exception {
         // 先点赞
-        mockMvc.perform(post("/api/v1/projects/{id}/like", testProjectId));
+        mockMvc.perform(post("/v1/projects/{id}/like", testProjectId));
 
         // 执行DELETE请求取消点赞
-        mockMvc.perform(delete("/api/v1/projects/{id}/like", testProjectId)
+        mockMvc.perform(delete("/v1/projects/{id}/like", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -369,7 +369,7 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试10: 收藏项目 - 成功场景")
     public void testFavoriteProject_Success() throws Exception {
         // 执行POST请求收藏
-        mockMvc.perform(post("/api/v1/projects/{id}/favorite", testProjectId)
+        mockMvc.perform(post("/v1/projects/{id}/favorite", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -380,10 +380,10 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试11: 取消收藏项目 - 成功场景")
     public void testUnfavoriteProject_Success() throws Exception {
         // 先收藏
-        mockMvc.perform(post("/api/v1/projects/{id}/favorite", testProjectId));
+        mockMvc.perform(post("/v1/projects/{id}/favorite", testProjectId));
 
         // 执行DELETE请求取消收藏
-        mockMvc.perform(delete("/api/v1/projects/{id}/favorite", testProjectId)
+        mockMvc.perform(delete("/v1/projects/{id}/favorite", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -394,7 +394,7 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试12: 发布项目 - 成功场景")
     public void testPublishProject_Success() throws Exception {
         // 执行POST请求发布项目
-        mockMvc.perform(post("/api/v1/projects/{id}/publish", testProjectId)
+        mockMvc.perform(post("/v1/projects/{id}/publish", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -410,7 +410,7 @@ public class ProjectE2ETest extends BaseE2ETest {
     @DisplayName("测试13: 归档项目 - 成功场景")
     public void testArchiveProject_Success() throws Exception {
         // 执行POST请求归档项目
-        mockMvc.perform(post("/api/v1/projects/{id}/archive", testProjectId)
+        mockMvc.perform(post("/v1/projects/{id}/archive", testProjectId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -429,7 +429,7 @@ public class ProjectE2ETest extends BaseE2ETest {
         createProjectWithStatus(ProjectEntity.Status.ARCHIVED.getValue());
 
         // 执行GET请求查询统计数据
-        mockMvc.perform(get("/api/v1/projects/stats")
+        mockMvc.perform(get("/v1/projects/stats")
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -446,7 +446,7 @@ public class ProjectE2ETest extends BaseE2ETest {
         createProjectWithStatus(ProjectEntity.Status.PUBLISHED.getValue());
 
         // 执行GET请求，筛选已发布项目
-        mockMvc.perform(get("/api/v1/projects")
+        mockMvc.perform(get("/v1/projects")
                 .param("current", "1")
                 .param("size", "10")
                 .param("status", "published")
@@ -480,7 +480,7 @@ public class ProjectE2ETest extends BaseE2ETest {
         projectMapper.insert(searchProject);
 
         // 执行GET请求，使用关键词搜索
-        mockMvc.perform(get("/api/v1/projects")
+        mockMvc.perform(get("/v1/projects")
                 .param("current", "1")
                 .param("size", "10")
                 .param("keyword", "图书")

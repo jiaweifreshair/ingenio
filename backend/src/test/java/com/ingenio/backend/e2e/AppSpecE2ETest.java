@@ -142,7 +142,7 @@ public class AppSpecE2ETest extends BaseE2ETest {
         String requestJson = objectMapper.writeValueAsString(requestBody);
 
         // 执行POST请求
-        MvcResult result = mockMvc.perform(post("/api/v1/appspecs")
+        MvcResult result = mockMvc.perform(post("/v1/appspecs")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isOk())
@@ -172,7 +172,7 @@ public class AppSpecE2ETest extends BaseE2ETest {
         String requestJson = objectMapper.writeValueAsString(requestBody);
 
         // 执行POST请求，期望返回业务错误码（HTTP 200 + code=1001）
-        mockMvc.perform(post("/api/v1/appspecs")
+        mockMvc.perform(post("/v1/appspecs")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isOk())
@@ -183,7 +183,7 @@ public class AppSpecE2ETest extends BaseE2ETest {
     @DisplayName("测试3: 查询AppSpec详情 - 成功场景")
     public void testGetAppSpec_Success() throws Exception {
         // 执行GET请求
-        mockMvc.perform(get("/api/v1/appspecs/{id}", testAppSpecId)
+        mockMvc.perform(get("/v1/appspecs/{id}", testAppSpecId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -203,7 +203,7 @@ public class AppSpecE2ETest extends BaseE2ETest {
         String requestJson = objectMapper.writeValueAsString(statusRequest);
 
         // 执行PUT请求
-        mockMvc.perform(put("/api/v1/appspecs/{id}/status", testAppSpecId)
+        mockMvc.perform(put("/v1/appspecs/{id}/status", testAppSpecId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isOk())
@@ -218,7 +218,7 @@ public class AppSpecE2ETest extends BaseE2ETest {
     @DisplayName("测试5: 删除AppSpec - 软删除成功")
     public void testDeleteAppSpec_Success() throws Exception {
         // 执行DELETE请求
-        mockMvc.perform(delete("/api/v1/appspecs/{id}", testAppSpecId)
+        mockMvc.perform(delete("/v1/appspecs/{id}", testAppSpecId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("0000"))
@@ -261,7 +261,7 @@ public class AppSpecE2ETest extends BaseE2ETest {
         String requestJson = objectMapper.writeValueAsString(requestBody);
 
         // 执行POST请求创建新版本
-        MvcResult result = mockMvc.perform(post("/api/v1/appspecs/{id}/versions", testAppSpecId)
+        MvcResult result = mockMvc.perform(post("/v1/appspecs/{id}/versions", testAppSpecId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(requestJson))
                 .andExpect(status().isOk())
@@ -316,7 +316,7 @@ public class AppSpecE2ETest extends BaseE2ETest {
         }
 
         // 执行GET请求查询列表（第1页，每页10条）
-        mockMvc.perform(get("/api/v1/appspecs")
+        mockMvc.perform(get("/v1/appspecs")
                 .param("current", "1")
                 .param("size", "10")
                 .contentType(MediaType.APPLICATION_JSON))
@@ -334,7 +334,7 @@ public class AppSpecE2ETest extends BaseE2ETest {
         UUID nonExistentId = UUID.randomUUID();
 
         // 执行GET请求，期望返回错误
-        mockMvc.perform(get("/api/v1/appspecs/{id}", nonExistentId)
+        mockMvc.perform(get("/v1/appspecs/{id}", nonExistentId)
                 .contentType(MediaType.APPLICATION_JSON))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("3000")); // APPSPEC_NOT_FOUND
