@@ -22,6 +22,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Play, Pause, RotateCcw, Settings, AlertCircle } from 'lucide-react';
+import { CapabilityPicker, type CapabilityConfig } from './capability-picker';
 
 /**
  * 配置面板Props
@@ -283,6 +284,16 @@ const ConfigurationPanelComponent: React.FC<ConfigurationPanelProps> = ({
             </div>
           </CardContent>
         </Card>
+
+        {/* 智能体能力选择 */}
+        <CapabilityPicker 
+          requirement={config.requirement || ''}
+          onCapabilityConfigChange={(capConfig: CapabilityConfig) => {
+            // 这里简单处理，实际上应该更新config中的capabilities字段
+            console.log('Capability Config Updated:', capConfig);
+            // onConfigChange({...config, capabilities: [...(config.capabilities||[]), capConfig]});
+          }}
+        />
 
         {/* 高级设置 */}
         <Card>

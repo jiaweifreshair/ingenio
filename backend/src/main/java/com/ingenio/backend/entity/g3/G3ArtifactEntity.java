@@ -2,7 +2,6 @@ package com.ingenio.backend.entity.g3;
 
 import com.baomidou.mybatisplus.annotation.*;
 import com.ingenio.backend.config.UUIDv8TypeHandler;
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -27,7 +26,6 @@ import java.util.UUID;
 @Data
 @Builder
 @NoArgsConstructor
-@AllArgsConstructor
 @TableName(value = "g3_artifacts", autoResultMap = true)
 public class G3ArtifactEntity {
 
@@ -46,6 +44,7 @@ public class G3ArtifactEntity {
 
     /**
      * 产物类型
+     * 
      * @see ArtifactType
      */
     @TableField("artifact_type")
@@ -73,6 +72,7 @@ public class G3ArtifactEntity {
 
     /**
      * 编程语言
+     * 
      * @see Language
      */
     @TableField("language")
@@ -117,6 +117,7 @@ public class G3ArtifactEntity {
 
     /**
      * 生成者Agent
+     * 
      * @see GeneratedBy
      */
     @TableField("generated_by")
@@ -139,6 +140,220 @@ public class G3ArtifactEntity {
      */
     @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private Instant updatedAt;
+
+    // Manual Boilerplate for Lombok Failure
+    public G3ArtifactEntity(UUID id, UUID jobId, String artifactType, String filePath, String fileName, String content,
+            String language, Integer version, String checksum, UUID parentArtifactId, Boolean hasErrors,
+            String compilerOutput, Instant validatedAt, String generatedBy, Integer generationRound, Instant createdAt,
+            Instant updatedAt) {
+        this.id = id;
+        this.jobId = jobId;
+        this.artifactType = artifactType;
+        this.filePath = filePath;
+        this.fileName = fileName;
+        this.content = content;
+        this.language = language;
+        this.version = version;
+        this.checksum = checksum;
+        this.parentArtifactId = parentArtifactId;
+        this.hasErrors = hasErrors;
+        this.compilerOutput = compilerOutput;
+        this.validatedAt = validatedAt;
+        this.generatedBy = generatedBy;
+        this.generationRound = generationRound;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
+
+    public static G3ArtifactEntityBuilder builder() {
+        return new G3ArtifactEntityBuilder();
+    }
+
+    public static class G3ArtifactEntityBuilder {
+        private UUID id;
+        private UUID jobId;
+        private String artifactType;
+        private String filePath;
+        private String fileName;
+        private String content;
+        private String language;
+        private Integer version;
+        private String checksum;
+        private UUID parentArtifactId;
+        private Boolean hasErrors;
+        private String compilerOutput;
+        private Instant validatedAt;
+        private String generatedBy;
+        private Integer generationRound;
+        private Instant createdAt;
+        private Instant updatedAt;
+
+        G3ArtifactEntityBuilder() {
+        }
+
+        public G3ArtifactEntityBuilder id(UUID id) {
+            this.id = id;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder jobId(UUID jobId) {
+            this.jobId = jobId;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder artifactType(String artifactType) {
+            this.artifactType = artifactType;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder filePath(String filePath) {
+            this.filePath = filePath;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder fileName(String fileName) {
+            this.fileName = fileName;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder content(String content) {
+            this.content = content;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder language(String language) {
+            this.language = language;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder version(Integer version) {
+            this.version = version;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder checksum(String checksum) {
+            this.checksum = checksum;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder parentArtifactId(UUID parentArtifactId) {
+            this.parentArtifactId = parentArtifactId;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder hasErrors(Boolean hasErrors) {
+            this.hasErrors = hasErrors;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder compilerOutput(String compilerOutput) {
+            this.compilerOutput = compilerOutput;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder validatedAt(Instant validatedAt) {
+            this.validatedAt = validatedAt;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder generatedBy(String generatedBy) {
+            this.generatedBy = generatedBy;
+            return this;
+        }
+
+        public G3ArtifactEntityBuilder generationRound(Integer generationRound) {
+            this.generationRound = generationRound;
+            return this;
+        }
+
+        public G3ArtifactEntity build() {
+            return new G3ArtifactEntity(id, jobId, artifactType, filePath, fileName, content, language, version,
+                    checksum, parentArtifactId, hasErrors, compilerOutput, validatedAt, generatedBy, generationRound,
+                    createdAt, updatedAt);
+        }
+    }
+
+    // Getters
+    public UUID getId() {
+        return id;
+    }
+
+    public UUID getJobId() {
+        return jobId;
+    }
+
+    public String getArtifactType() {
+        return artifactType;
+    }
+
+    public String getFilePath() {
+        return filePath;
+    }
+
+    public String getFileName() {
+        return fileName;
+    }
+
+    public String getContent() {
+        return content;
+    }
+
+    public String getLanguage() {
+        return language;
+    }
+
+    public Integer getVersion() {
+        return version;
+    }
+
+    public String getChecksum() {
+        return checksum;
+    }
+
+    public UUID getParentArtifactId() {
+        return parentArtifactId;
+    }
+
+    public Boolean getHasErrors() {
+        return hasErrors;
+    }
+
+    public String getCompilerOutput() {
+        return compilerOutput;
+    }
+
+    public Instant getValidatedAt() {
+        return validatedAt;
+    }
+
+    public String getGeneratedBy() {
+        return generatedBy;
+    }
+
+    public Integer getGenerationRound() {
+        return generationRound;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
+
+    // Setters (if needed)
+    public void setHasErrors(Boolean hasErrors) {
+        this.hasErrors = hasErrors;
+    }
+
+    public void setCompilerOutput(String compilerOutput) {
+        this.compilerOutput = compilerOutput;
+    }
+
+    public void setValidatedAt(Instant validatedAt) {
+        this.validatedAt = validatedAt;
+    }
 
     /**
      * 产物类型枚举
@@ -184,7 +399,8 @@ public class G3ArtifactEntity {
          * 根据文件路径推断产物类型
          */
         public static ArtifactType fromFilePath(String filePath) {
-            if (filePath == null) return OTHER;
+            if (filePath == null)
+                return OTHER;
 
             String lowerPath = filePath.toLowerCase();
             if (lowerPath.contains("openapi") || lowerPath.endsWith(".yaml") || lowerPath.endsWith(".yml")) {
@@ -251,17 +467,26 @@ public class G3ArtifactEntity {
          * 根据文件扩展名推断语言
          */
         public static Language fromFileName(String fileName) {
-            if (fileName == null) return JAVA;
+            if (fileName == null)
+                return JAVA;
 
             String lowerName = fileName.toLowerCase();
-            if (lowerName.endsWith(".java")) return JAVA;
-            if (lowerName.endsWith(".ts") || lowerName.endsWith(".tsx")) return TYPESCRIPT;
-            if (lowerName.endsWith(".js") || lowerName.endsWith(".jsx")) return JAVASCRIPT;
-            if (lowerName.endsWith(".sql")) return SQL;
-            if (lowerName.endsWith(".yaml") || lowerName.endsWith(".yml")) return YAML;
-            if (lowerName.endsWith(".xml")) return XML;
-            if (lowerName.endsWith(".json")) return JSON;
-            if (lowerName.endsWith(".properties")) return PROPERTIES;
+            if (lowerName.endsWith(".java"))
+                return JAVA;
+            if (lowerName.endsWith(".ts") || lowerName.endsWith(".tsx"))
+                return TYPESCRIPT;
+            if (lowerName.endsWith(".js") || lowerName.endsWith(".jsx"))
+                return JAVASCRIPT;
+            if (lowerName.endsWith(".sql"))
+                return SQL;
+            if (lowerName.endsWith(".yaml") || lowerName.endsWith(".yml"))
+                return YAML;
+            if (lowerName.endsWith(".xml"))
+                return XML;
+            if (lowerName.endsWith(".json"))
+                return JSON;
+            if (lowerName.endsWith(".properties"))
+                return PROPERTIES;
             return JAVA;
         }
     }
@@ -315,18 +540,19 @@ public class G3ArtifactEntity {
      */
     public G3ArtifactEntity createNewVersion(String newContent, String generatedBy) {
         return G3ArtifactEntity.builder()
-            .jobId(this.jobId)
-            .artifactType(this.artifactType)
-            .filePath(this.filePath)
-            .fileName(this.fileName)
-            .content(newContent)
-            .language(this.language)
-            .version(this.version + 1)
-            .parentArtifactId(this.id)
-            .hasErrors(false)
-            .generatedBy(generatedBy)
-            .generationRound(this.generationRound + 1)
-            .build();
+                .id(UUID.randomUUID())
+                .jobId(this.jobId)
+                .artifactType(this.artifactType)
+                .filePath(this.filePath)
+                .fileName(this.fileName)
+                .content(newContent)
+                .language(this.language)
+                .version(this.version + 1)
+                .parentArtifactId(this.id)
+                .hasErrors(false)
+                .generatedBy(generatedBy)
+                .generationRound(this.generationRound + 1)
+                .build();
     }
 
     /**
@@ -337,32 +563,32 @@ public class G3ArtifactEntity {
             String filePath,
             String content,
             GeneratedBy generatedBy,
-            int generationRound
-    ) {
+            int generationRound) {
         String fileName = extractFileName(filePath);
         ArtifactType artifactType = ArtifactType.fromFilePath(filePath);
         Language language = Language.fromFileName(fileName);
 
         return G3ArtifactEntity.builder()
-            .id(UUID.randomUUID())  // 显式生成UUID（MyBatis-Plus ASSIGN_UUID在PostgreSQL中不生效）
-            .jobId(jobId)
-            .artifactType(artifactType.getValue())
-            .filePath(filePath)
-            .fileName(fileName)
-            .content(content)
-            .language(language.getValue())
-            .version(1)
-            .hasErrors(false)
-            .generatedBy(generatedBy.getValue())
-            .generationRound(generationRound)
-            .build();
+                .id(UUID.randomUUID()) // 显式生成UUID（MyBatis-Plus ASSIGN_UUID在PostgreSQL中不生效）
+                .jobId(jobId)
+                .artifactType(artifactType.getValue())
+                .filePath(filePath)
+                .fileName(fileName)
+                .content(content)
+                .language(language.getValue())
+                .version(1)
+                .hasErrors(false)
+                .generatedBy(generatedBy.getValue())
+                .generationRound(generationRound)
+                .build();
     }
 
     /**
      * 从路径提取文件名
      */
     private static String extractFileName(String filePath) {
-        if (filePath == null) return "unknown";
+        if (filePath == null)
+            return "unknown";
         int lastSlash = filePath.lastIndexOf('/');
         if (lastSlash >= 0 && lastSlash < filePath.length() - 1) {
             return filePath.substring(lastSlash + 1);

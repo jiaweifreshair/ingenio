@@ -1,10 +1,5 @@
 package com.ingenio.backend.dto.response.repair;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -16,10 +11,6 @@ import java.util.UUID;
  * @author Ingenio Team
  * @since 2.0.0 Phase 4
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class RepairResponse {
 
     /**
@@ -103,4 +94,253 @@ public class RepairResponse {
      * @since 2.0.0 Phase 4（AI集成）
      */
     private Map<String, Integer> aiTokenUsage;
+
+    public RepairResponse() {
+    }
+
+    public RepairResponse(UUID repairId, String status, Boolean isSuccess, Integer currentIteration,
+            Integer maxIterations, String repairStrategy, List<Map<String, Object>> suggestions,
+            Map<String, Object> codeChanges, List<String> affectedFiles, UUID repairValidationResultId,
+            Boolean isEscalated, String failureReason, Long durationMs, Instant completedAt,
+            Map<String, Integer> aiTokenUsage) {
+        this.repairId = repairId;
+        this.status = status;
+        this.isSuccess = isSuccess;
+        this.currentIteration = currentIteration;
+        this.maxIterations = maxIterations;
+        this.repairStrategy = repairStrategy;
+        this.suggestions = suggestions;
+        this.codeChanges = codeChanges;
+        this.affectedFiles = affectedFiles;
+        this.repairValidationResultId = repairValidationResultId;
+        this.isEscalated = isEscalated;
+        this.failureReason = failureReason;
+        this.durationMs = durationMs;
+        this.completedAt = completedAt;
+        this.aiTokenUsage = aiTokenUsage;
+    }
+
+    public static RepairResponseBuilder builder() {
+        return new RepairResponseBuilder();
+    }
+
+    public static class RepairResponseBuilder {
+        private UUID repairId;
+        private String status;
+        private Boolean isSuccess;
+        private Integer currentIteration;
+        private Integer maxIterations;
+        private String repairStrategy;
+        private List<Map<String, Object>> suggestions;
+        private Map<String, Object> codeChanges;
+        private List<String> affectedFiles;
+        private UUID repairValidationResultId;
+        private Boolean isEscalated;
+        private String failureReason;
+        private Long durationMs;
+        private Instant completedAt;
+        private Map<String, Integer> aiTokenUsage;
+
+        public RepairResponseBuilder repairId(UUID repairId) {
+            this.repairId = repairId;
+            return this;
+        }
+
+        public RepairResponseBuilder status(String status) {
+            this.status = status;
+            return this;
+        }
+
+        public RepairResponseBuilder isSuccess(Boolean isSuccess) {
+            this.isSuccess = isSuccess;
+            return this;
+        }
+
+        public RepairResponseBuilder currentIteration(Integer currentIteration) {
+            this.currentIteration = currentIteration;
+            return this;
+        }
+
+        public RepairResponseBuilder maxIterations(Integer maxIterations) {
+            this.maxIterations = maxIterations;
+            return this;
+        }
+
+        public RepairResponseBuilder repairStrategy(String repairStrategy) {
+            this.repairStrategy = repairStrategy;
+            return this;
+        }
+
+        public RepairResponseBuilder suggestions(List<Map<String, Object>> suggestions) {
+            this.suggestions = suggestions;
+            return this;
+        }
+
+        public RepairResponseBuilder codeChanges(Map<String, Object> codeChanges) {
+            this.codeChanges = codeChanges;
+            return this;
+        }
+
+        public RepairResponseBuilder affectedFiles(List<String> affectedFiles) {
+            this.affectedFiles = affectedFiles;
+            return this;
+        }
+
+        public RepairResponseBuilder repairValidationResultId(UUID repairValidationResultId) {
+            this.repairValidationResultId = repairValidationResultId;
+            return this;
+        }
+
+        public RepairResponseBuilder isEscalated(Boolean isEscalated) {
+            this.isEscalated = isEscalated;
+            return this;
+        }
+
+        public RepairResponseBuilder failureReason(String failureReason) {
+            this.failureReason = failureReason;
+            return this;
+        }
+
+        public RepairResponseBuilder durationMs(Long durationMs) {
+            this.durationMs = durationMs;
+            return this;
+        }
+
+        public RepairResponseBuilder completedAt(Instant completedAt) {
+            this.completedAt = completedAt;
+            return this;
+        }
+
+        public RepairResponseBuilder aiTokenUsage(Map<String, Integer> aiTokenUsage) {
+            this.aiTokenUsage = aiTokenUsage;
+            return this;
+        }
+
+        public RepairResponse build() {
+            return new RepairResponse(repairId, status, isSuccess, currentIteration, maxIterations, repairStrategy,
+                    suggestions, codeChanges, affectedFiles, repairValidationResultId, isEscalated, failureReason,
+                    durationMs, completedAt, aiTokenUsage);
+        }
+    }
+
+    // Getters and Setters
+    public UUID getRepairId() {
+        return repairId;
+    }
+
+    public void setRepairId(UUID repairId) {
+        this.repairId = repairId;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public Boolean getIsSuccess() {
+        return isSuccess;
+    }
+
+    public void setIsSuccess(Boolean isSuccess) {
+        this.isSuccess = isSuccess;
+    }
+
+    public Integer getCurrentIteration() {
+        return currentIteration;
+    }
+
+    public void setCurrentIteration(Integer currentIteration) {
+        this.currentIteration = currentIteration;
+    }
+
+    public Integer getMaxIterations() {
+        return maxIterations;
+    }
+
+    public void setMaxIterations(Integer maxIterations) {
+        this.maxIterations = maxIterations;
+    }
+
+    public String getRepairStrategy() {
+        return repairStrategy;
+    }
+
+    public void setRepairStrategy(String repairStrategy) {
+        this.repairStrategy = repairStrategy;
+    }
+
+    public List<Map<String, Object>> getSuggestions() {
+        return suggestions;
+    }
+
+    public void setSuggestions(List<Map<String, Object>> suggestions) {
+        this.suggestions = suggestions;
+    }
+
+    public Map<String, Object> getCodeChanges() {
+        return codeChanges;
+    }
+
+    public void setCodeChanges(Map<String, Object> codeChanges) {
+        this.codeChanges = codeChanges;
+    }
+
+    public List<String> getAffectedFiles() {
+        return affectedFiles;
+    }
+
+    public void setAffectedFiles(List<String> affectedFiles) {
+        this.affectedFiles = affectedFiles;
+    }
+
+    public UUID getRepairValidationResultId() {
+        return repairValidationResultId;
+    }
+
+    public void setRepairValidationResultId(UUID repairValidationResultId) {
+        this.repairValidationResultId = repairValidationResultId;
+    }
+
+    public Boolean getIsEscalated() {
+        return isEscalated;
+    }
+
+    public void setIsEscalated(Boolean isEscalated) {
+        this.isEscalated = isEscalated;
+    }
+
+    public String getFailureReason() {
+        return failureReason;
+    }
+
+    public void setFailureReason(String failureReason) {
+        this.failureReason = failureReason;
+    }
+
+    public Long getDurationMs() {
+        return durationMs;
+    }
+
+    public void setDurationMs(Long durationMs) {
+        this.durationMs = durationMs;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+        this.completedAt = completedAt;
+    }
+
+    public Map<String, Integer> getAiTokenUsage() {
+        return aiTokenUsage;
+    }
+
+    public void setAiTokenUsage(Map<String, Integer> aiTokenUsage) {
+        this.aiTokenUsage = aiTokenUsage;
+    }
 }

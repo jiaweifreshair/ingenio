@@ -9,8 +9,8 @@ import com.ingenio.backend.dto.response.repair.RepairResponse;
 import com.ingenio.backend.dto.response.validation.ValidationResponse;
 import com.ingenio.backend.entity.RepairRecordEntity;
 import com.ingenio.backend.mapper.RepairRecordMapper;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,15 +37,23 @@ import java.util.*;
  * @author Ingenio Team
  * @since 2.0.0 Phase 4
  */
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class RepairService {
+
+    private static final Logger log = LoggerFactory.getLogger(RepairService.class);
 
     private final RepairRecordMapper repairRecordMapper;
     private final ValidationService validationService;
     private final AIProviderFactory aiProviderFactory; // AI Provider工厂注入
     private final AIRepairSuggestionParser aiRepairSuggestionParser; // AI建议解析器注入
+
+    public RepairService(RepairRecordMapper repairRecordMapper, ValidationService validationService,
+            AIProviderFactory aiProviderFactory, AIRepairSuggestionParser aiRepairSuggestionParser) {
+        this.repairRecordMapper = repairRecordMapper;
+        this.validationService = validationService;
+        this.aiProviderFactory = aiProviderFactory;
+        this.aiRepairSuggestionParser = aiRepairSuggestionParser;
+    }
 
     /**
      * 触发AI修复流程
@@ -110,7 +118,7 @@ public class RepairService {
      * 生成修复建议（真实AI调用）
      *
      * @param failedTests 失败的测试列表
-     * @param appSpecId AppSpec ID
+     * @param appSpecId   AppSpec ID
      * @return 修复响应
      */
     @Transactional(rollbackFor = Exception.class)
@@ -162,8 +170,7 @@ public class RepairService {
                     aiResponse.promptTokens(), aiResponse.completionTokens(), aiResponse.durationMs());
 
             // 4. 解析AI返回的JSON修复建议
-            AIRepairSuggestionParser.RepairSuggestion suggestion =
-                    aiRepairSuggestionParser.parse(aiResponse.content());
+            AIRepairSuggestionParser.RepairSuggestion suggestion = aiRepairSuggestionParser.parse(aiResponse.content());
 
             // 5. 计算耗时并返回
             long durationMs = Instant.now().toEpochMilli() - startTime.toEpochMilli();
@@ -184,8 +191,7 @@ public class RepairService {
                     .aiTokenUsage(Map.of(
                             "promptTokens", aiResponse.promptTokens(),
                             "completionTokens", aiResponse.completionTokens(),
-                            "totalTokens", aiResponse.totalTokens()
-                    ))
+                            "totalTokens", aiResponse.totalTokens()))
                     .build();
 
         } catch (AIProvider.AIException e) {
@@ -263,7 +269,7 @@ public class RepairService {
      * 升级到人工介入
      *
      * @param repairId 修复记录ID
-     * @param reason 升级原因
+     * @param reason   升级原因
      * @return 修复响应
      */
     @Transactional(rollbackFor = Exception.class)
@@ -327,7 +333,7 @@ public class RepairService {
      *
      * @param appSpecId AppSpec ID
      * @param errorCode TypeScript错误码
-     * @param context 错误上下文
+     * @param context   错误上下文
      * @return 修复响应
      */
     @Transactional(rollbackFor = Exception.class)
@@ -347,18 +353,15 @@ public class RepairService {
 
             errorDetails.put("message", String.format(
                     "类型错误 TS%s: 变量 '%s' 期望类型为 '%s'，但实际类型为 '%s'",
-                    errorCode, variableName, expectedType, actualType
-            ));
+                    errorCode, variableName, expectedType, actualType));
             errorDetails.put("stackTrace", String.format(
                     "%s:%d:1 - Type '%s' is not assignable to type '%s'",
-                    filePath, lineNumber, actualType, expectedType
-            ));
+                    filePath, lineNumber, actualType, expectedType));
 
             // 2. 构建代码片段
             String codeSnippet = String.format(
                     "const %s: %s = originalValue; // 当前代码\n// 类型不匹配：期望%s，实际%s",
-                    variableName, actualType, expectedType, actualType
-            );
+                    variableName, actualType, expectedType, actualType);
 
             // 3. 构建AI Prompt
             AIRepairPromptBuilder promptBuilder = AIRepairPromptBuilder.builder()
@@ -384,8 +387,7 @@ public class RepairService {
                     aiResponse.promptTokens(), aiResponse.completionTokens(), aiResponse.durationMs());
 
             // 5. 解析AI返回
-            AIRepairSuggestionParser.RepairSuggestion suggestion =
-                    aiRepairSuggestionParser.parse(aiResponse.content());
+            AIRepairSuggestionParser.RepairSuggestion suggestion = aiRepairSuggestionParser.parse(aiResponse.content());
 
             // 6. 构建代码变更Map（从第一个建议中提取）
             Map<String, Object> codeChanges = new HashMap<>();
@@ -415,8 +417,7 @@ public class RepairService {
                     .aiTokenUsage(Map.of(
                             "promptTokens", aiResponse.promptTokens(),
                             "completionTokens", aiResponse.completionTokens(),
-                            "totalTokens", aiResponse.totalTokens()
-                    ))
+                            "totalTokens", aiResponse.totalTokens()))
                     .build();
 
         } catch (AIProvider.AIException e) {
@@ -431,7 +432,7 @@ public class RepairService {
     /**
      * 依赖自动安装（真实AI调用）
      *
-     * @param appSpecId AppSpec ID
+     * @param appSpecId         AppSpec ID
      * @param missingDependency 缺失的依赖
      * @return 修复响应
      */
@@ -447,8 +448,7 @@ public class RepairService {
             errorDetails.put("message", String.format("模块未找到: 无法解析模块 '%s'", missingDependency));
             errorDetails.put("stackTrace", String.format(
                     "Error: Cannot find module '%s'\n    at require (node:internal/modules/cjs/loader.js:1002:15)",
-                    missingDependency
-            ));
+                    missingDependency));
 
             // 2. 构建package.json片段
             String packageJsonSnippet = "{\n  \"dependencies\": {\n    // 当前依赖列表\n  }\n}";
@@ -477,8 +477,7 @@ public class RepairService {
                     aiResponse.promptTokens(), aiResponse.completionTokens(), aiResponse.durationMs());
 
             // 5. 解析AI返回
-            AIRepairSuggestionParser.RepairSuggestion suggestion =
-                    aiRepairSuggestionParser.parse(aiResponse.content());
+            AIRepairSuggestionParser.RepairSuggestion suggestion = aiRepairSuggestionParser.parse(aiResponse.content());
 
             // 6. 构建代码变更Map（从第一个建议中提取）
             Map<String, Object> codeChanges = new HashMap<>();
@@ -509,8 +508,7 @@ public class RepairService {
                     .aiTokenUsage(Map.of(
                             "promptTokens", aiResponse.promptTokens(),
                             "completionTokens", aiResponse.completionTokens(),
-                            "totalTokens", aiResponse.totalTokens()
-                    ))
+                            "totalTokens", aiResponse.totalTokens()))
                     .build();
 
         } catch (AIProvider.AIException e) {
@@ -525,7 +523,7 @@ public class RepairService {
     /**
      * 业务逻辑修复（真实AI调用）
      *
-     * @param appSpecId AppSpec ID
+     * @param appSpecId        AppSpec ID
      * @param errorDescription 错误描述
      * @param expectedBehavior 期望行为
      * @return 修复响应
@@ -541,8 +539,7 @@ public class RepairService {
             Map<String, Object> errorDetails = new HashMap<>();
             errorDetails.put("message", String.format(
                     "业务逻辑违规: %s\n期望行为: %s",
-                    errorDescription, expectedBehavior
-            ));
+                    errorDescription, expectedBehavior));
 
             // 2. 构建代码片段（示例）
             String codeSnippet = "// 业务逻辑代码片段\n// TODO: 从AppSpec中获取实际代码";
@@ -571,8 +568,7 @@ public class RepairService {
                     aiResponse.promptTokens(), aiResponse.completionTokens(), aiResponse.durationMs());
 
             // 5. 解析AI返回
-            AIRepairSuggestionParser.RepairSuggestion suggestion =
-                    aiRepairSuggestionParser.parse(aiResponse.content());
+            AIRepairSuggestionParser.RepairSuggestion suggestion = aiRepairSuggestionParser.parse(aiResponse.content());
 
             long durationMs = Instant.now().toEpochMilli() - startTime.toEpochMilli();
 
@@ -592,8 +588,7 @@ public class RepairService {
                     .aiTokenUsage(Map.of(
                             "promptTokens", aiResponse.promptTokens(),
                             "completionTokens", aiResponse.completionTokens(),
-                            "totalTokens", aiResponse.totalTokens()
-                    ))
+                            "totalTokens", aiResponse.totalTokens()))
                     .build();
 
         } catch (AIProvider.AIException e) {

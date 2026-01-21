@@ -1,12 +1,17 @@
 package com.ingenio.backend.service.g3;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ingenio.backend.config.G3HookProperties;
+import com.ingenio.backend.config.G3ToolsetProperties;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
+import com.ingenio.backend.mapper.g3.G3JobMapper;
+import com.ingenio.backend.service.g3.hooks.G3HookPipeline;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -18,6 +23,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Consumer;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
@@ -70,6 +78,8 @@ class G3SandboxServiceTest {
         ReflectionTestUtils.setField(sandboxService, "openLovableBaseUrl", "http://localhost:3001");
         ReflectionTestUtils.setField(sandboxService, "compileTimeout", 300);
         ReflectionTestUtils.setField(sandboxService, "sandboxProvider", "e2b");
+        // 单测中避免真实 sleep，提升运行速度
+        ReflectionTestUtils.setField(sandboxService, "envErrorRetryDelayMs", 0);
 
         // 初始化MockRestServiceServer
         mockServer = MockRestServiceServer.createServer(restTemplate);
@@ -212,11 +222,11 @@ class G3SandboxServiceTest {
                 }
                 """;
 
-        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
-                .andExpect(method(HttpMethod.POST))
-                .andExpect(jsonPath("$.sandboxId").value(sandboxId))
-                .andExpect(jsonPath("$.command").value("cd /home/user/app && mvn compile -e -B --no-transfer-progress 2>&1"))
-                .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
+	        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
+	                .andExpect(method(HttpMethod.POST))
+	                .andExpect(jsonPath("$.sandboxId").value(sandboxId))
+	                .andExpect(jsonPath("$.command").value("mvn compile -e -B --no-transfer-progress"))
+	                .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
 
         // WHEN
         G3SandboxService.CompileResult result = sandboxService.runMavenBuild(sandboxId, logConsumer);
@@ -287,6 +297,118 @@ class G3SandboxServiceTest {
     }
 
     /**
+     * 测试：OpenLovable 执行器只返回低信息错误（Command failed）
+     * 期望：识别为环境类错误，避免误交给 Coach 修复
+     */
+    @Test
+    void runMavenBuild_whenCommandFailedWithoutMavenOutput_shouldClassifyAsEnvironmentError() {
+        // GIVEN
+        String sandboxId = "sbx_test_123";
+        String responseBody = """
+                {
+                    "exitCode": 1,
+                    "stdout": "",
+                    "stderr": "",
+                    "message": "Command failed"
+                }
+                """;
+
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
+
+        // WHEN
+        G3SandboxService.CompileResult result = sandboxService.runMavenBuild(sandboxId, logConsumer);
+
+        // THEN
+        assertFalse(result.success());
+        assertTrue(result.isEnvironmentError());
+        assertEquals(1, result.errors().size());
+        assertEquals("environment", result.errors().get(0).severity());
+        assertTrue(result.errors().get(0).message().contains("OpenLovable"));
+
+        // 验证日志中明确提示环境错误
+        assertTrue(capturedLogs.stream().anyMatch(log -> log.getMessage().contains("检测到环境类错误")));
+
+        mockServer.verify();
+    }
+
+    /**
+     * 测试：OpenLovable E2BProvider 可能返回 exitCode=0，但在 stdout 中输出真实 returncode
+     * 期望：能从 "Return code: N" 解析真实退出码，并按失败处理
+     */
+    @Test
+    void runMavenBuild_whenExitCodeZeroButReturnCodeNonZeroInOutput_shouldTreatAsFailure() {
+        // GIVEN
+        String sandboxId = "sbx_test_123";
+        String stdout = """
+                STDOUT:
+                [ERROR] /home/user/app/User.java:[10,5] error: cannot find symbol
+                  symbol:   class UnknownType
+                  location: class User
+                
+                Return code: 1
+                """;
+
+        // JSON转义stdout字符串
+        String stdoutJson;
+        try {
+            stdoutJson = objectMapper.writeValueAsString(stdout);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        String responseBody = """
+                {
+                    "exitCode": 0,
+                    "stdout": %s,
+                    "stderr": ""
+                }
+                """.formatted(stdoutJson);
+
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
+
+        // WHEN
+        G3SandboxService.CompileResult result = sandboxService.runMavenBuild(sandboxId, logConsumer);
+
+        // THEN
+        assertFalse(result.success());
+        assertEquals(1, result.exitCode());
+        assertFalse(result.errors().isEmpty());
+        assertTrue(result.errors().get(0).file().contains("User.java"));
+
+        mockServer.verify();
+    }
+
+    /**
+     * 测试：OpenLovable 调用异常（例如 500 / 连接中断）
+     * 期望：判定为环境类错误，避免触发 Coach 修复逻辑
+     */
+    @Test
+    void runMavenBuild_whenOpenLovableRequestFails_shouldClassifyAsEnvironmentError() {
+        // GIVEN
+        String sandboxId = "sbx_test_123";
+
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withServerError());
+
+        // WHEN
+        G3SandboxService.CompileResult result = sandboxService.runMavenBuild(sandboxId, logConsumer);
+
+        // THEN
+        assertFalse(result.success());
+        assertTrue(result.isEnvironmentError());
+        assertEquals(1, result.errors().size());
+        assertEquals("environment", result.errors().get(0).severity());
+        assertTrue(result.errors().get(0).message().contains("OpenLovable"));
+
+        mockServer.verify();
+    }
+
+    /**
      * 测试：完整验证流程（创建沙箱 → 同步文件 → 编译）
      * 期望：执行完整流程并返回验证结果
      */
@@ -335,11 +457,109 @@ class G3SandboxServiceTest {
         assertTrue(result.getPassed());
         assertEquals(testJobId, result.getJobId());
         assertEquals(0, result.getRound());
-        assertEquals("mvn compile -e -B", result.getCommand());
+        assertEquals("mvn compile -e -B --no-transfer-progress", result.getCommand());
         assertEquals(0, result.getExitCode());
 
         // 验证沙箱已创建并关联到Job
         assertEquals(sandboxId, testJob.getSandboxId());
+
+        mockServer.verify();
+    }
+
+    /**
+     * 测试：远程沙箱编译返回低信息环境错误（Command failed）时，自动重建沙箱并重试
+     *
+     * 期望：
+     * - 首次编译失败被识别为环境错误
+     * - 调用 /api/sandbox/kill 重置远程沙箱
+     * - 重新创建沙箱并再次编译成功
+     */
+    @Test
+    void validate_whenRemoteCommandFailed_shouldResetSandboxAndRetry() {
+        // GIVEN
+        List<G3ArtifactEntity> artifacts = List.of(createArtifact("User.java", "code"));
+
+        String sandboxId1 = "sbx_test_1";
+        String sandboxId2 = "sbx_test_2";
+
+        String createResponse1 = """
+                {
+                    "sandboxId": "%s",
+                    "url": "https://test.e2b.dev/1",
+                    "provider": "e2b"
+                }
+                """.formatted(sandboxId1);
+        String createResponse2 = """
+                {
+                    "sandboxId": "%s",
+                    "url": "https://test.e2b.dev/2",
+                    "provider": "e2b"
+                }
+                """.formatted(sandboxId2);
+
+        // 1) 创建沙箱 #1
+        mockServer.expect(requestTo("http://localhost:3001/api/create-ai-sandbox-v2"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(createResponse1, MediaType.APPLICATION_JSON));
+
+        // 2) 同步文件 #1
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/write-files"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.sandboxId").value(sandboxId1))
+                .andRespond(withSuccess());
+
+        // 3) 编译失败（Command failed，无 Maven 详细输出）
+        String commandFailedResponse = """
+                {
+                    "exitCode": 1,
+                    "stdout": "",
+                    "stderr": "",
+                    "message": "Command failed"
+                }
+                """;
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.sandboxId").value(sandboxId1))
+                .andRespond(withSuccess(commandFailedResponse, MediaType.APPLICATION_JSON));
+
+        // 4) 重置远程沙箱（kill）
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/kill"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.sandboxId").value(sandboxId1))
+                .andRespond(withSuccess());
+
+        // 5) 创建沙箱 #2
+        mockServer.expect(requestTo("http://localhost:3001/api/create-ai-sandbox-v2"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(createResponse2, MediaType.APPLICATION_JSON));
+
+        // 6) 同步文件 #2
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/write-files"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.sandboxId").value(sandboxId2))
+                .andRespond(withSuccess());
+
+        // 7) 编译成功
+        String compileOk = """
+                {
+                    "exitCode": 0,
+                    "stdout": "BUILD SUCCESS",
+                    "stderr": ""
+                }
+                """;
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.sandboxId").value(sandboxId2))
+                .andRespond(withSuccess(compileOk, MediaType.APPLICATION_JSON));
+
+        // WHEN
+        G3ValidationResultEntity result = sandboxService.validate(testJob, artifacts, logConsumer);
+
+        // THEN
+        assertNotNull(result);
+        assertTrue(result.getPassed());
+        assertEquals(0, result.getExitCode());
+        assertEquals(sandboxId2, testJob.getSandboxId());
 
         mockServer.verify();
     }
@@ -355,6 +575,21 @@ class G3SandboxServiceTest {
         testJob.setSandboxId(existingSandboxId);
 
         List<G3ArtifactEntity> artifacts = List.of(createArtifact("User.java", "code"));
+
+        // Mock 0: 检查沙箱存活
+        String statusResponse = """
+                {
+                    "active": true,
+                    "healthy": true,
+                    "sandboxData": {
+                        "sandboxId": "%s"
+                    }
+                }
+                """.formatted(existingSandboxId);
+
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox-status"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(statusResponse, MediaType.APPLICATION_JSON));
 
         // Mock 1: 同步文件（不需要创建沙箱）
         mockServer.expect(requestTo("http://localhost:3001/api/sandbox/write-files"))
@@ -381,7 +616,7 @@ class G3SandboxServiceTest {
         // THEN
         assertTrue(result.getPassed());
 
-        // 验证没有调用创建沙箱API（只调用了2次API：sync + compile）
+        // 验证没有调用创建沙箱API（仅检查状态 + 同步 + 编译）
         mockServer.verify();
     }
 
@@ -489,11 +724,15 @@ class G3SandboxServiceTest {
         String sandboxId = "sbx_test_123";
         String responseBody = """
                 {
-                    "alive": true
+                    "active": true,
+                    "healthy": true,
+                    "sandboxData": {
+                        "sandboxId": "%s"
+                    }
                 }
-                """;
+                """.formatted(sandboxId);
 
-        mockServer.expect(requestTo("http://localhost:3001/api/sandbox-status?sandboxId=" + sandboxId))
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox-status"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
 
@@ -515,11 +754,15 @@ class G3SandboxServiceTest {
         String sandboxId = "sbx_test_123";
         String responseBody = """
                 {
-                    "alive": false
+                    "active": true,
+                    "healthy": false,
+                    "sandboxData": {
+                        "sandboxId": "%s"
+                    }
                 }
-                """;
+                """.formatted(sandboxId);
 
-        mockServer.expect(requestTo("http://localhost:3001/api/sandbox-status?sandboxId=" + sandboxId))
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox-status"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
 
@@ -540,7 +783,7 @@ class G3SandboxServiceTest {
         // GIVEN
         String sandboxId = "sbx_test_123";
 
-        mockServer.expect(requestTo("http://localhost:3001/api/sandbox-status?sandboxId=" + sandboxId))
+        mockServer.expect(requestTo("http://localhost:3001/api/sandbox-status"))
                 .andExpect(method(HttpMethod.GET))
                 .andRespond(withServerError());
 
@@ -588,5 +831,123 @@ class G3SandboxServiceTest {
                 .generatedBy(G3ArtifactEntity.GeneratedBy.BACKEND_CODER.getValue())
                 .generationRound(0)
                 .build();
+    }
+}
+
+/**
+ * G3ToolsetService 单元测试
+ * 覆盖：命令策略、文件读取上限与搜索过滤。
+ */
+class G3ToolsetServiceTest {
+
+    private G3ToolsetService toolsetService;
+    private G3ToolsetProperties toolsetProperties;
+    private G3JobMapper jobMapper;
+    private G3SandboxService sandboxService;
+    private G3HookPipeline hookPipeline;
+
+    @TempDir
+    Path tempDir;
+
+    @BeforeEach
+    void setUp() {
+        toolsetProperties = new G3ToolsetProperties();
+        jobMapper = Mockito.mock(G3JobMapper.class);
+        sandboxService = Mockito.mock(G3SandboxService.class);
+        hookPipeline = new G3HookPipeline(new G3HookProperties(), List.of());
+        toolsetService = new G3ToolsetService(toolsetProperties, jobMapper, sandboxService, hookPipeline);
+        toolsetProperties.setWorkspaceRoot(tempDir.toString());
+    }
+
+    @Test
+    void runSandboxCommand_whenCommandDenied_shouldBlock() {
+        UUID jobId = UUID.randomUUID();
+        G3ToolsetService.ToolCommandResult result = toolsetService.runSandboxCommand(
+                jobId,
+                "rm -rf /",
+                5,
+                entry -> {}
+        );
+
+        assertFalse(result.isSuccess());
+        assertEquals("BLOCK", result.getPolicyDecision());
+        assertTrue(result.getMessage().contains("命令被策略拒绝"));
+    }
+
+    @Test
+    void runSandboxCommand_whenAllowed_shouldExecute() {
+        UUID jobId = UUID.randomUUID();
+        G3JobEntity job = G3JobEntity.builder()
+                .id(jobId)
+                .sandboxId("sbx_test")
+                .build();
+
+        when(jobMapper.selectById(jobId)).thenReturn(job);
+        when(sandboxService.executeCommand(eq("sbx_test"), eq("ls"), anyInt()))
+                .thenReturn(new G3SandboxService.SandboxCommandResult(0, "ok", "", 12));
+
+        G3ToolsetService.ToolCommandResult result = toolsetService.runSandboxCommand(
+                jobId,
+                "ls",
+                5,
+                entry -> {}
+        );
+
+        assertTrue(result.isSuccess());
+        assertEquals("ALLOW", result.getPolicyDecision());
+        assertEquals("ok", result.getStdout());
+    }
+
+    @Test
+    void readWorkspaceFile_whenFileTooLarge_shouldReject() throws Exception {
+        toolsetProperties.setMaxFileSizeBytes(10);
+        Path file = tempDir.resolve("demo.md");
+        Files.writeString(file, "01234567890", StandardCharsets.UTF_8);
+
+        G3ToolsetService.FileReadResult result = toolsetService.readWorkspaceFile("demo.md", 20);
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getMessage().contains("文件过大"));
+    }
+
+    @Test
+    void searchWorkspace_shouldSkipExcludedAndDisallowedFiles() throws Exception {
+        Path srcDir = tempDir.resolve("src");
+        Files.createDirectories(srcDir);
+        Files.writeString(srcDir.resolve("Main.java"), "hello Query", StandardCharsets.UTF_8);
+
+        Path excludedDir = tempDir.resolve("node_modules");
+        Files.createDirectories(excludedDir);
+        Files.writeString(excludedDir.resolve("Ignore.java"), "hello Query", StandardCharsets.UTF_8);
+
+        Files.writeString(tempDir.resolve("notes.txt"), "hello Query", StandardCharsets.UTF_8);
+
+        toolsetProperties.setAllowFileExtensions(List.of(".java"));
+        toolsetProperties.setExcludePathContains(List.of("/node_modules/"));
+
+        G3ToolsetService.SearchResult result = toolsetService.searchWorkspace("Query", 10);
+
+        assertTrue(result.isSuccess());
+        assertEquals(1, result.getMatches().size());
+        assertEquals("src/Main.java", result.getMatches().get(0).getFilePath());
+    }
+
+    @Test
+    void summarizeWorkspaceFiles_shouldReturnSummary() throws Exception {
+        Path srcDir = tempDir.resolve("src");
+        Files.createDirectories(srcDir);
+        Files.writeString(srcDir.resolve("Demo.java"), "package demo;\npublic class Demo {}\n", StandardCharsets.UTF_8);
+
+        var summary = toolsetService.summarizeWorkspaceFiles(
+                List.of("src/Demo.java"),
+                30,
+                500,
+                null,
+                null
+        );
+
+        assertTrue(summary.isSuccess());
+        assertNotNull(summary.getSummary());
+        assertTrue(summary.getSummary().contains("class Demo"));
     }
 }

@@ -3,6 +3,7 @@
 import { cn } from "@/lib/utils";
 import { CategoryMeta, TemplateCategory } from "@/types/template";
 import { Badge } from "@/components/ui/badge";
+import { Lock } from "lucide-react";
 
 /**
  * 分类侧边栏组件属性
@@ -19,6 +20,7 @@ export interface CategorySidebarProps {
 /**
  * 分类侧边栏组件
  * 用于模板库页面的分类导航
+ * 安全竞赛类可用，其他分类显示"即将开放"
  */
 export function CategorySidebar({
   categories,
@@ -31,30 +33,42 @@ export function CategorySidebar({
       <nav className="space-y-1">
         {categories.map((category) => {
           const isSelected = selectedCategory === category.id;
+          const isAvailable = category.isAvailable !== false;
+
           return (
             <button
               key={category.id}
-              onClick={() => onCategoryChange(category.id)}
+              onClick={() => isAvailable && onCategoryChange(category.id)}
+              disabled={!isAvailable}
               className={cn(
                 "flex w-full items-center justify-between rounded-lg px-4 py-3 text-left transition-all",
-                isSelected
+                isAvailable && isSelected
                   ? "bg-primary text-primary-foreground shadow-md"
-                  : "hover:bg-muted/50"
+                  : isAvailable
+                  ? "hover:bg-muted/50"
+                  : "opacity-60 cursor-not-allowed"
               )}
             >
               <div className="flex items-center gap-3">
                 <span className="text-xl">{category.icon}</span>
                 <span className="font-medium">{category.name}</span>
-              </div>
-              <Badge
-                variant={isSelected ? "secondary" : "outline"}
-                className={cn(
-                  "ml-auto",
-                  isSelected && "bg-primary-foreground/20 text-primary-foreground"
+                {!isAvailable && (
+                  <Lock className="h-3 w-3 text-muted-foreground" />
                 )}
-              >
-                {category.count}
-              </Badge>
+              </div>
+              <div className="flex items-center gap-2">
+                {!isAvailable && (
+                  <span className="text-xs text-muted-foreground">即将开放</span>
+                )}
+                <Badge
+                  variant={isSelected && isAvailable ? "secondary" : "outline"}
+                  className={cn(
+                    isSelected && isAvailable && "bg-primary-foreground/20 text-primary-foreground"
+                  )}
+                >
+                  {category.count}
+                </Badge>
+              </div>
             </button>
           );
         })}

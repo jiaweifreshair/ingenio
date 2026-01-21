@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 interface PrototypePreviewProps {
   previewUrl: string | null;
@@ -23,17 +24,34 @@ export function PrototypePreview({
   className = '',
   streamedCode = '',
 }: PrototypePreviewProps) {
+  const { t } = useLanguage();
   const [iframeLoaded, setIframeLoaded] = useState(false);
   const [iframeError, setIframeError] = useState<string | null>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const codeScrollRef = useRef<HTMLDivElement>(null);
+  const codeScrollRef2 = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll code view
-  useEffect(() => {
-    if (codeScrollRef.current) {
-      codeScrollRef.current.scrollTop = codeScrollRef.current.scrollHeight;
+  // 自动滚动到底部的通用函数
+  const scrollToBottom = useCallback((ref: React.RefObject<HTMLDivElement | null>) => {
+    if (ref.current) {
+      // 使用 requestAnimationFrame 确保 DOM 更新后再滚动
+      requestAnimationFrame(() => {
+        if (ref.current) {
+          ref.current.scrollTop = ref.current.scrollHeight;
+        }
+      });
     }
-  }, [streamedCode]);
+  }, []);
+
+  // Auto-scroll code view (有previewUrl时的遮罩层代码流)
+  useEffect(() => {
+    scrollToBottom(codeScrollRef);
+  }, [streamedCode, scrollToBottom]);
+
+  // Auto-scroll code view (无previewUrl时的代码流)
+  useEffect(() => {
+    scrollToBottom(codeScrollRef2);
+  }, [streamedCode, scrollToBottom]);
 
   // Reset loaded state when key changes (reload)
   useEffect(() => {
@@ -66,7 +84,7 @@ export function PrototypePreview({
             ref={iframeRef}
             src={iframeSrc || previewUrl}
             className="w-full h-full border-0"
-            title="原型预览"
+            title={t('ui.prototype_preview')}
             sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
             onLoad={() => {
               setIframeLoaded(true);
@@ -74,7 +92,7 @@ export function PrototypePreview({
             }}
             onError={() => {
               setIframeLoaded(false);
-              setIframeError('预览加载失败：可能是沙箱服务未启动、网络受限或被浏览器策略拦截。');
+              setIframeError(t('ui.preview_load_failed'));
             }}
             allow="accelerometer; camera; encrypted-media; geolocation; gyroscope; microphone; midi"
             data-testid="prototype-preview-iframe"
@@ -91,7 +109,7 @@ export function PrototypePreview({
                   rel="noreferrer"
                   className="text-sm text-primary underline underline-offset-4"
                 >
-                  在新窗口打开预览
+                  {t('ui.open_preview_new_window')}
                 </a>
               )}
             </div>
@@ -103,23 +121,25 @@ export function PrototypePreview({
               <div className="flex items-center justify-between mb-4 text-white">
                 <div className="flex items-center gap-2">
                   <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
-                  <span className="font-medium">AI正在编写代码...</span>
+                  <span className="font-medium">{t('ui.ai_writing_code')}</span>
                 </div>
                 <div className="text-sm opacity-70">
-                  已用时 <span className="font-mono">{elapsedTime}</span>s
+                  {t('ui.elapsed_time')} <span className="font-mono">{elapsedTime}</span>s
                 </div>
               </div>
               
-              {/* 代码流展示区 */}
-              <div 
+              {/* 代码流展示区 - 带滚动条和打字机效果 */}
+              {/* 代码流展示区 - 带滚动条和打字机效果 */}
+              <div
                 ref={codeScrollRef}
-                className="flex-1 overflow-hidden font-mono text-xs text-green-400 bg-black/50 p-4 rounded-lg border border-white/10 relative"
+                className="flex-1 overflow-y-scroll font-mono text-xs text-green-400 bg-black/50 p-4 rounded-lg border border-white/10 relative [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-green-400/30 hover:[&::-webkit-scrollbar-thumb]:bg-green-400/80 [&::-webkit-scrollbar-thumb]:rounded-full"
+                style={{ scrollbarWidth: 'thin', scrollbarColor: '#4ade80 transparent' }}
               >
                 <pre className="whitespace-pre-wrap break-all pb-8">
-                  {streamedCode || '// 初始化代码生成环境...'}
+                {streamedCode || '// ' + t('ui.generating_code')}
                   <span className="inline-block w-2 h-4 bg-green-400 ml-1 animate-pulse align-middle" />
                 </pre>
-                
+
                 {/* 底部渐变遮罩 */}
                 <div className="absolute bottom-0 left-0 right-0 h-12 bg-gradient-to-t from-black/50 to-transparent pointer-events-none" />
               </div>
@@ -130,7 +150,7 @@ export function PrototypePreview({
           {stage === 'complete' && iframeLoaded && !iframeError && (
             <Badge className="absolute top-2 right-2 bg-green-100 text-green-700 border-green-200">
               <CheckCircle2 className="h-3 w-3 mr-1" />
-              预览就绪
+              {t('ui.preview_ready')}
             </Badge>
           )}
         </>
@@ -141,16 +161,17 @@ export function PrototypePreview({
                <div className="flex items-center justify-between mb-4">
                  <div className="flex items-center gap-2">
                    <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
-                   <span className="font-medium text-gray-900 dark:text-gray-100">AI正在编写代码...</span>
+                   <span className="font-medium text-gray-900 dark:text-gray-100">{t('ui.ai_writing_code')}</span>
                  </div>
                  <div className="text-sm text-muted-foreground">
-                   已用时 <span className="font-mono">{elapsedTime}</span>s
+                   {t('ui.elapsed_time')} <span className="font-mono">{elapsedTime}</span>s
                  </div>
                </div>
                
-               <div 
-                 ref={codeScrollRef}
-                 className="flex-1 overflow-y-auto font-mono text-xs bg-[#1e1e1e] text-[#d4d4d4] p-4 rounded-lg shadow-inner border border-gray-200 dark:border-gray-800"
+               <div
+                 ref={codeScrollRef2}
+                 className="flex-1 overflow-y-scroll font-mono text-xs bg-[#1e1e1e] text-[#d4d4d4] p-4 rounded-lg shadow-inner border border-gray-200 dark:border-gray-800 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-purple-500/30 hover:[&::-webkit-scrollbar-thumb]:bg-purple-500/80 [&::-webkit-scrollbar-thumb]:rounded-full"
+                 style={{ scrollbarWidth: 'thin', scrollbarColor: '#a855f7 transparent' }}
                >
                  <pre className="whitespace-pre-wrap break-all">
                    {streamedCode}
@@ -162,10 +183,14 @@ export function PrototypePreview({
              <div className="flex flex-col items-center justify-center">
                <Loader2 className="h-8 w-8 animate-spin text-purple-600 mb-4" />
                <p className="text-muted-foreground">
-                 {stage === 'sandbox' ? '正在创建沙箱...' : '准备生成环境...'}
+                 {stage === 'sandbox'
+                   ? t('ui.creating_sandbox')
+                   : stage === 'generating'
+                     ? t('ui.ai_generating_code')
+                     : t('ui.preparing_environment')}
                </p>
                <p className="text-xs text-muted-foreground mt-2">
-                 已用时 {elapsedTime}s · 通常需要5-10秒
+                 {t('ui.elapsed_time')} {elapsedTime}s · {stage === 'sandbox' ? t('ui.usually_takes_short') : t('ui.usually_takes_long')}
                </p>
              </div>
            )}

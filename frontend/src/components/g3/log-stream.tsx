@@ -35,6 +35,8 @@ interface LogStreamProps {
   showFilter?: boolean;
   /** 是否自动折叠详细信息 */
   autoCollapse?: boolean;
+  /** 是否自动滚动到最新日志（用于“暂停追踪/回看历史”场景） */
+  autoScroll?: boolean;
 }
 
 /**
@@ -264,6 +266,7 @@ export function LogStream({
   className,
   showFilter = true,
   autoCollapse = true,
+  autoScroll = true,
 }: LogStreamProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeFilters, setActiveFilters] = useState<Set<LogRole>>(
@@ -275,6 +278,7 @@ export function LogStream({
 
   // 自动滚动到底部
   useEffect(() => {
+    if (!autoScroll) return;
     if (scrollRef.current) {
       const scrollContainer = scrollRef.current.querySelector(
         "[data-radix-scroll-area-viewport]"
@@ -283,7 +287,7 @@ export function LogStream({
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
       }
     }
-  }, [logs]);
+  }, [logs, autoScroll]);
 
   // 过滤后的日志
   const filteredLogs = useMemo(() => {
@@ -445,16 +449,15 @@ export function LogStream({
             {filteredLogs.map((log, i) => {
               const isDetail = autoCollapse && isDetailLog(log.content);
               const isCollapsed = collapsedItems.has(i);
-
-              // 如果是详细日志且被折叠，不显示
-              if (isDetail && isCollapsed) {
-                return null;
-              }
+              const displayLog =
+                isDetail && isCollapsed
+                  ? { ...log, content: "（详细日志已折叠，点击展开）" }
+                  : log;
 
               return (
                 <LogEntry
                   key={`${log.timestamp}-${i}`}
-                  log={log}
+                  log={displayLog}
                   isCollapsed={isCollapsed}
                   onToggle={() => toggleCollapse(i)}
                   showCollapse={isDetail}

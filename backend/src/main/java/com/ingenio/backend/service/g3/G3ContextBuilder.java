@@ -2,10 +2,12 @@ package com.ingenio.backend.service.g3;
 
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,13 +28,19 @@ import java.util.stream.Collectors;
  * - 按任务类型过滤上下文，减少无关信息干扰
  * - 支持注入已生成类清单，避免重复生成或引用不存在的类
  *
+ * v2.2.0 增强（M2）：
+ * - 智能压缩：大型项目（>20文件）自动切换为摘要模式
+ * - Token控制：按 maxTokens 参数控制上下文大小
+ * - 渐进式压缩：小项目完整上下文 → 中项目精简签名 → 大项目统计摘要
+ *
  * @author Claude
  * @since 2025-01-14
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class G3ContextBuilder {
+
+    private static final Logger log = LoggerFactory.getLogger(G3ContextBuilder.class);
 
     private final G3PlanningFileService planningFileService;
 
@@ -44,6 +52,18 @@ public class G3ContextBuilder {
     public static final String TASK_TYPE_DTO = "dto";
     public static final String TASK_TYPE_SERVICE = "service";
     public static final String TASK_TYPE_CONTROLLER = "controller";
+
+    /**
+     * 压缩策略阈值（M2）
+     */
+    /** 小型项目阈值：文件数 <= 此值时使用完整上下文 */
+    private static final int SMALL_PROJECT_THRESHOLD = 10;
+    /** 中型项目阈值：文件数 <= 此值时使用精简签名模式 */
+    private static final int MEDIUM_PROJECT_THRESHOLD = 30;
+    /** 默认最大 Token 数（约等于字符数的 1/4） */
+    private static final int DEFAULT_MAX_TOKENS = 4000;
+    /** 每个类签名的最大字符数 */
+    private static final int MAX_SIGNATURE_CHARS = 300;
 
     /**
      * 构建全局上下文
@@ -61,6 +81,276 @@ public class G3ContextBuilder {
     }
 
     /**
+     * 构建智能压缩上下文（M2 新增）
+     *
+     * 根据项目规模自动选择压缩策略：
+     * - 小型项目（<=10文件）：完整上下文
+     * - 中型项目（<=30文件）：精简签名模式
+     * - 大型项目（>30文件）：统计摘要模式
+     *
+     * @param jobId     任务ID
+     * @param artifacts 已生成的产物列表
+     * @param maxTokens 最大Token数（0表示使用默认值）
+     * @return 压缩后的上下文文本
+     */
+    public String buildCompactContext(UUID jobId, List<G3ArtifactEntity> artifacts, int maxTokens) {
+        int effectiveMaxTokens = maxTokens > 0 ? maxTokens : DEFAULT_MAX_TOKENS;
+        int maxChars = effectiveMaxTokens * 4; // 粗略估算：1 token ≈ 4 字符
+
+        int fileCount = artifacts != null ? artifacts.size() : 0;
+        log.debug("构建压缩上下文: jobId={}, fileCount={}, maxTokens={}", jobId, fileCount, effectiveMaxTokens);
+
+        // 根据项目规模选择压缩策略
+        if (fileCount <= SMALL_PROJECT_THRESHOLD) {
+            // 小型项目：完整上下文
+            return buildFullContext(jobId, artifacts, maxChars);
+        } else if (fileCount <= MEDIUM_PROJECT_THRESHOLD) {
+            // 中型项目：精简签名模式
+            return buildSignatureContext(jobId, artifacts, maxChars);
+        } else {
+            // 大型项目：统计摘要模式
+            return buildSummaryContext(jobId, artifacts, maxChars);
+        }
+    }
+
+    /**
+     * 构建完整上下文（小型项目）
+     *
+     * 包含所有类的完整签名信息
+     */
+    private String buildFullContext(UUID jobId, List<G3ArtifactEntity> artifacts, int maxChars) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 项目上下文（完整模式）\n\n");
+
+        // 添加基础上下文
+        String baseContext = planningFileService.getCompactContext(jobId);
+        sb.append(baseContext);
+
+        // 添加所有类的签名
+        if (artifacts != null && !artifacts.isEmpty()) {
+            sb.append("\n## 已生成类签名\n\n");
+            for (G3ArtifactEntity artifact : artifacts) {
+                if (artifact.getFileName() == null || !artifact.getFileName().endsWith(".java")) {
+                    continue;
+                }
+                String signature = extractClassSignature(artifact.getContent());
+                if (!signature.isBlank()) {
+                    sb.append("### ").append(artifact.getFileName().replace(".java", "")).append("\n");
+                    sb.append("```java\n").append(signature).append("\n```\n\n");
+                }
+
+                // 检查长度限制
+                if (sb.length() > maxChars) {
+                    sb.append("\n... (已达到长度限制，后续内容省略)\n");
+                    break;
+                }
+            }
+        }
+
+        return truncateToLimit(sb.toString(), maxChars);
+    }
+
+    /**
+     * 构建精简签名上下文（中型项目）
+     *
+     * 只保留类名和主要方法签名，省略方法参数细节
+     */
+    private String buildSignatureContext(UUID jobId, List<G3ArtifactEntity> artifacts, int maxChars) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 项目上下文（精简模式）\n\n");
+
+        // 按类型分组统计
+        Map<String, List<G3ArtifactEntity>> byType = groupArtifactsByType(artifacts);
+
+        sb.append("### 文件统计\n");
+        for (Map.Entry<String, List<G3ArtifactEntity>> entry : byType.entrySet()) {
+            sb.append("- ").append(entry.getKey()).append(": ").append(entry.getValue().size()).append(" 个\n");
+        }
+        sb.append("\n");
+
+        // 每种类型只展示前5个类的精简签名
+        for (Map.Entry<String, List<G3ArtifactEntity>> entry : byType.entrySet()) {
+            String type = entry.getKey();
+            List<G3ArtifactEntity> typeArtifacts = entry.getValue();
+
+            sb.append("### ").append(type.toUpperCase()).append(" 类\n");
+
+            int count = 0;
+            for (G3ArtifactEntity artifact : typeArtifacts) {
+                if (count >= 5) {
+                    sb.append("- ... (还有 ").append(typeArtifacts.size() - 5).append(" 个)\n");
+                    break;
+                }
+
+                String className = artifact.getFileName().replace(".java", "");
+                String packageName = extractPackageFromContent(artifact.getContent());
+                String fqn = packageName != null ? packageName + "." + className : className;
+
+                // 提取主要方法（最多3个）
+                List<String> methods = extractMainMethods(artifact.getContent(), 3);
+                sb.append("- `").append(fqn).append("`");
+                if (!methods.isEmpty()) {
+                    sb.append(": ").append(String.join(", ", methods));
+                }
+                sb.append("\n");
+
+                count++;
+            }
+            sb.append("\n");
+
+            if (sb.length() > maxChars) {
+                break;
+            }
+        }
+
+        return truncateToLimit(sb.toString(), maxChars);
+    }
+
+    /**
+     * 构建统计摘要上下文（大型项目）
+     *
+     * 只保留类型统计和关键类列表，大幅减少 Token 消耗
+     */
+    private String buildSummaryContext(UUID jobId, List<G3ArtifactEntity> artifacts, int maxChars) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("## 项目上下文（摘要模式）\n\n");
+        sb.append("> 注意：项目规模较大（").append(artifacts.size()).append(" 个文件），");
+        sb.append("已启用摘要模式以减少 Token 消耗。\n\n");
+
+        // 按类型分组统计
+        Map<String, List<G3ArtifactEntity>> byType = groupArtifactsByType(artifacts);
+
+        sb.append("### 文件统计\n");
+        sb.append("| 类型 | 数量 | 示例类 |\n");
+        sb.append("|------|------|--------|\n");
+
+        for (Map.Entry<String, List<G3ArtifactEntity>> entry : byType.entrySet()) {
+            String type = entry.getKey();
+            List<G3ArtifactEntity> typeArtifacts = entry.getValue();
+            int count = typeArtifacts.size();
+
+            // 取前3个作为示例
+            String examples = typeArtifacts.stream()
+                    .limit(3)
+                    .map(a -> a.getFileName().replace(".java", ""))
+                    .collect(Collectors.joining(", "));
+
+            if (count > 3) {
+                examples += " ...";
+            }
+
+            sb.append("| ").append(type).append(" | ").append(count).append(" | ").append(examples).append(" |\n");
+        }
+        sb.append("\n");
+
+        // 添加关键类的全限定名索引（便于 import）
+        sb.append("### 常用类索引（供 import 参考）\n");
+        sb.append("```\n");
+
+        int indexCount = 0;
+        for (G3ArtifactEntity artifact : artifacts) {
+            if (indexCount >= 20) {
+                sb.append("... (还有 ").append(artifacts.size() - 20).append(" 个类)\n");
+                break;
+            }
+
+            String className = artifact.getFileName().replace(".java", "");
+            String packageName = extractPackageFromContent(artifact.getContent());
+            if (packageName != null) {
+                sb.append(packageName).append(".").append(className).append("\n");
+                indexCount++;
+            }
+        }
+        sb.append("```\n");
+
+        return truncateToLimit(sb.toString(), maxChars);
+    }
+
+    /**
+     * 按类型分组产物
+     */
+    private Map<String, List<G3ArtifactEntity>> groupArtifactsByType(List<G3ArtifactEntity> artifacts) {
+        if (artifacts == null || artifacts.isEmpty()) {
+            return java.util.Collections.emptyMap();
+        }
+
+        return artifacts.stream()
+                .filter(a -> a.getFileName() != null && a.getFileName().endsWith(".java"))
+                .collect(Collectors.groupingBy(this::inferArtifactType));
+    }
+
+    /**
+     * 推断产物类型
+     */
+    private String inferArtifactType(G3ArtifactEntity artifact) {
+        String path = artifact.getFilePath();
+        String name = artifact.getFileName();
+
+        if (path == null)
+            path = "";
+        if (name == null)
+            name = "";
+
+        String lower = (path + "/" + name).toLowerCase();
+
+        if (lower.contains("/entity/") || name.endsWith("Entity.java"))
+            return "Entity";
+        if (lower.contains("/mapper/") || name.endsWith("Mapper.java"))
+            return "Mapper";
+        if (lower.contains("/dto/") || name.endsWith("DTO.java") || name.endsWith("Dto.java"))
+            return "DTO";
+        if (lower.contains("/service/") || name.endsWith("Service.java"))
+            return "Service";
+        if (lower.contains("/controller/") || name.endsWith("Controller.java"))
+            return "Controller";
+        if (lower.contains("/config/"))
+            return "Config";
+        if (lower.contains("/util/") || lower.contains("/utils/"))
+            return "Util";
+
+        return "Other";
+    }
+
+    /**
+     * 提取主要方法签名（精简版）
+     *
+     * @param content    代码内容
+     * @param maxMethods 最多提取的方法数
+     * @return 方法签名列表（如 "create()", "update()", "delete()"）
+     */
+    private List<String> extractMainMethods(String content, int maxMethods) {
+        List<String> methods = new java.util.ArrayList<>();
+        if (content == null)
+            return methods;
+
+        // 匹配 public 方法名
+        Pattern methodPattern = Pattern.compile("public\\s+\\S+\\s+(\\w+)\\s*\\(");
+        Matcher matcher = methodPattern.matcher(content);
+
+        while (matcher.find() && methods.size() < maxMethods) {
+            String methodName = matcher.group(1);
+            // 排除构造函数和常见 getter/setter
+            if (!methodName.startsWith("get") && !methodName.startsWith("set") && !methodName.startsWith("is")) {
+                methods.add(methodName + "()");
+            }
+        }
+
+        return methods;
+    }
+
+    /**
+     * 截断到指定长度限制
+     */
+    private String truncateToLimit(String content, int maxChars) {
+        if (content == null)
+            return "";
+        if (content.length() <= maxChars)
+            return content;
+
+        return content.substring(0, maxChars) + "\n\n... (已截断，原长度: " + content.length() + " 字符)\n";
+    }
+
+    /**
      * 为特定任务构建上下文（按任务类型过滤）
      *
      * 不同任务类型需要的上下文不同：
@@ -69,8 +359,8 @@ public class G3ContextBuilder {
      * - service: 需要 Entity + Mapper + DTO 签名
      * - controller: 需要 Service + DTO 签名
      *
-     * @param jobId 任务ID
-     * @param taskType 任务类型 (entity/mapper/dto/service/controller)
+     * @param jobId         任务ID
+     * @param taskType      任务类型 (entity/mapper/dto/service/controller)
      * @param relatedEntity 相关实体名（可选）
      * @return 上下文文本
      */
@@ -117,7 +407,8 @@ public class G3ContextBuilder {
 
         for (G3ArtifactEntity artifact : artifacts) {
             String fileName = artifact.getFileName();
-            if (fileName == null) continue;
+            if (fileName == null)
+                continue;
 
             String className = fileName.replace(".java", "");
             String packageName = extractPackageFromContent(artifact.getContent());
@@ -152,7 +443,8 @@ public class G3ContextBuilder {
 
         for (G3ArtifactEntity artifact : artifacts) {
             String content = artifact.getContent();
-            if (content == null || content.isBlank()) continue;
+            if (content == null || content.isBlank())
+                continue;
 
             String className = artifact.getFileName().replace(".java", "");
             sb.append("### ").append(className).append("\n");
@@ -172,7 +464,7 @@ public class G3ContextBuilder {
      * 按任务类型过滤上下文
      *
      * @param fullContext 完整上下文
-     * @param taskType 任务类型
+     * @param taskType    任务类型
      * @return 过滤后的上下文
      */
     private String filterContextByTaskType(String fullContext, String taskType) {
@@ -188,7 +480,7 @@ public class G3ContextBuilder {
             case TASK_TYPE_MAPPER -> filterForMapper(fullContext);
             case TASK_TYPE_SERVICE -> filterForService(fullContext);
             case TASK_TYPE_CONTROLLER -> filterForController(fullContext);
-            default -> fullContext;  // entity/dto 等使用完整上下文
+            default -> fullContext; // entity/dto 等使用完整上下文
         };
     }
 
@@ -221,7 +513,7 @@ public class G3ContextBuilder {
     /**
      * 按 section 关键词过滤上下文
      *
-     * @param context 原始上下文
+     * @param context      原始上下文
      * @param keepKeywords 保留的关键词列表
      * @return 过滤后的上下文
      */
@@ -250,7 +542,8 @@ public class G3ContextBuilder {
      * 从代码内容中提取包名
      */
     private String extractPackageFromContent(String content) {
-        if (content == null) return null;
+        if (content == null)
+            return null;
 
         Pattern packagePattern = Pattern.compile("^package\\s+([\\w.]+);", Pattern.MULTILINE);
         Matcher matcher = packagePattern.matcher(content);
@@ -265,7 +558,8 @@ public class G3ContextBuilder {
      * 提取类签名（类声明 + 公共方法）
      */
     private String extractClassSignature(String content) {
-        if (content == null) return "";
+        if (content == null)
+            return "";
 
         StringBuilder signature = new StringBuilder();
         String[] lines = content.split("\n");
@@ -319,7 +613,8 @@ public class G3ContextBuilder {
     private int countChar(String str, char c) {
         int count = 0;
         for (char ch : str.toCharArray()) {
-            if (ch == c) count++;
+            if (ch == c)
+                count++;
         }
         return count;
     }

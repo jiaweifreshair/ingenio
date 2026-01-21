@@ -9,6 +9,9 @@ import org.springframework.stereotype.Service;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -132,6 +135,9 @@ public class TestExecutor {
      */
     private TestResult runJUnitTests(String projectRoot, String projectType) throws Exception {
         boolean isMaven = new File(projectRoot + "/pom.xml").exists();
+        if (isMaven) {
+            cleanupJacocoData(projectRoot);
+        }
         String command = isMaven
                 ? "cd " + projectRoot + " && mvn test"
                 : "cd " + projectRoot + " && ./gradlew test";
@@ -140,6 +146,24 @@ public class TestExecutor {
 
         // 解析JUnit输出
         return parseJUnitOutput(processResult.output, projectType);
+    }
+
+    /**
+     * 清理旧的 JaCoCo 执行数据。
+     *
+     * 是什么：删除上一轮测试生成的 jacoco.exec 文件。
+     * 做什么：避免历史覆盖率数据与当前 class 不一致导致告警。
+     * 为什么：保证每次测试产生的覆盖率报告干净且可复现。
+     *
+     * @param projectRoot 项目根目录
+     */
+    private void cleanupJacocoData(String projectRoot) {
+        Path jacocoPath = Paths.get(projectRoot, "target", "jacoco.exec");
+        try {
+            Files.deleteIfExists(jacocoPath);
+        } catch (Exception e) {
+            log.warn("清理JaCoCo执行数据失败: path={}, error={}", jacocoPath, e.getMessage());
+        }
     }
 
     /**

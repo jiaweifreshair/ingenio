@@ -141,6 +141,14 @@ export function AppCard({
     });
   }, [project.id]);
 
+  /**
+   * 处理执行历史导航
+   * 导航到执行历史回放页面
+   */
+  const handleExecutionHistory = useCallback(() => {
+    router.push(`/dashboard/${project.id}/history`);
+  }, [router, project.id]);
+
   return (
     <Card className="group relative overflow-hidden transition-all hover:shadow-xl">
       {/* 封面图片 */}
@@ -195,6 +203,10 @@ export function AppCard({
               <DropdownMenuItem onClick={handleVersionHistory}>
                 <History className="mr-2 h-4 w-4" />
                 版本历史
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExecutionHistory}>
+                <Clock className="mr-2 h-4 w-4" />
+                执行历史
               </DropdownMenuItem>
               <DropdownMenuItem onClick={handleSuperDesign}>
                 <Palette className="mr-2 h-4 w-4" />

@@ -3,6 +3,7 @@
 import { INDUSTRIES, IndustryType } from "@/types/smart-builder";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Check } from "lucide-react";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface IndustrySelectionProps {
     selectedIndustry: IndustryType | null;
@@ -10,14 +11,16 @@ interface IndustrySelectionProps {
 }
 
 export function IndustrySelection({ selectedIndustry, onSelect }: IndustrySelectionProps) {
+    const { t } = useLanguage();
+
     return (
         <section className="py-12 bg-slate-50 dark:bg-slate-900/20">
             <div className="container mx-auto px-6 max-w-6xl">
                 <div className="text-center mb-12">
-                    <h2 className="text-4xl font-bold text-foreground mb-4">全行业场景覆盖</h2>
+                    <h2 className="text-4xl font-bold text-foreground mb-4">{t('hero.selector_scenario')}</h2>
                     <div className="flex items-center justify-center gap-2 text-muted-foreground text-lg">
-                        <span>点击选择您的业务场景,</span>
-                        <span className="text-emerald-500 font-semibold">AI将自动优化您的需求描述</span>
+                        <span>{t('hero.toast_input_req_desc')}</span>
+                        {/* <span className="text-emerald-500 font-semibold">AI将自动优化您的需求描述</span> */}
                     </div>
                 </div>
 
@@ -46,7 +49,7 @@ export function IndustrySelection({ selectedIndustry, onSelect }: IndustrySelect
                                     <div className="w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-4 group-hover:bg-slate-200 dark:group-hover:bg-slate-700 transition-colors">
                                         <ArrowRight className="w-6 h-6 text-slate-500" />
                                     </div>
-                                    <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400">{industry.label}</h3>
+                                    <h3 className="text-lg font-medium text-slate-500 dark:text-slate-400">{t(`const.industry.${industry.id}.label`)}</h3>
                                 </div>
                             );
                         }
@@ -79,8 +82,8 @@ export function IndustrySelection({ selectedIndustry, onSelect }: IndustrySelect
                                         <Icon className="w-7 h-7" />
                                     </div>
 
-                                    <h3 className="text-xl font-bold text-foreground mb-2">{industry.label}</h3>
-                                    <p className="text-sm text-muted-foreground">{industry.description}</p>
+                                    <h3 className="text-xl font-bold text-foreground mb-2">{t(`const.industry.${industry.id}.label`)}</h3>
+                                    <p className="text-sm text-muted-foreground">{t(`const.industry.${industry.id}.desc`)}</p>
                                 </div>
                             </div>
                         );

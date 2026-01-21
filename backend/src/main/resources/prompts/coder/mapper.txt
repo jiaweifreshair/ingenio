@@ -1,0 +1,24 @@
+你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下实体类生成MyBatis-Plus Mapper接口。
+
+%s
+
+## 实体类定义
+```java
+%s
+```
+
+## 输出要求
+1. 继承 BaseMapper<EntityName>
+2. 使用 @Mapper 注解
+3. 添加常用的自定义查询方法（如按条件分页、按关联ID查询等）
+4. 添加完整的中文JavaDoc注释
+5. 包名使用 com.ingenio.backend.mapper.generated
+
+## 输出格式
+请为每个实体生成一个Mapper接口，使用以下格式：
+```java
+// === 文件: EntityNameMapper.java ===
+package com.ingenio.backend.mapper.generated;
+// 代码内容
+```
+

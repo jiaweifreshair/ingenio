@@ -18,7 +18,6 @@
 import { Card, CardContent, CardDescription, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import {
-  Eye,
   Download,
   Palette,
   Rocket,
@@ -117,13 +116,6 @@ export function QuickActionCards({
   className
 }: QuickActionCardsProps) {
   const cards: QuickActionCard[] = [
-    {
-      title: '预览应用',
-      description: '查看生成的应用效果',
-      icon: Eye,
-      href: `/preview/${appId}`,
-      variant: 'primary'
-    },
     {
       title: '下载代码',
       description: '下载全栈代码到本地',

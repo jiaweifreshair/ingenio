@@ -2,6 +2,8 @@ package com.ingenio.backend.entity.g3;
 
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
 import java.util.*;
@@ -20,9 +22,9 @@ import java.util.stream.Collectors;
  * @author Ingenio Team
  * @since 2.1.0
  */
-@Slf4j
-@Data
 public class G3SessionMemory {
+
+    private static final Logger log = LoggerFactory.getLogger(G3SessionMemory.class);
 
     /**
      * 关联的任务ID
@@ -75,14 +77,41 @@ public class G3SessionMemory {
         this.jobId = jobId;
     }
 
+    // Getters for Data
+    public UUID getJobId() {
+        return jobId;
+    }
+
+    public List<RepairAttempt> getRepairHistory() {
+        return repairHistory;
+    }
+
+    public Map<String, Integer> getErrorSignatureCount() {
+        return errorSignatureCount;
+    }
+
+    public Set<String> getRepairedFiles() {
+        return repairedFiles;
+    }
+
+    public String getLastErrorSignature() {
+        return lastErrorSignature;
+    }
+
+    public int getConsecutiveSameErrorCount() {
+        return consecutiveSameErrorCount;
+    }
+
+    public void setLastErrorSignature(String lastErrorSignature) {
+        this.lastErrorSignature = lastErrorSignature;
+    }
+
+    public void setConsecutiveSameErrorCount(int consecutiveSameErrorCount) {
+        this.consecutiveSameErrorCount = consecutiveSameErrorCount;
+    }
+
     /**
      * 记录一次修复尝试
-     *
-     * @param round          轮次
-     * @param files          修复的文件列表
-     * @param success        是否成功
-     * @param errorSignature 错误签名
-     * @param fixSummary     修复摘要
      */
     public void addRepairAttempt(int round, List<String> files, boolean success,
             String errorSignature, String fixSummary) {
@@ -112,9 +141,6 @@ public class G3SessionMemory {
 
     /**
      * 记录错误签名并检测重复
-     *
-     * @param errorSignature 错误签名
-     * @return 是否为连续相同错误
      */
     public boolean recordErrorSignature(String errorSignature) {
         if (errorSignature == null || errorSignature.isBlank()) {
@@ -141,10 +167,6 @@ public class G3SessionMemory {
 
     /**
      * 检测是否应提前终止修复循环
-     *
-     * 终止条件：
-     * 1. 连续 N 次出现相同错误签名
-     * 2. 总修复次数过多但成功率为 0
      */
     public boolean shouldTerminate() {
         // 条件1：连续相同错误
@@ -167,9 +189,6 @@ public class G3SessionMemory {
 
     /**
      * 检测是否为连续相同错误
-     *
-     * @param newErrorSignature 新的错误签名
-     * @return 是否为连续相同错误（超过容忍阈值）
      */
     public boolean isSameErrorRepeated(String newErrorSignature) {
         if (newErrorSignature == null || newErrorSignature.isBlank()) {
@@ -185,9 +204,6 @@ public class G3SessionMemory {
 
     /**
      * 获取最近 N 轮修复历史
-     *
-     * @param n 轮次数量
-     * @return 修复历史列表（最近的在后）
      */
     public List<RepairAttempt> getRecentHistory(int n) {
         if (n <= 0 || repairHistory.isEmpty()) {
@@ -199,17 +215,7 @@ public class G3SessionMemory {
     }
 
     /**
-     * 构建 Coach 上下文（用于 AI Prompt）
-     *
-     * 输出格式：
-     * ```
-     * ### 修复历史
-     * - 第1轮: 修复 [A.java, B.java] → 失败 (错误类型: cannot find symbol)
-     * - 第2轮: 修复 [A.java] → 成功
-     *
-     * ### 注意事项
-     * - 以下方案已尝试失败，请避免重复：...
-     * ```
+     * 构建 Coach 上下文
      */
     public String buildCoachContext() {
         if (repairHistory.isEmpty()) {
@@ -272,9 +278,6 @@ public class G3SessionMemory {
 
     /**
      * 检查文件是否已修复过
-     *
-     * @param filename 文件名
-     * @return 是否已修复过
      */
     public boolean hasRepairedFile(String filename) {
         if (filename == null)

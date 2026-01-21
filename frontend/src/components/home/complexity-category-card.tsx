@@ -42,6 +42,8 @@ export interface ComplexityCategoryConfig {
   estimatedDays: string;
   /** 支持的平台列表（可选） */
   platforms?: string[];
+  /** 是否禁用（功能未开放） */
+  disabled?: boolean;
 }
 
 /**
@@ -98,6 +100,7 @@ export const COMPLEXITY_CATEGORIES: ComplexityCategoryConfig[] = [
     color: 'from-orange-500 to-amber-500',
     estimatedDays: '5-10天',
     platforms: ['Android', 'iOS', 'HarmonyOS', 'Web', '小程序'],
+    disabled: true,
   },
 ];
 
@@ -121,21 +124,34 @@ export function ComplexityCategoryCard({
   onClick,
 }: ComplexityCategoryCardProps): React.ReactElement {
   const Icon = category.icon;
+  const isDisabled = category.disabled;
 
   return (
     <Card
-      onClick={() => onClick(category)}
+      onClick={() => !isDisabled && onClick(category)}
       className={cn(
-        "group w-[240px] shrink-0 cursor-pointer transition-all duration-300",
-        "hover:shadow-xl hover:-translate-y-2 hover:scale-[1.02]",
+        "group w-[240px] shrink-0 transition-all duration-300",
         "border-border/50 bg-card/60 backdrop-blur-sm",
-        "relative overflow-hidden"
+        "relative overflow-hidden",
+        isDisabled
+          ? "cursor-not-allowed opacity-60"
+          : "cursor-pointer hover:shadow-xl hover:-translate-y-2 hover:scale-[1.02]"
       )}
     >
+      {/* 禁用遮罩 */}
+      {isDisabled && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/50 backdrop-blur-[1px]">
+          <span className="px-3 py-1.5 rounded-full bg-muted text-muted-foreground text-xs font-medium">
+            功能未开放
+          </span>
+        </div>
+      )}
+
       {/* 背景渐变装饰 */}
       <div
         className={cn(
-          "absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-300",
+          "absolute inset-0 opacity-0 transition-opacity duration-300",
+          !isDisabled && "group-hover:opacity-10",
           "bg-gradient-to-br",
           category.color
         )}

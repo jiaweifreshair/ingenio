@@ -10,13 +10,13 @@
 "use client";
 
 import { Sparkles, Lightbulb, Rocket, Briefcase } from "lucide-react";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 /**
  * 组别配置类型
  */
 interface AudienceGroup {
   id: string;
-  name: string;
   icon: React.ReactNode;
   color: string;
   bgColor: string;
@@ -29,69 +29,67 @@ interface AudienceGroup {
  * 目标用户组别组件
  */
 export function TargetAudiences(): React.ReactElement {
+  const { t } = useLanguage();
+
   /**
    * 四个组别的配置
    */
   const groups: AudienceGroup[] = [
     {
       id: "primary",
-      name: "小学组",
       icon: <Sparkles className="h-6 w-6" />,
       color: "text-pink-600 dark:text-pink-400",
       bgColor: "bg-pink-100 dark:bg-pink-900/30",
-      focus: "创意思维与需求表达",
+      focus: t('audiences.groups.primary.focus'),
       capabilities: [
-        "用自然语言清晰描述问题",
-        "理解应用的基本功能",
-        "生成简单应用",
-        "学习使用时光机版本管理",
+        t('audiences.groups.primary.cap1'),
+        t('audiences.groups.primary.cap2'),
+        t('audiences.groups.primary.cap3'),
+        t('audiences.groups.primary.cap4'),
       ],
-      suitable: ["学习工具", "趣味游戏", "创意应用"],
+      suitable: [t('audiences.groups.primary.suit1'), t('audiences.groups.primary.suit2'), t('audiences.groups.primary.suit3')],
     },
     {
       id: "middle",
-      name: "初中组",
       icon: <Lightbulb className="h-6 w-6" />,
       color: "text-blue-600 dark:text-blue-400",
       bgColor: "bg-blue-100 dark:bg-blue-900/30",
-      focus: "问题分解与逻辑思维",
+      focus: t('audiences.groups.middle.focus'),
       capabilities: [
-        "将复杂需求拆解为功能模块",
-        "理解应用的数据流和逻辑",
-        "生成中等复杂度应用",
-        "理解AI Agent三层架构",
+        t('audiences.groups.middle.cap1'),
+        t('audiences.groups.middle.cap2'),
+        t('audiences.groups.middle.cap3'),
+        t('audiences.groups.middle.cap4'),
       ],
-      suitable: ["校园助手", "学习管理", "团队协作"],
+      suitable: [t('audiences.groups.middle.suit1'), t('audiences.groups.middle.suit2'), t('audiences.groups.middle.suit3')],
     },
     {
       id: "high",
-      name: "高中组",
       icon: <Rocket className="h-6 w-6" />,
       color: "text-purple-600 dark:text-purple-400",
       bgColor: "bg-purple-100 dark:bg-purple-900/30",
-      focus: "系统架构与创新设计",
+      focus: t('audiences.groups.high.focus'),
       capabilities: [
-        "完整的系统架构设计思维",
-        "深度利用三Agent协作机制",
-        "设计创新性应用架构",
-        "使用SuperDesign等高级特性",
+        t('audiences.groups.high.cap1'),
+        t('audiences.groups.high.cap2'),
+        t('audiences.groups.high.cap3'),
+        t('audiences.groups.high.cap4'),
       ],
-      suitable: ["智能系统", "数据分析", "创新应用"],
+      suitable: [t('audiences.groups.high.suit1'), t('audiences.groups.high.suit2'), t('audiences.groups.high.suit3')],
     },
     {
       id: "vocational",
-      name: "中职组",
       icon: <Briefcase className="h-6 w-6" />,
       color: "text-orange-600 dark:text-orange-400",
       bgColor: "bg-orange-100 dark:bg-orange-900/30",
-      focus: "场景洞察与专业融合",
+      focus: t('audiences.groups.vocational.focus'),
       capabilities: [
-        "结合专业（电商、设计等）",
-        "深入理解行业痛点",
-        "快速迭代验证商业想法",
-        "注重实用性和商业价值",
+        t('audiences.groups.vocational.cap1'),
+        t('audiences.groups.vocational.cap2'),
+        t('audiences.groups.vocational.cap3'),
+        t('audiences.groups.vocational.cap4'),
       ],
-      suitable: ["行业应用", "商业工具", "专业系统"],
+      suitable: [t('audiences.groups.vocational.suit1'), t('audiences.groups.vocational.suit2'), t('audiences.groups.vocational.suit3')],
     },
   ];
 
@@ -101,13 +99,13 @@ export function TargetAudiences(): React.ReactElement {
         {/* 区域标题 */}
         <div className="mb-10 text-center">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground mb-6 tracking-tight">
-            适合所有年龄段的
+            {t('audiences.title')}
             <span className="block bg-gradient-to-r from-pink-500 to-violet-500 bg-clip-text text-transparent mt-2">
-              学习者与创新者
+              {t('audiences.title_highlight')}
             </span>
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto font-medium">
-            从基础启蒙到专业实践，每个阶段都有专属成长路径
+            {t('audiences.subtitle')}
           </p>
         </div>
 
@@ -130,17 +128,14 @@ export function TargetAudiences(): React.ReactElement {
                   {group.icon}
                 </div>
                 <h3 className="text-2xl font-bold text-foreground mb-1">
-                  {group.name}
-                </h3>
-                <p className={`text-sm font-semibold ${group.color} tracking-wide uppercase`}>
                   {group.focus}
-                </p>
+                </h3>
               </div>
 
               {/* 核心能力 */}
               <div className="flex-1 mb-8">
                 <p className="mb-3 text-xs font-bold text-muted-foreground uppercase tracking-wider">
-                  核心能力
+                  {t('audiences.core_capabilities')}
                 </p>
                 <ul className="space-y-3">
                   {group.capabilities.map((capability, capIndex) => (

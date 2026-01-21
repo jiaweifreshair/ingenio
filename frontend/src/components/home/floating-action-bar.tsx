@@ -19,6 +19,7 @@ import {
   APP_MODES,
   AI_CAPABILITIES
 } from "@/types/smart-builder";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface FloatingActionBarProps {
   requirement: string;
@@ -45,6 +46,7 @@ export function FloatingActionBar({
   onModeChange,
   onCapabilitiesChange
 }: FloatingActionBarProps) {
+  const { t } = useLanguage();
   const [isVisible, setIsVisible] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [generationMode, setGenerationMode] = useState<GenerationMode>('NEW_IDEA');
@@ -159,7 +161,7 @@ export function FloatingActionBar({
               return (
                 <div key={mode.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 text-sm">
                   <Icon className="w-4 h-4" />
-                  <span>{mode.title}</span>
+                  <span>{t(`const.mode.${mode.id}.title`)}</span>
                   <button
                     onClick={handleRemoveMode}
                     className="ml-1 hover:bg-blue-200 rounded-full p-0.5 transition-colors"
@@ -179,7 +181,7 @@ export function FloatingActionBar({
               return (
                 <div key={industry.id} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-sm">
                   <Icon className="w-4 h-4" />
-                  <span>{industry.label}</span>
+                  <span>{t(`const.industry.${industry.id}.label`)}</span>
                   <button
                     onClick={handleRemoveIndustry}
                     className="ml-1 hover:bg-green-200 rounded-full p-0.5 transition-colors"
@@ -195,7 +197,7 @@ export function FloatingActionBar({
             {localCapabilities.length > 0 && (
               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200 text-sm">
                 <Zap className="w-4 h-4 fill-purple-500" />
-                <span>AI 能力 · 已选 {localCapabilities.length} 项</span>
+                <span>{t('hero.selector_ai')} · {t('common.more').replace('More', '')}{localCapabilities.length}</span>
                 <button
                   onClick={() => {
                     setLocalCapabilities([]);
@@ -220,12 +222,12 @@ export function FloatingActionBar({
                 {generationMode === 'NEW_IDEA' ? (
                     <>
                     <Sparkles className="w-4 h-4 text-amber-500" />
-                    <span className="hidden sm:inline">创造模式</span>
+                    <span className="hidden sm:inline">{t('hero.mode_create')}</span>
                     </>
                 ) : (
                     <>
                     <Wand2 className="w-4 h-4 text-purple-500" />
-                    <span className="hidden sm:inline">复刻旧站</span>
+                    <span className="hidden sm:inline">{t('hero.mode_redesign')}</span>
                     </>
                 )}
                 <ChevronDown className="w-3 h-3 opacity-50" />
@@ -234,12 +236,12 @@ export function FloatingActionBar({
             <DropdownMenuContent align="start" className="z-[110]">
                 <DropdownMenuItem onClick={() => setGenerationMode('NEW_IDEA')}>
                 <Sparkles className="w-4 h-4 mr-2 text-amber-500" />
-                创造模式
+                {t('hero.mode_create')}
                 {generationMode === 'NEW_IDEA' && <Check className="w-3 h-3 ml-auto" />}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setGenerationMode('REDESIGN_SITE')}>
                 <Wand2 className="w-4 h-4 mr-2 text-purple-500" />
-                复刻旧站
+                {t('hero.mode_redesign')}
                 {generationMode === 'REDESIGN_SITE' && <Check className="w-3 h-3 ml-auto" />}
                 </DropdownMenuItem>
             </DropdownMenuContent>
@@ -255,7 +257,7 @@ export function FloatingActionBar({
                     <input
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
-                        placeholder="输入旧网站链接 (https://...)"
+                        placeholder={t('hero.placeholder_redesign')}
                         className="w-full pl-8 pr-3 py-1.5 h-9 rounded-md border border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-slate-900/50 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
                     />
                 </div>
@@ -263,7 +265,7 @@ export function FloatingActionBar({
             <Textarea
                 value={requirement}
                 onChange={(e) => onRequirementChange(e.target.value)}
-                placeholder={generationMode === 'REDESIGN_SITE' ? "请输入重构需求..." : "在此输入您的创意..."}
+                placeholder={generationMode === 'REDESIGN_SITE' ? t('hero.placeholder_redesign') : t('hero.placeholder_create')}
                 className={cn(
                     "w-full resize-none border-0 bg-transparent focus-visible:ring-0 px-3 py-2 text-sm",
                     isExpanded ? "min-h-[200px]" : "h-10 min-h-[40px] py-2" // Compact height matches button roughly
@@ -294,7 +296,7 @@ export function FloatingActionBar({
                     className="bg-[#0f172a] hover:bg-[#1e293b] text-white dark:bg-white dark:text-black dark:hover:bg-slate-200 h-9 px-4 text-sm font-medium rounded-xl shadow-sm transition-all hover:scale-105"
                 >
                     <Sparkles className="w-3.5 h-3.5 mr-2" />
-                    生成
+                    {t('hero.btn_generate')}
                 </Button>
            </div>
         </div>
@@ -302,10 +304,10 @@ export function FloatingActionBar({
         {/* Expanded Content (Optional: Add more controls here if needed) */}
         {isExpanded && (
              <div className="px-4 pb-3 pt-0 text-xs text-slate-400 flex justify-between items-center border-t border-slate-100 dark:border-slate-800/50 mt-2">
-                 <span>已输入 {requirement.length} 字符</span>
+                 <span>{t('floating.input_chars')} {requirement.length}</span>
                  <span className="flex items-center gap-1">
                      <ArrowUp className="w-3 h-3" />
-                     滚动到顶部查看完整配置
+                     {t('floating.scroll_top')}
                  </span>
              </div>
         )}

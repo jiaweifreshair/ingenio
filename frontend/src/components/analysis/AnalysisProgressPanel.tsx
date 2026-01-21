@@ -1,17 +1,17 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  CheckCircle2, 
-  Circle, 
-  Loader2, 
-  XCircle, 
-  ChevronDown, 
-  ChevronRight, 
-  Terminal, 
-  Cpu, 
-  Database, 
-  Layout, 
+import {
+  CheckCircle2,
+  Circle,
+  Loader2,
+  XCircle,
+  ChevronDown,
+  ChevronRight,
+  Terminal,
+  Cpu,
+  Database,
+  Layout,
   Zap,
   Brain,
   LucideIcon
@@ -23,8 +23,12 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Typewriter } from '@/components/ui/typewriter';
 import type { PhaseType } from '@/types/requirement-form';
 import { PlanDisplay } from './PlanDisplay';
+import { useLanguage } from '@/contexts/LanguageContext';
+import { StepResultDisplay } from './StepResultDisplay';
+import type { StepResult } from '@/types/analysis-step-results';
 
 export interface AnalysisProgressPanelProps {
+  requirement?: string;
   messages: AnalysisProgressMessage[];
   isConnected: boolean;
   isCompleted: boolean;
@@ -34,6 +38,8 @@ export interface AnalysisProgressPanelProps {
   currentPhase?: PhaseType;
   onConfirmPlan?: () => void;
   onModifyPlan?: (requirement: string) => void;
+  onConfirmStep?: (step: number) => void;
+  onModifyStep?: (step: number) => void;
 }
 
 const STEP_CONFIG = [
@@ -48,21 +54,22 @@ const STEP_CONFIG = [
 /**
  * 步骤日志项组件
  */
-const StepLogItem = ({ 
-  step, 
-  config, 
-  status, 
-  message, 
-  isExpanded, 
-  onToggle 
-}: { 
-  step: number; 
-  config: { name: string; icon: LucideIcon; description: string }; 
-  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'; 
+const StepLogItem = ({
+  step,
+  config,
+  status,
+  message,
+  isExpanded,
+  onToggle
+}: {
+  step: number;
+  config: { name: string; icon: LucideIcon; description: string };
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED';
   message: AnalysisProgressMessage | null;
   isExpanded: boolean;
   onToggle: () => void;
 }) => {
+  const { t } = useLanguage();
   const Icon = config.icon;
   const progressPercent = message?.progress || 0;
 
@@ -148,7 +155,7 @@ const StepLogItem = ({
             {/* 结构化结果预览 */}
             {status === 'COMPLETED' && !!message?.result && step !== 6 && (
               <div className="mt-2 bg-zinc-900 rounded p-2 border border-zinc-800 overflow-x-auto">
-                <div className="text-zinc-500 mb-1 text-[10px] uppercase tracking-wider">Output Preview</div>
+                <div className="text-zinc-500 mb-1 text-[10px] uppercase tracking-wider">{t('ui.output_preview')}</div>
                 <pre className="text-green-300/90 text-[10px] leading-relaxed">
                   {JSON.stringify(message.result as object, null, 2)}
                 </pre>
@@ -184,10 +191,16 @@ export function AnalysisProgressPanel({
   finalResult,
   currentPhase,
   onConfirmPlan,
-  onModifyPlan
+  onModifyPlan,
+  onConfirmStep,
+  onModifyStep
 }: AnalysisProgressPanelProps): React.ReactElement {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expandedStep, setExpandedStep] = useState<number | null>(1);
+
+  // 步骤确认状态管理
+  const [waitingForStepConfirmation, setWaitingForStepConfirmation] = useState<number | null>(null);
+  const [stepResults, setStepResults] = useState<Record<number, StepResult>>({});
 
   // 判断当前是否处于等待原型生成状态
   const waitingForPrototype = isWaitingForPrototype(isCompleted, finalResult);
@@ -199,6 +212,48 @@ export function AnalysisProgressPanel({
     .map(m => m.reasoning)
     .join('');
   const isStep6Reasoning = step6Messages.some(m => m.isReasoning && m.status === 'RUNNING');
+
+  // 检测步骤完成并提取结果
+  useEffect(() => {
+    // 检查Step 1-5是否完成，如果完成则提取结果并等待用户确认
+    for (let step = 1; step <= 5; step++) {
+      const stepMessages = messages.filter(m => m.step === step);
+      if (stepMessages.length === 0) continue;
+
+      const latestMessage = stepMessages[stepMessages.length - 1];
+
+      // 如果步骤完成且有结果，且还没有保存结果，则保存并等待确认
+      if (
+        latestMessage.status === 'COMPLETED' &&
+        latestMessage.result &&
+        !stepResults[step] &&
+        waitingForStepConfirmation === null
+      ) {
+        // 保存步骤结果
+        setStepResults(prev => ({
+          ...prev,
+          [step]: {
+            step: step as 1 | 2 | 3 | 4 | 5,
+            data: latestMessage.result
+          } as StepResult
+        }));
+
+        // 设置等待确认状态
+        setWaitingForStepConfirmation(step);
+      }
+    }
+  }, [messages, stepResults, waitingForStepConfirmation]);
+
+  // 处理步骤确认
+  const handleConfirmStep = (step: number) => {
+    setWaitingForStepConfirmation(null);
+    onConfirmStep?.(step);
+  };
+
+  // 处理步骤修改
+  const handleModifyStep = (step: number) => {
+    onModifyStep?.(step);
+  };
 
   // 自动展开正在运行的步骤，等待原型时收起所有步骤
   useEffect(() => {
@@ -346,6 +401,16 @@ export function AnalysisProgressPanel({
                 通常需要60-90秒
               </p>
             </div>
+          </div>
+        ) : waitingForStepConfirmation !== null && stepResults[waitingForStepConfirmation] ? (
+          /* 等待步骤确认时显示步骤结果 */
+          <div className="space-y-4 pb-4">
+            <StepResultDisplay
+              result={stepResults[waitingForStepConfirmation]}
+              onConfirm={() => handleConfirmStep(waitingForStepConfirmation)}
+              onModify={() => handleModifyStep(waitingForStepConfirmation)}
+              loading={isLoading}
+            />
           </div>
         ) : (
           /* 正常的分析步骤列表 */

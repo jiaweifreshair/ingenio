@@ -1,11 +1,6 @@
 package com.ingenio.backend.dto.request.validation;
 
 import jakarta.validation.constraints.NotNull;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.util.List;
 import java.util.UUID;
 
@@ -15,10 +10,6 @@ import java.util.UUID;
  * @author Ingenio Team
  * @since 2.0.0 Phase 3
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class FullValidationRequest {
 
     /**
@@ -72,7 +63,6 @@ public class FullValidationRequest {
     /**
      * 是否并行验证（默认串行）
      */
-    @Builder.Default
     private Boolean parallel = false;
 
     /**
@@ -80,6 +70,175 @@ public class FullValidationRequest {
      * true: 某个阶段失败立即返回
      * false: 执行所有阶段后返回
      */
-    @Builder.Default
     private Boolean failFast = true;
+
+    public FullValidationRequest() {
+    }
+
+    public FullValidationRequest(UUID appSpecId, UUID tenantId, List<String> stages, String code, String language,
+            String projectRoot, String projectType, List<String> testFiles, Boolean parallel, Boolean failFast) {
+        this.appSpecId = appSpecId;
+        this.tenantId = tenantId;
+        this.stages = stages;
+        this.code = code;
+        this.language = language;
+        this.projectRoot = projectRoot;
+        this.projectType = projectType;
+        this.testFiles = testFiles;
+        this.parallel = parallel != null ? parallel : false;
+        this.failFast = failFast != null ? failFast : true;
+    }
+
+    public static FullValidationRequestBuilder builder() {
+        return new FullValidationRequestBuilder();
+    }
+
+    public static class FullValidationRequestBuilder {
+        private UUID appSpecId;
+        private UUID tenantId;
+        private List<String> stages;
+        private String code;
+        private String language;
+        private String projectRoot;
+        private String projectType;
+        private List<String> testFiles;
+        private Boolean parallel = false;
+        private Boolean failFast = true;
+
+        public FullValidationRequestBuilder appSpecId(UUID appSpecId) {
+            this.appSpecId = appSpecId;
+            return this;
+        }
+
+        public FullValidationRequestBuilder tenantId(UUID tenantId) {
+            this.tenantId = tenantId;
+            return this;
+        }
+
+        public FullValidationRequestBuilder stages(List<String> stages) {
+            this.stages = stages;
+            return this;
+        }
+
+        public FullValidationRequestBuilder code(String code) {
+            this.code = code;
+            return this;
+        }
+
+        public FullValidationRequestBuilder language(String language) {
+            this.language = language;
+            return this;
+        }
+
+        public FullValidationRequestBuilder projectRoot(String projectRoot) {
+            this.projectRoot = projectRoot;
+            return this;
+        }
+
+        public FullValidationRequestBuilder projectType(String projectType) {
+            this.projectType = projectType;
+            return this;
+        }
+
+        public FullValidationRequestBuilder testFiles(List<String> testFiles) {
+            this.testFiles = testFiles;
+            return this;
+        }
+
+        public FullValidationRequestBuilder parallel(Boolean parallel) {
+            this.parallel = parallel;
+            return this;
+        }
+
+        public FullValidationRequestBuilder failFast(Boolean failFast) {
+            this.failFast = failFast;
+            return this;
+        }
+
+        public FullValidationRequest build() {
+            return new FullValidationRequest(appSpecId, tenantId, stages, code, language, projectRoot, projectType,
+                    testFiles, parallel, failFast);
+        }
+    }
+
+    // Getters and Setters
+    public UUID getAppSpecId() {
+        return appSpecId;
+    }
+
+    public void setAppSpecId(UUID appSpecId) {
+        this.appSpecId = appSpecId;
+    }
+
+    public UUID getTenantId() {
+        return tenantId;
+    }
+
+    public void setTenantId(UUID tenantId) {
+        this.tenantId = tenantId;
+    }
+
+    public List<String> getStages() {
+        return stages;
+    }
+
+    public void setStages(List<String> stages) {
+        this.stages = stages;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
+    }
+
+    public String getLanguage() {
+        return language;
+    }
+
+    public void setLanguage(String language) {
+        this.language = language;
+    }
+
+    public String getProjectRoot() {
+        return projectRoot;
+    }
+
+    public void setProjectRoot(String projectRoot) {
+        this.projectRoot = projectRoot;
+    }
+
+    public String getProjectType() {
+        return projectType;
+    }
+
+    public void setProjectType(String projectType) {
+        this.projectType = projectType;
+    }
+
+    public List<String> getTestFiles() {
+        return testFiles;
+    }
+
+    public void setTestFiles(List<String> testFiles) {
+        this.testFiles = testFiles;
+    }
+
+    public Boolean getParallel() {
+        return parallel;
+    }
+
+    public void setParallel(Boolean parallel) {
+        this.parallel = parallel;
+    }
+
+    public Boolean getFailFast() {
+        return failFast;
+    }
+
+    public void setFailFast(Boolean failFast) {
+        this.failFast = failFast;
+    }
 }

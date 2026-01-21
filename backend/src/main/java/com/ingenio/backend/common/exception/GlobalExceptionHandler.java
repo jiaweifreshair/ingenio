@@ -5,7 +5,8 @@ import cn.dev33.satoken.exception.NotLoginException;
 import cn.dev33.satoken.exception.NotPermissionException;
 import cn.dev33.satoken.exception.NotRoleException;
 import com.ingenio.backend.common.response.Result;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.mybatis.spring.MyBatisSystemException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.HttpStatus;
@@ -34,9 +35,10 @@ import java.util.Map;
  * @author Ingenio Team
  * @since 1.0.0
  */
-@Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     /**
      * 处理SaToken未登录异常
@@ -218,8 +220,8 @@ public class GlobalExceptionHandler {
 
         // 检查是否是连接问题
         if (cause instanceof CannotGetJdbcConnectionException ||
-            (cause != null && cause.getMessage() != null &&
-             cause.getMessage().contains("Failed to obtain JDBC Connection"))) {
+                (cause != null && cause.getMessage() != null &&
+                        cause.getMessage().contains("Failed to obtain JDBC Connection"))) {
             log.error("MyBatis数据库连接失败: {}", e.getMessage());
             return Result.error("503", "服务繁忙，请稍后重试");
         }
@@ -247,7 +249,7 @@ public class GlobalExceptionHandler {
     @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
     public Result<Object> handleSQLException(SQLException e) {
         log.error("SQL异常: SQLState={}, ErrorCode={}, Message={}",
-            e.getSQLState(), e.getErrorCode(), e.getMessage());
+                e.getSQLState(), e.getErrorCode(), e.getMessage());
         return Result.error("503", "数据库服务暂时不可用，请稍后重试");
     }
 

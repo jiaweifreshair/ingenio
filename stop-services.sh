@@ -19,14 +19,15 @@ PROJECT_ROOT="/Users/apus/Documents/UGit/Ingenio"
 
 # 1. 停止Spring Boot后端
 echo -e "${YELLOW}[1/2] 停止Spring Boot后端服务...${NC}"
-if lsof -i:8080 > /dev/null 2>&1; then
-    PID=$(lsof -t -i:8080)
+# 仅停止监听 8080 的进程，避免误杀“连接远端 :8080”的客户端进程
+if lsof -nP -iTCP:8080 -sTCP:LISTEN > /dev/null 2>&1; then
+    PID=$(lsof -t -iTCP:8080 -sTCP:LISTEN)
     echo "发现后端进程 (PID: $PID)，正在停止..."
     kill $PID 2>/dev/null || true
     sleep 3
 
     # 检查是否成功停止
-    if lsof -i:8080 > /dev/null 2>&1; then
+    if lsof -nP -iTCP:8080 -sTCP:LISTEN > /dev/null 2>&1; then
         echo -e "${RED}强制停止后端服务...${NC}"
         kill -9 $PID 2>/dev/null || true
     fi

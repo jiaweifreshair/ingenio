@@ -1,11 +1,6 @@
 package com.ingenio.backend.dto.request.validation;
 
 import jakarta.validation.constraints.NotNull;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 import java.util.List;
 import java.util.UUID;
 
@@ -15,10 +10,6 @@ import java.util.UUID;
  * @author Ingenio Team
  * @since 2.0.0 Phase 3
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class TestValidationRequest {
 
     /**
@@ -44,6 +35,83 @@ public class TestValidationRequest {
     /**
      * 是否生成覆盖率报告
      */
-    @Builder.Default
     private Boolean generateCoverage = true;
+
+    public TestValidationRequest() {
+    }
+
+    public TestValidationRequest(UUID appSpecId, String testType, List<String> testFiles, Boolean generateCoverage) {
+        this.appSpecId = appSpecId;
+        this.testType = testType;
+        this.testFiles = testFiles;
+        this.generateCoverage = generateCoverage != null ? generateCoverage : true;
+    }
+
+    public static TestValidationRequestBuilder builder() {
+        return new TestValidationRequestBuilder();
+    }
+
+    public static class TestValidationRequestBuilder {
+        private UUID appSpecId;
+        private String testType;
+        private List<String> testFiles;
+        private Boolean generateCoverage = true;
+
+        public TestValidationRequestBuilder appSpecId(UUID appSpecId) {
+            this.appSpecId = appSpecId;
+            return this;
+        }
+
+        public TestValidationRequestBuilder testType(String testType) {
+            this.testType = testType;
+            return this;
+        }
+
+        public TestValidationRequestBuilder testFiles(List<String> testFiles) {
+            this.testFiles = testFiles;
+            return this;
+        }
+
+        public TestValidationRequestBuilder generateCoverage(Boolean generateCoverage) {
+            this.generateCoverage = generateCoverage;
+            return this;
+        }
+
+        public TestValidationRequest build() {
+            return new TestValidationRequest(appSpecId, testType, testFiles, generateCoverage);
+        }
+    }
+
+    // Getters and Setters
+    public UUID getAppSpecId() {
+        return appSpecId;
+    }
+
+    public void setAppSpecId(UUID appSpecId) {
+        this.appSpecId = appSpecId;
+    }
+
+    public String getTestType() {
+        return testType;
+    }
+
+    public void setTestType(String testType) {
+        this.testType = testType;
+    }
+
+    public List<String> getTestFiles() {
+        return testFiles;
+    }
+
+    public void setTestFiles(List<String> testFiles) {
+        this.testFiles = testFiles;
+    }
+
+    public Boolean getGenerateCoverage() {
+        return generateCoverage;
+    }
+
+    public void setGenerateCoverage(Boolean generateCoverage) {
+        this.generateCoverage = generateCoverage;
+    }
 }

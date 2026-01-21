@@ -10,7 +10,7 @@
  * @since 2025-11-15
  */
 
-import { post, get } from '@/lib/api/client';
+import { post, get, type APIResponse } from '@/lib/api/client';
 import type { RequirementIntent } from '@/types/intent';
 import type { DesignStyle } from '@/types/design-style';
 import type { Template } from '@/types/template';
@@ -23,6 +23,14 @@ import type { Template } from '@/types/template';
 export interface PlanRoutingRequest {
   /** 用户需求描述 */
   userRequirement: string;
+  /**
+   * AppSpec ID（可选）
+   *
+   * 用途：
+   * - 方案/原型确认前允许用户通过 Chat 持续修改需求
+   * - 修改时传入 appSpecId，可在后端复用并更新同一个 AppSpec，保证上下文可透传到后续 G3 生成阶段
+   */
+  appSpecId?: string;
   /** 租户ID（可选，默认使用当前用户的租户） */
   tenantId?: string;
   /** 用户ID（可选，默认使用当前登录用户） */
@@ -42,8 +50,8 @@ export interface PlanRoutingRequest {
    *
    * V2.0新增：用户从首页选择后传入的技术栈
    * - "H5+WebView"
-   * - "React+Supabase"
-   * - "React+SpringBoot"
+   * - "React + Supabase"
+   * - "React + Spring Boot"
    * - "Kuikly"
    */
   techStackHint?: string;
@@ -201,6 +209,7 @@ export async function routeRequirement(
       '/v2/plan-routing/route',
       {
         userRequirement: request.userRequirement.trim(),
+        appSpecId: request.appSpecId,
         tenantId: request.tenantId,
         userId: request.userId,
         complexityHint: request.complexityHint,
@@ -285,6 +294,25 @@ export async function routeRequirement(
     return new Promise(resolve => setTimeout(() => resolve(mockResult), 1500));
     */
   }
+}
+
+/**
+ * 更新 AppSpec 的 userRequirement（用于原型确认前的 Chat 持续修改）
+ *
+ * 注意：
+ * - 该接口仅更新需求文本，不改变已选风格/原型状态等字段，避免影响当前原型预览流程。
+ */
+export async function updateAppSpecRequirement(
+  appSpecId: string,
+  userRequirement: string
+): Promise<APIResponse<Record<string, unknown>>> {
+  if (!appSpecId) throw new Error('AppSpec ID 不能为空');
+  if (!userRequirement || userRequirement.trim().length < 10) {
+    throw new Error('需求描述至少需要10个字符');
+  }
+  return post<Record<string, unknown>>(`/v2/plan-routing/${appSpecId}/update-requirement`, {
+    userRequirement: userRequirement.trim(),
+  });
 }
 
 /**

@@ -6,7 +6,6 @@ import lombok.Getter;
  * 业务异常类
  * 用于封装业务逻辑中的异常情况
  */
-@Getter
 public class BusinessException extends RuntimeException {
 
     /**
@@ -56,7 +55,7 @@ public class BusinessException extends RuntimeException {
      * 使用ErrorCode和自定义消息创建业务异常
      * 自定义消息会覆盖ErrorCode的默认消息
      *
-     * @param errorCode 错误码枚举
+     * @param errorCode     错误码枚举
      * @param customMessage 自定义错误消息
      */
     public BusinessException(ErrorCode errorCode, String customMessage) {
@@ -65,5 +64,17 @@ public class BusinessException extends RuntimeException {
         this.message = customMessage;
         this.data = null;
     }
-}
 
+    public String getCode() {
+        return code;
+    }
+
+    @Override
+    public String getMessage() {
+        return message;
+    }
+
+    public Object getData() {
+        return data;
+    }
+}

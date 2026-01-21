@@ -6,6 +6,9 @@ import com.ingenio.backend.ai.AIProviderFactory;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
+import com.ingenio.backend.prompt.PromptTemplateService;
+import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
+import com.ingenio.backend.service.g3.hooks.G3HookPipeline;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -38,6 +41,15 @@ class BackendCoderAgentImplTest {
 
     @Mock
     private AIProvider aiProvider;
+
+    @Mock
+    private PromptTemplateService promptTemplateService;
+
+    @Mock
+    private BlueprintPromptBuilder blueprintPromptBuilder;
+
+    @Mock
+    private G3HookPipeline hookPipeline;
 
     @Mock
     private Consumer<G3LogEntry> logConsumer;
@@ -107,6 +119,16 @@ class BackendCoderAgentImplTest {
                 .dbSchemaSql(validSchema)
                 .currentRound(0)
                 .build();
+
+        // 提示词模板在单元测试中使用最小可用版本，避免依赖外部资源文件。
+        // 说明：部分用例会在参数校验阶段提前返回，这些提示词桩可能不会被使用；使用 lenient 避免 Strict Stubs 报错。
+        lenient().when(promptTemplateService.coderStandardsTemplate()).thenReturn("CODE_STANDARDS");
+        lenient().when(promptTemplateService.coderEntityTemplate()).thenReturn("实体类\\n%s\\n%s");
+        lenient().when(promptTemplateService.coderMapperTemplate()).thenReturn("Mapper\\n%s\\n%s");
+        lenient().when(promptTemplateService.coderDtoTemplate()).thenReturn("DTO\\n%s\\n%s\\n%s");
+        lenient().when(promptTemplateService.coderServiceTemplate()).thenReturn("Service\\n%s\\n%s\\n%s\\n%s");
+        lenient().when(promptTemplateService.coderControllerTemplate()).thenReturn("Controller\\n%s\\n%s\\n%s\\n%s");
+        lenient().when(hookPipeline.wrapProvider(any(), any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     /**
@@ -167,6 +189,12 @@ class BackendCoderAgentImplTest {
                 public interface UserMapper extends BaseMapper<User> {
                 }
                 ```
+                """;
+
+        String dtoResponse = """
+                // === 文件: UserDTO.java ===
+                package com.ingenio.backend.dto.generated;
+                public class UserDTO {}
                 """;
 
         String serviceResponse = """
@@ -265,6 +293,8 @@ class BackendCoderAgentImplTest {
                 .thenReturn(AIProvider.AIResponse.builder().content(entityResponse).model("test").build());
         when(aiProvider.generate(contains("Mapper"), any()))
                 .thenReturn(AIProvider.AIResponse.builder().content(mapperResponse).model("test").build());
+        when(aiProvider.generate(contains("DTO"), any()))
+                .thenReturn(AIProvider.AIResponse.builder().content(dtoResponse).model("test").build());
         when(aiProvider.generate(contains("Service"), any()))
                 .thenReturn(AIProvider.AIResponse.builder().content(serviceResponse).model("test").build());
         when(aiProvider.generate(contains("Controller"), any()))

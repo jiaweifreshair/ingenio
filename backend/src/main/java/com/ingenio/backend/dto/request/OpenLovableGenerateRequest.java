@@ -43,15 +43,10 @@ public class OpenLovableGenerateRequest {
     /**
      * AI模型选择（可选，默认使用 Gemini 3 Pro）
      *
-     * 说明：
-     * - 当前 OpenLovable-CN 的部署更适配 gemini- 前缀模型（GCA 直连/稳定输出），避免出现“生成成功但代码为空”的假阳性。
-     * - 仍支持其它模型（open-lovable-cn 会自动 fallback），但建议在未显式指定时优先 Gemini 3 Pro。
-     *
      * 支持的模型示例：
      * - gemini-3-pro-preview（默认）
-     * - deepseek-r1
+     * - deepseek-r1-0528
      * - deepseek-v3
-     * - deepseek-v3.1
      * - qwen3-max
      * - kimi-k2
      */
@@ -104,6 +99,20 @@ public class OpenLovableGenerateRequest {
      * 当 blueprintFrontendSpec 不为空时，建议为 true
      */
     private Boolean blueprintModeEnabled;
+
+    // ==================== 语言设置 ====================
+
+    /**
+     * 目标语言（可选）
+     *
+     * 说明：
+     * - 用于动态适配生成的网站语言
+     * - "zh" 表示中文网站，UI文案使用中文
+     * - "en" 表示英文网站，UI文案使用英文
+     * - 默认为 "zh"（中文）
+     */
+    @Builder.Default
+    private String language = "zh";
 
     /**
      * 验证请求参数
@@ -190,6 +199,44 @@ public class OpenLovableGenerateRequest {
                         .append("\n");
             }
         }
+
+        // === UI Design Standards (New V2.0) ===
+        String langName = "en".equalsIgnoreCase(language) ? "English" : "中文";
+        prompt.append(String.format(
+                """
+
+                        ## 🎨 UI Design Standards (Mandatory)
+
+                        ### 0. Relevance Guard
+                        - Follow the user's requirement strictly. Do NOT clone or reference unrelated websites unless the user explicitly provides a URL.
+
+                        ### 1. Visual Requirements
+                        - **Language**: All UI text MUST be in **%s**.
+                        - **Direction**: Pick a clear, domain-appropriate visual direction; avoid generic SaaS styling.
+                        - **Color**: Avoid purple-first palettes. Prefer calm combinations (sage/seafoam + sand + soft coral, or sky + amber + slate).
+                        - **Background**: Use layered gradients, soft radial glows, and subtle patterns; avoid flat single-color backgrounds.
+                        - **Typography**: Use expressive, non-default fonts; import two Google Fonts (e.g., "Noto Serif SC" + "Noto Sans SC" for Chinese, "Space Grotesk" + "Manrope" for English).
+
+                        ### 2. Implementation Specs (Tailwind CSS)
+                        - **MUST** use Tailwind CSS for all styling. Do NOT create custom CSS files unless absolutely necessary.
+                        - **Components**:
+                          - Cards: `bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800`
+                          - Buttons: `bg-emerald-600 text-white hover:bg-emerald-700 rounded-lg shadow-sm transition-all`
+                        - **Icons**: Use `lucide-react` (e.g., `<Activity className="w-5 h-5" />`).
+
+                        """,
+                langName));
+
+        // === G3 Engine Technical Constraints (CRITICAL) ===
+        // 修复: [plugin:vite:import-analysis] Failed to parse source... invalid JS syntax
+        prompt.append("\n\n## Technical Constraints (CRITICAL)\n");
+        prompt.append("To avoid build errors in the Vite/React environment, you MUST strictly follow these rules:\n");
+        prompt.append(
+                "1. **File Extensions**: Use `.tsx` for ANY file containing JSX syntax (e.g., React Components, Context Providers, Hooks returning JSX).\n");
+        prompt.append(
+                "2. **No .js for JSX**: NEVER put JSX code in a `.js` file. This causes 'Failed to parse source for import analysis' errors in Vite.\n");
+        prompt.append(
+                "3. **TypeScript**: Prefer TypeScript (`.ts`/`.tsx`) for all generated code unless explicitly requested otherwise.\n");
 
         return prompt.toString();
     }

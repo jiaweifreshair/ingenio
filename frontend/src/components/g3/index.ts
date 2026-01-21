@@ -19,3 +19,8 @@ export { LogStream } from "./log-stream";
 // 进度追踪器组件
 export { G3ProgressTracker } from "./g3-progress-tracker";
 export type { G3Phase } from "./g3-progress-tracker";
+
+// 规划文件与依赖图
+export { G3PlanningDialog } from "./g3-planning-dialog";
+export { G3PlanningFileViewer } from "./planning-file-viewer";
+export { G3TaskDependencyGraph } from "./task-dependency-graph";

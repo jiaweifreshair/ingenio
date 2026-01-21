@@ -140,3 +140,66 @@ export enum SortBy {
   NAME_ASC = 'name-asc',
   NAME_DESC = 'name-desc',
 }
+
+/**
+ * 生成任务状态枚举
+ */
+export enum GenerationTaskStatus {
+  PENDING = 'pending',
+  PLANNING = 'planning',
+  EXECUTING = 'executing',
+  VALIDATING = 'validating',
+  GENERATING = 'generating',
+  COMPLETED = 'completed',
+  FAILED = 'failed',
+  CANCELLED = 'cancelled',
+}
+
+/**
+ * Agent类型枚举
+ */
+export enum AgentType {
+  PLAN = 'plan',
+  EXECUTE = 'execute',
+  VALIDATE = 'validate',
+  GENERATE = 'generate',
+}
+
+/**
+ * 生成任务实体
+ */
+export interface GenerationTask {
+  id: string;
+  tenantId: string;
+  userId: string;
+  taskName: string;
+  userRequirement: string;
+  status: GenerationTaskStatus;
+  currentAgent: AgentType;
+  progress: number;
+  agentsInfo?: Record<string, unknown>;
+  planResult?: Record<string, unknown>;
+  appSpecContent?: Record<string, unknown>;
+  validateResult?: Record<string, unknown>;
+  appSpecId?: string;
+  qualityScore?: number;
+  downloadUrl?: string;
+  previewUrl?: string;
+  tokenUsage?: Record<string, unknown>;
+  errorMessage?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * 执行历史项
+ */
+export interface ExecutionHistoryItem {
+  task: GenerationTask;
+  duration?: number;
+  statusLabel: string;
+  progressLabel: string;
+}

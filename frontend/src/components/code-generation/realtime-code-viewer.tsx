@@ -239,27 +239,30 @@ const FileTreeItem: React.FC<{
 
   if (node.type === 'folder') {
     return (
-      <div>
+      <div className="relative">
         <button
           onClick={() => setIsExpanded(!isExpanded)}
           className={cn(
-            'flex items-center gap-1.5 w-full px-2 py-1 text-sm rounded-md',
-            'hover:bg-muted/50 transition-colors',
-            'text-left'
+            'flex items-center gap-1.5 w-full px-2 py-1 text-[13px] rounded-sm transition-colors group',
+            'hover:bg-muted/50 text-left'
           )}
-          style={{ paddingLeft: `${level * 12 + 8}px` }}
+          style={{ paddingLeft: `${level * 12 + 4}px` }}
         >
-          {isExpanded ? (
-            <ChevronDown className="h-3 w-3 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-3 w-3 text-muted-foreground" />
-          )}
-          {isExpanded ? (
-            <FolderOpen className="h-4 w-4 text-yellow-500" />
-          ) : (
-            <Folder className="h-4 w-4 text-yellow-500" />
-          )}
-          <span className="truncate">{node.name}</span>
+          <span className="flex-shrink-0">
+            {isExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground group-hover:text-foreground" />
+            )}
+          </span>
+          <span className="flex-shrink-0">
+            {isExpanded ? (
+              <FolderOpen className="h-4 w-4 text-amber-400 dark:text-amber-500" />
+            ) : (
+              <Folder className="h-4 w-4 text-amber-400 dark:text-amber-500" />
+            )}
+          </span>
+          <span className="truncate text-foreground/80 group-hover:text-foreground">{node.name}</span>
         </button>
 
         <AnimatePresence>
@@ -269,7 +272,13 @@ const FileTreeItem: React.FC<{
               animate={{ height: 'auto', opacity: 1 }}
               exit={{ height: 0, opacity: 0 }}
               transition={{ duration: 0.2 }}
+              className="relative"
             >
+              {/* 缩进引导线 */}
+              <div 
+                className="absolute left-0 top-0 bottom-0 w-[1px] bg-border/40 ml-[11px]" 
+                style={{ left: `${level * 12 + 4}px` }}
+              />
               {node.children.map(child => (
                 <FileTreeItem
                   key={child.path}
@@ -291,29 +300,36 @@ const FileTreeItem: React.FC<{
     <button
       onClick={() => onSelect(node.path)}
       className={cn(
-        'flex items-center gap-1.5 w-full px-2 py-1 text-sm rounded-md',
-        'hover:bg-muted/50 transition-colors',
-        'text-left',
-        isSelected && 'bg-primary/10 text-primary',
-        isGenerating && 'bg-blue-100 dark:bg-blue-900/30'
+        'flex items-center gap-1.5 w-full px-2 py-1 text-[13px] rounded-sm transition-colors group relative',
+        'hover:bg-muted/50 text-left',
+        isSelected && 'bg-primary/10 text-primary font-medium',
+        isGenerating && 'bg-blue-100/50 dark:bg-blue-900/20'
       )}
-      style={{ paddingLeft: `${level * 12 + 8}px` }}
+      style={{ paddingLeft: `${level * 12 + 22}px` }}
     >
-      {getFileIcon(node.name, isCompleted, isGenerating)}
-      <span className="truncate flex-1">{node.name}</span>
+      {/* 选中时的左侧指示线 */}
+      {isSelected && (
+        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-primary" />
+      )}
+      
+      <span className="flex-shrink-0">
+        {getFileIcon(node.name, isCompleted, isGenerating)}
+      </span>
+      <span className="truncate flex-1 text-foreground/70 group-hover:text-foreground">
+        {node.name}
+      </span>
       {isGenerating && (
-        <Badge variant="secondary" className="text-xs py-0 px-1">
-          生成中
-        </Badge>
+        <span className="flex-shrink-0 ml-1 text-[10px] text-blue-500 animate-pulse">
+          生成中...
+        </span>
       )}
       {isCompleted && !isGenerating && (
-        <Badge variant="outline" className="text-xs py-0 px-1 text-green-600">
-          完成
-        </Badge>
+        <Check className="h-3 w-3 text-green-500 opacity-50" />
       )}
     </button>
   );
 };
+
 
 /**
  * 实时代码查看器组件
@@ -444,7 +460,7 @@ export const RealtimeCodeViewer: React.FC<RealtimeCodeViewerProps> = ({
   return (
     <div className={cn('flex h-full border rounded-lg overflow-hidden', className)}>
       {/* 左侧文件树 */}
-      <div className="w-64 border-r bg-muted/20 flex flex-col">
+      <div className="w-72 border-r bg-muted/20 flex flex-col">
         {/* 文件树头部 */}
         <div className="px-3 py-2 border-b bg-muted/30 flex items-center justify-between">
           <span className="text-sm font-medium">文件</span>

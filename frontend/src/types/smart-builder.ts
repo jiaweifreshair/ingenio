@@ -14,6 +14,7 @@ export interface AppModeConfig {
     colorClass: string; // Tailwnd class for icon bg
     exampleTitle?: string;
     examplePrompt?: string;
+    disabled?: boolean;
 }
 
 export type IndustryType = 'ECOMMERCE' | 'EDUCATION' | 'SOCIAL' | 'LIFE' | 'ENTERPRISE' | 'FINANCE' | 'MEDIA' | 'MORE';
@@ -66,11 +67,12 @@ export const APP_MODES: AppModeConfig[] = [
         icon: Smartphone,
         title: "原生跨端应用",
         description: "相机/GPS/蓝牙等原生能力",
-        techStack: "Kuikly + SpringBoot",
+        techStack: "Kuikly + Spring Boot",
         tags: ["Android", "iOS", "HarmonyOS", "Web", "运动打卡", "扫码工具"],
         colorClass: "bg-orange-500",
         exampleTitle: "校园情绪加油站",
-        examplePrompt: "设计一个“校园情绪加油站”系统，围绕“学习压力过大”这一问题进行功能拆解。需求至少包含：① 信息收集模块（如压力自评问卷或情景选择）；② 分析模块（根据回答给出压力等级和可能原因）；③ 建议模块（给出不同等级的应对建议或练习）；④ 记录模块（简单的历史记录或打卡）。需提交一份流程图，说明用户从进入系统到获得建议的完整路径，并在文案中标注哪些环节使用了哪条心理学原理。"
+        examplePrompt: "设计一个“校园情绪加油站”系统，围绕“学习压力过大”这一问题进行功能拆解。需求至少包含：① 信息收集模块（如压力自评问卷或情景选择）；② 分析模块（根据回答给出压力等级和可能原因）；③ 建议模块（给出不同等级的应对建议或练习）；④ 记录模块（简单的历史记录或打卡）。需提交一份流程图，说明用户从进入系统到获得建议的完整路径，并在文案中标注哪些环节使用了哪条心理学原理。",
+        disabled: true
     }
 ];
 

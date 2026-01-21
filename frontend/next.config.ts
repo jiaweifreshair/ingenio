@@ -50,6 +50,19 @@ const nextConfig: NextConfig = {
 
   /* 开发环境代理配置 - 解决跨域问题 */
   async rewrites() {
+    /**
+     * 是否启用同源代理
+     *
+     * 说明：
+     * - 仅当 NEXT_PUBLIC_API_BASE_URL 显式为空字符串时启用
+     * - 避免在直连后端模式下触发 Next.js 内部 http-proxy 产生弃用告警
+     */
+    const enableDevProxy = process.env.NEXT_PUBLIC_API_BASE_URL === '';
+
+    if (!enableDevProxy) {
+      return [];
+    }
+
     // 默认后端地址，可从环境变量读取 (BACKEND_API_URL 包含 /api 后缀)
     const backendUrl = process.env.BACKEND_API_URL || 'http://localhost:8080/api';
     

@@ -2,7 +2,8 @@ package com.ingenio.backend.codegen.builder;
 
 import com.ingenio.backend.codegen.schema.*;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -51,10 +52,11 @@ import java.util.stream.Collectors;
  * @author Justin
  * @since 2025-11-17 V2.0 Phase 2: 数据库Schema生成器
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SupabaseSchemaBuilder {
+
+    private static final Logger log = LoggerFactory.getLogger(SupabaseSchemaBuilder.class);
 
     /**
      * 生成CREATE TABLE语句（包含Supabase标准字段）

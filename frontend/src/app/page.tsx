@@ -12,6 +12,7 @@ import { StepsShowcase } from "@/components/home/steps-showcase";
 import { FAQAccordion } from "@/components/home/faq-accordion";
 import { SmartWizard } from "@/components/home/smart-wizard";
 import { FloatingActionBar } from "@/components/home/floating-action-bar";
+import { GEOSnippet } from "@/components/home/geo-snippet";
 
 // Smart Builder Components & Types
 import { AppComplexitySelector } from "@/components/home/app-complexity-selector";
@@ -158,10 +159,10 @@ function HomePageContent(): React.ReactElement {
     techStackHint = 'React + Spring Boot';
   } else if (selectedMode === 'WEB') {
     complexityHint = 'MEDIUM';
-    techStackHint = 'React+Supabase';
+    techStackHint = 'React + Supabase';
   } else if (selectedMode === 'NATIVE') {
     complexityHint = 'COMPLEX';
-    techStackHint = 'Kuikly + SpringBoot';
+    techStackHint = 'Kuikly + Spring Boot';
   }
 
   return (
@@ -216,6 +217,9 @@ function HomePageContent(): React.ReactElement {
               onRemoveTag={handleRemoveTag}
               onLaunchWizard={handleLaunchWizard}
             />
+
+            {/* GEO 核心摘要 (Machine & Human Friendly) */}
+            <GEOSnippet />
 
             {/* 1. 应用复杂度选择 (New) */}
             <AppComplexitySelector

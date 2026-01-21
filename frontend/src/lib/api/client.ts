@@ -104,8 +104,8 @@ async function request<T>(
       credentials: 'include', // 支持Cookie
     });
 
-    // 处理401未授权
-    if (response.status === 401) {
+    // 处理认证相关错误（401未授权、502网关错误等）
+    if (response.status === 401 || response.status === 502) {
       clearToken();
 
       // 只在浏览器环境跳转
@@ -114,8 +114,8 @@ async function request<T>(
       }
 
       throw new APIError(
-        '未授权，请重新登录',
-        401
+        response.status === 401 ? '未授权，请重新登录' : '服务暂时不可用，请重新登录',
+        response.status
       );
     }
 
@@ -127,6 +127,15 @@ async function request<T>(
       // 如果不是JSON响应，读取文本内容
       const text = await response.text();
       const preview = text.length > 200 ? text.substring(0, 200) + "..." : text;
+
+      // 检查响应内容是否包含token无效/401错误（后端可能返回text/plain但内容是JSON）
+      if (text.includes('"code": 401') || text.includes('"code":401') || text.includes('token 无效')) {
+        clearToken();
+        if (typeof window !== 'undefined') {
+          window.location.href = '/login';
+        }
+        throw new APIError('登录已过期，请重新登录', 401);
+      }
 
       // 检查是否是HTML错误页面
       if (text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {

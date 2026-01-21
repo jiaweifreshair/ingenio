@@ -5,7 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ingenio.backend.codegen.schema.*;
 import com.ingenio.backend.codegen.schema.EntityRelationship.RelationType;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Service;
@@ -18,47 +19,15 @@ import java.util.stream.Collectors;
 /**
  * 实体分析器
  *
- * <p>使用AI（Qwen-Max）从用户需求中提取数据库实体定义</p>
- *
- * <p>核心功能：</p>
- * <ul>
- *   <li>AI驱动的实体识别：从自然语言需求中提取实体和字段</li>
- *   <li>关系推断：自动推断实体间的1:1、1:N、N:M关系</li>
- *   <li>类型映射：将语义类型映射到PostgreSQL类型</li>
- *   <li>Supabase最佳实践：自动添加id、created_at、updated_at等标准字段</li>
- * </ul>
- *
- * <p>使用示例：</p>
- * <pre>{@code
- * @Autowired
- * private EntityAnalyzer entityAnalyzer;
- *
- * String userRequirement = "我想创建一个博客平台，用户可以发布文章、评论和点赞。";
- *
- * // Step 1: 提取实体
- * List<Entity> entities = entityAnalyzer.extractEntities(userRequirement);
- * // 返回：users, posts, comments, likes
- *
- * // Step 2: 推断关系
- * List<EntityRelationship> relationships = entityAnalyzer.inferRelationships(entities);
- * // 返回：users 1:N posts, posts 1:N comments, users N:M posts (likes)
- *
- * // Step 3: 完善实体定义
- * entities.forEach(entity -> {
- *     // 添加标准字段
- *     entityAnalyzer.addStandardFields(entity);
- *     // 添加RLS策略
- *     entity.setRlsPolicies(RLSPolicy.selectOwnDataPolicy(...));
- * });
- * }</pre>
- *
- * @author Justin
- * @since 2025-11-17 V2.0 Phase 2: 数据库Schema生成器
+ * <p>
+ * 使用AI（Qwen-Max）从用户需求中提取数据库实体定义
+ * </p>
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EntityAnalyzer {
+
+    private static final Logger log = LoggerFactory.getLogger(EntityAnalyzer.class);
 
     private final ChatModel chatModel;
     private final ObjectMapper objectMapper;
@@ -168,12 +137,6 @@ public class EntityAnalyzer {
 
     /**
      * 从用户需求中提取实体定义
-     *
-     * <p>使用Qwen-Max AI模型分析用户需求，提取所有数据库实体及其字段定义</p>
-     *
-     * @param userRequirement 用户需求描述（自然语言）
-     * @return 实体列表
-     * @throws RuntimeException 如果AI调用失败或JSON解析失败
      */
     public List<Entity> extractEntities(String userRequirement) {
         log.info("[EntityAnalyzer] 开始提取实体，用户需求: {}", userRequirement);
@@ -211,16 +174,6 @@ public class EntityAnalyzer {
 
     /**
      * 推断实体间关系
-     *
-     * <p>基于以下规则自动推断实体间关系：</p>
-     * <ul>
-     *   <li>规则1：外键字段推断（如author_id → users表，1:N关系）</li>
-     *   <li>规则2：命名模式推断（如order_items暗示orders表的1:N关系）</li>
-     *   <li>规则3：业务语义推断（如user_roles暗示users和roles的N:M关系）</li>
-     * </ul>
-     *
-     * @param entities 实体列表
-     * @return 关系列表
      */
     public List<EntityRelationship> inferRelationships(List<Entity> entities) {
         log.info("[EntityAnalyzer] 开始推断实体间关系，实体数量: {}", entities.size());
@@ -269,11 +222,6 @@ public class EntityAnalyzer {
 
     /**
      * 映射语义类型到PostgreSQL类型
-     *
-     * <p>根据字段的语义含义自动推断PostgreSQL数据类型</p>
-     *
-     * @param semanticType 语义类型（如"邮箱"、"年龄"、"价格"）
-     * @return PostgreSQL字段类型
      */
     public FieldType mapFieldType(String semanticType) {
         String lower = semanticType.toLowerCase();
@@ -356,7 +304,8 @@ public class EntityAnalyzer {
         String jsonContent = extractJsonContent(aiResponse);
 
         // 解析JSON
-        Map<String, Object> responseMap = objectMapper.readValue(jsonContent, new TypeReference<>() {});
+        Map<String, Object> responseMap = objectMapper.readValue(jsonContent, new TypeReference<>() {
+        });
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> entitiesData = (List<Map<String, Object>>) responseMap.get("entities");
@@ -526,7 +475,7 @@ public class EntityAnalyzer {
             // 识别中间表模式：table1_table2（如user_roles, post_tags）
             String[] parts = tableName.split("_");
             if (parts.length == 2) {
-                String table1Plural = parts[0] + "s";  // 假设单数形式，转复数
+                String table1Plural = parts[0] + "s"; // 假设单数形式，转复数
                 String table2Plural = parts[1] + "s";
 
                 // 检查两个表是否存在

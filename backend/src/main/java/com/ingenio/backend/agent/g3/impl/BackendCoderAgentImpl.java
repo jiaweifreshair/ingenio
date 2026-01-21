@@ -8,7 +8,10 @@ import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.prompt.PromptTemplateService;
 import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
-import lombok.extern.slf4j.Slf4j;
+import com.ingenio.backend.service.g3.hooks.G3HookPipeline;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -27,28 +30,36 @@ import java.util.regex.Pattern;
  * 3. 生成完整的Spring Boot代码：Entity、Mapper、Service、Controller
  * 4. 确保生成的代码符合契约规范
  */
-@Slf4j
 @Component
+@ConditionalOnProperty(name = "ingenio.g3.agent.engine", havingValue = "legacy", matchIfMissing = true)
 public class BackendCoderAgentImpl implements ICoderAgent {
+
+    private static final Logger log = LoggerFactory.getLogger(BackendCoderAgentImpl.class);
 
     private static final String AGENT_NAME = "BackendCoderAgent";
     private static final String TARGET_TYPE = "backend";
     private static final String TARGET_LANGUAGE = "java";
 
+    @org.springframework.beans.factory.annotation.Value("${ingenio.ai.models.execute:}")
+    private String executionModel;
+
     private final AIProviderFactory aiProviderFactory;
     private final BlueprintPromptBuilder blueprintPromptBuilder;
     private final PromptTemplateService promptTemplateService;
     private final com.ingenio.backend.service.g3.G3ContextBuilder contextBuilder;
+    private final G3HookPipeline hookPipeline;
 
     public BackendCoderAgentImpl(
             AIProviderFactory aiProviderFactory,
             BlueprintPromptBuilder blueprintPromptBuilder,
             PromptTemplateService promptTemplateService,
-            com.ingenio.backend.service.g3.G3ContextBuilder contextBuilder) {
+            com.ingenio.backend.service.g3.G3ContextBuilder contextBuilder,
+            G3HookPipeline hookPipeline) {
         this.aiProviderFactory = aiProviderFactory;
         this.blueprintPromptBuilder = blueprintPromptBuilder;
         this.promptTemplateService = promptTemplateService;
         this.contextBuilder = contextBuilder;
+        this.hookPipeline = hookPipeline;
     }
 
     @Override
@@ -100,7 +111,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
                 logConsumer.accept(G3LogEntry.info(getRole(), "Blueprint Mode 激活 - 注入编码约束"));
             }
 
-            AIProvider aiProvider = aiProviderFactory.getProvider();
+            AIProvider aiProvider = hookPipeline.wrapProvider(aiProviderFactory.getProvider(), job, logConsumer);
             if (!aiProvider.isAvailable()) {
                 return CoderResult.failure("AI提供商不可用");
             }
@@ -122,14 +133,16 @@ public class BackendCoderAgentImpl implements ICoderAgent {
             // 2. 生成Mapper接口
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成Mapper接口..."));
             String entityCode = combineArtifactsContent(entityArtifacts);
-            List<G3ArtifactEntity> mapperArtifacts = generateMappers(job, entityCode, entityArtifacts, aiProvider, generationRound,
+            List<G3ArtifactEntity> mapperArtifacts = generateMappers(job, entityCode, entityArtifacts, aiProvider,
+                    generationRound,
                     logConsumer);
             artifacts.addAll(mapperArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "Mapper接口生成完成，共 " + mapperArtifacts.size() + " 个文件"));
 
             // 3. 生成DTO类（解决编译时缺少DTO类的问题）
             logConsumer.accept(G3LogEntry.info(getRole(), "正在生成DTO类..."));
-            List<G3ArtifactEntity> dtoArtifacts = generateDTOs(job, contractYaml, entityCode, entityArtifacts, aiProvider,
+            List<G3ArtifactEntity> dtoArtifacts = generateDTOs(job, contractYaml, entityCode, entityArtifacts,
+                    aiProvider,
                     generationRound, logConsumer);
             artifacts.addAll(dtoArtifacts);
             logConsumer.accept(G3LogEntry.success(getRole(), "DTO类生成完成，共 " + dtoArtifacts.size() + " 个文件"));
@@ -227,6 +240,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
                 dbSchemaSql);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
+                        .model(executionModel)
                         .temperature(0.2)
                         .maxTokens(8000)
                         .build());
@@ -259,6 +273,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
                 entityCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
+                        .model(executionModel)
                         .temperature(0.2)
                         .maxTokens(4000)
                         .build());
@@ -294,6 +309,7 @@ public class BackendCoderAgentImpl implements ICoderAgent {
                 entityCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
+                        .model(executionModel)
                         .temperature(0.2)
                         .maxTokens(8000)
                         .build());
@@ -332,12 +348,14 @@ public class BackendCoderAgentImpl implements ICoderAgent {
 
         String prompt = String.format(
                 promptTemplateService.coderServiceTemplate(),
-                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + projectContext + "\n\n" + generatedClassesContext,
+                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + projectContext + "\n\n"
+                        + generatedClassesContext,
                 contractYaml,
                 mapperCode,
                 dtoCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
+                        .model(executionModel)
                         .temperature(0.2)
                         .maxTokens(8000)
                         .build());
@@ -378,12 +396,14 @@ public class BackendCoderAgentImpl implements ICoderAgent {
 
         String prompt = String.format(
                 promptTemplateService.coderControllerTemplate(),
-                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + projectContext + "\n\n" + generatedClassesContext,
+                promptTemplateService.coderStandardsTemplate() + blueprintConstraint + "\n\n" + projectContext + "\n\n"
+                        + generatedClassesContext,
                 contractYaml,
                 serviceCode,
                 dtoCode);
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
+                        .model(executionModel)
                         .temperature(0.2)
                         .maxTokens(6000)
                         .build());

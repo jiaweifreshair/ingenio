@@ -1,0 +1,104 @@
+{
+  "timestamp": "2026-01-17T15:05:19.032Z",
+  "summary": {
+    "total": 13,
+    "passed": 11,
+    "failed": 1,
+    "skipped": 1,
+    "passRate": "91.67%"
+  },
+  "results": [
+    {
+      "category": "API",
+      "test": "POST /api/v2/plan-routing/route",
+      "status": "PASS",
+      "message": "响应码: 0000, 耗时: 88ms",
+      "duration": 88,
+      "timestamp": "2026-01-17T15:04:26.445Z"
+    },
+    {
+      "category": "API",
+      "test": "POST /api/v2/plan-routing/{appSpecId}/select-style",
+      "status": "PASS",
+      "message": "端点正常工作",
+      "timestamp": "2026-01-17T15:04:26.460Z"
+    },
+    {
+      "category": "API",
+      "test": "POST /api/v2/plan-routing/{appSpecId}/confirm-design",
+      "status": "PASS",
+      "message": "端点正常工作",
+      "timestamp": "2026-01-17T15:04:26.473Z"
+    },
+    {
+      "category": "API",
+      "test": "GET /api/v2/plan-routing/{appSpecId}/status",
+      "status": "SKIP",
+      "message": "端点尚未实现（符合预期）",
+      "timestamp": "2026-01-17T15:04:26.485Z"
+    },
+    {
+      "category": "Frontend",
+      "test": "DesignConfirmationDialog组件文件存在",
+      "status": "PASS",
+      "message": "/Users/apus/Documents/UGit/Ingenio/frontend/src/components/design/design-confirmation-dialog.tsx",
+      "timestamp": "2026-01-17T15:04:26.485Z"
+    },
+    {
+      "category": "Frontend",
+      "test": "DesignConfirmationDialog导出检查",
+      "status": "PASS",
+      "message": "Interface: true, Component: true",
+      "timestamp": "2026-01-17T15:04:26.486Z"
+    },
+    {
+      "category": "Frontend",
+      "test": "DesignConfirmationDialog API集成",
+      "status": "PASS",
+      "message": "已集成V2.0 API",
+      "timestamp": "2026-01-17T15:04:26.486Z"
+    },
+    {
+      "category": "Frontend",
+      "test": "TypeScript编译检查",
+      "status": "PASS",
+      "message": "0 errors",
+      "timestamp": "2026-01-17T15:04:30.013Z"
+    },
+    {
+      "category": "Backend",
+      "test": "Maven编译检查",
+      "status": "PASS",
+      "message": "BUILD SUCCESS",
+      "timestamp": "2026-01-17T15:04:35.809Z"
+    },
+    {
+      "category": "Backend",
+      "test": "PlanRoutingController存在",
+      "status": "PASS",
+      "message": "/Users/apus/Documents/UGit/Ingenio/backend/src/main/java/com/ingenio/backend/controller/PlanRoutingController.java",
+      "timestamp": "2026-01-17T15:04:35.810Z"
+    },
+    {
+      "category": "Backend",
+      "test": "PlanRoutingRequest DTO存在",
+      "status": "PASS",
+      "message": "/Users/apus/Documents/UGit/Ingenio/backend/src/main/java/com/ingenio/backend/dto/request/PlanRoutingRequest.java",
+      "timestamp": "2026-01-17T15:04:35.810Z"
+    },
+    {
+      "category": "Test",
+      "test": "PlanRoutingServiceTest单元测试",
+      "status": "PASS",
+      "message": "测试执行成功（无摘要输出）",
+      "timestamp": "2026-01-17T15:04:57.243Z"
+    },
+    {
+      "category": "Test",
+      "test": "ExecuteGuardTest单元测试",
+      "status": "FAIL",
+      "message": "测试执行失败",
+      "timestamp": "2026-01-17T15:05:19.031Z"
+    }
+  ]
+}

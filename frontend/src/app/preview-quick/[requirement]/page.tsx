@@ -106,6 +106,89 @@ interface AIMessage {
 }
 
 /**
+ * Scout 模板摘要结构
+ * 用途：只抽取前端生成提示需要的字段，避免强依赖后端完整结构。
+ */
+interface ScoutTemplateSummary {
+  name: string;
+  description: string;
+  matchScore?: number;
+  analysisReason: string;
+}
+
+/**
+ * 青少年压力/心理领域关键词
+ * 用途：当需求命中该领域时，阻断明显不相关的模板上下文注入。
+ */
+const YOUTH_STRESS_KEYWORDS = [
+  '压力',
+  '情绪',
+  '心理',
+  '青少年',
+  '学生',
+  '班主任',
+  '心理老师',
+  '焦虑',
+  '抑郁',
+  'stress',
+  'mental',
+  'mood',
+  'emotion',
+  'counselor',
+  'teen',
+];
+
+/**
+ * 旅行/住宿类模板关键词
+ * 用途：识别与心理健康需求明显不匹配的模板场景。
+ */
+const TRAVEL_TEMPLATE_KEYWORDS = [
+  '民宿',
+  '预订',
+  '住宿',
+  '酒店',
+  'airbnb',
+  'booking',
+  '房源',
+  '短租',
+  '旅行',
+  '旅游',
+];
+
+/**
+ * 判断是否应用 Scout 模板上下文
+ * 说明：当需求与模板领域明显不匹配时，跳过注入，避免模型跑偏。
+ */
+function shouldApplyScoutTemplateContext(
+  requirementText: string,
+  template: ScoutTemplateSummary,
+): boolean {
+  const requirement = requirementText.toLowerCase();
+  const templateText = `${template.name} ${template.description} ${template.analysisReason}`.toLowerCase();
+  const isYouthStress = YOUTH_STRESS_KEYWORDS.some((keyword) => requirement.includes(keyword));
+  const isTravelTemplate = TRAVEL_TEMPLATE_KEYWORDS.some((keyword) => templateText.includes(keyword));
+
+  if (typeof template.matchScore === 'number' && template.matchScore < 0.55) {
+    return false;
+  }
+
+  if (isYouthStress && isTravelTemplate) {
+    return false;
+  }
+
+  if (isYouthStress) {
+    const overlap = YOUTH_STRESS_KEYWORDS.filter(
+      (keyword) => requirement.includes(keyword) && templateText.includes(keyword),
+    );
+    if (overlap.length === 0) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
  * 生成阶段
  */
 type GenerationStage = 'init' | 'scouting' | 'sandbox' | 'generating' | 'complete' | 'error';
@@ -350,17 +433,28 @@ export default function QuickPreviewPage() {
                      if (resultRes.ok) {
                        const resultData = await resultRes.json();
                        if (resultData && Array.isArray(resultData) && resultData.length > 0) {
-                         const topPick = resultData[0];
-                         const contextStr = `## G3 Scout Recommendation\n` +
-                           `Based on your requirements, the Repo Scout Agent has identified the following template as the best starting point:\n` +
-                           `- Name: ${topPick.name}\n` +
-                           `- Description: ${topPick.description}\n` +
-                           `- Match Score: ${topPick.match_score}\n` +
-                           `- Reason: ${topPick.analysis_reason}\n\n` +
-                           `Please prioritize using patterns and structures from this template where applicable.`;
-                         
-                         scoutContextRef.current = contextStr;
-                         addLog(`📋 已加载模版上下文: ${topPick.name}`);
+                         const topPickRaw = resultData[0] as Record<string, unknown>;
+                         const topPick: ScoutTemplateSummary = {
+                           name: typeof topPickRaw.name === 'string' ? topPickRaw.name : '未命名模板',
+                           description: typeof topPickRaw.description === 'string' ? topPickRaw.description : '',
+                           matchScore: typeof topPickRaw.match_score === 'number' ? topPickRaw.match_score : undefined,
+                           analysisReason: typeof topPickRaw.analysis_reason === 'string' ? topPickRaw.analysis_reason : '',
+                         };
+
+                         if (shouldApplyScoutTemplateContext(requirement, topPick)) {
+                           const contextStr = `## G3 Scout Recommendation\n` +
+                             `Based on your requirements, the Repo Scout Agent has identified the following template as the best starting point:\n` +
+                             `- Name: ${topPick.name}\n` +
+                             `- Description: ${topPick.description}\n` +
+                             `- Match Score: ${topPick.matchScore ?? 'N/A'}\n` +
+                             `- Reason: ${topPick.analysisReason}\n\n` +
+                             `Please prioritize using patterns and structures from this template where applicable.`;
+
+                           scoutContextRef.current = contextStr;
+                           addLog(`📋 已加载模版上下文: ${topPick.name}`);
+                         } else {
+                           addLog('⚠️ 模版上下文与需求领域不匹配，已跳过注入');
+                         }
                        }
                      }
                    } catch (err) {

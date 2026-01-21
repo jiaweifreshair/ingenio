@@ -1,9 +1,12 @@
+"use client";
+
 import {
   Accordion,
   AccordionContent,
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 /**
  * FAQ条目接口
@@ -15,41 +18,57 @@ interface FAQItem {
   answer: string;
 }
 
-/**
- * FAQ数据
- */
-const faqs: ReadonlyArray<FAQItem> = [
-  {
-    question: "需要写代码吗？",
-    answer:
-      "不需要。Ingenio 妙构 提供可视化的向导式操作，完全不需要编程基础。对于高级用户，我们也提供专家模式进行深度定制。",
-  },
-  {
-    question: "是否收费？",
-    answer:
-      "核心能力基础免费使用。我们提供订阅服务，包含更多高级功能、更大的存储空间，以及官方课程的学习权益。",
-  },
-  {
-    question: "数据安全如何保障？",
-    answer:
-      "我们承诺不将用户的业务数据用于模型训练。所有数据采用加密存储和传输，支持随时导出和删除。我们符合相关数据保护法规的要求。",
-  },
-] as const;
+// Removed static faqs array
 
 /**
  * FAQAccordion组件
  * 常见问题手风琴展示
  */
 export function FAQAccordion(): React.ReactElement {
+  const { t } = useLanguage();
+
+  const faqs: ReadonlyArray<FAQItem> = [
+    {
+      question: t('faq.q1'),
+      answer: t('faq.a1'),
+    },
+    {
+      question: t('faq.q2'),
+      answer: t('faq.a2'),
+    },
+    {
+      question: t('faq.q3'),
+      answer: t('faq.a3'),
+    },
+  ] as const;
+
   return (
     <section id="faq" className="w-full py-12">
+      {/* FAQ 结构化数据：显著提升国内搜索引擎和 AI 提取准确率 */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "FAQPage",
+            "mainEntity": faqs.map(faq => ({
+              "@type": "Question",
+              "name": faq.question,
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": faq.answer
+              }
+            }))
+          })
+        }}
+      />
       <div className="container mx-auto px-6">
         <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-10">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground tracking-tight">
-            常见问题
+            {t('faq.title')}
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl">
-            快速了解Ingenio 妙构 的核心特性
+            {t('faq.subtitle')}
           </p>
         </div>
 

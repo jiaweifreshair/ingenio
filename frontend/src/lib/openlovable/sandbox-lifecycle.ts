@@ -86,6 +86,16 @@ export function isSandboxNotFound(payload: Record<string, unknown>): boolean {
     return true;
   }
 
+  // 上游显式标记未激活/不健康时，视为不可用以触发重建。
+  const active = payload.active;
+  if (typeof active === 'boolean' && !active) {
+    return true;
+  }
+  const healthy = payload.healthy;
+  if (typeof healthy === 'boolean' && !healthy) {
+    return true;
+  }
+
   return combined.includes('sandbox not found') || combined.includes('not found') || combined.includes('not_found');
 }
 

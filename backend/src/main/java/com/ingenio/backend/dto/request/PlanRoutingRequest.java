@@ -30,6 +30,15 @@ public class PlanRoutingRequest {
     private String userRequirement;
 
     /**
+     * AppSpec ID（可选）
+     *
+     * 用途：
+     * - 允许在“分析完成/原型确认前”通过 Chat 持续修改需求
+     * - 修改时复用同一个 AppSpec，保证上下文（tenantId/userId/blueprint）可透传到后续 G3 生成阶段
+     */
+    private UUID appSpecId;
+
+    /**
      * 租户ID（可选）
      * 多租户隔离，如果不提供则从Session获取
      */

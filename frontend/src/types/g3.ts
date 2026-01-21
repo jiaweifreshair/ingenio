@@ -121,6 +121,22 @@ export interface G3Job {
 export interface SubmitG3JobRequest {
   /** 需求描述 */
   requirement: string;
+
+  /**
+   * AppSpec ID（可选）
+   *
+   * 说明：
+   * - 传入后端会自动从 AppSpec 加载 tenantId/userId/blueprintSpec 等上下文
+   * - 同时可读取 AppSpec.specContent.userRequirement 作为“最新需求”兜底
+   */
+  appSpecId?: string;
+
+  /**
+   * 行业模板ID（可选）
+   * 说明：用于后端补齐 Blueprint（快速试跑/模板化生成）
+   */
+  templateId?: string;
+
   /** 最大修复轮次（可选，默认 3） */
   maxRounds?: number;
   /** 是否启用详细日志（可选，默认 true） */

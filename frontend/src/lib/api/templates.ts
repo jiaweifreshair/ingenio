@@ -50,15 +50,17 @@ async function getMockTemplates(): Promise<Template[]> {
 
 /**
  * 分类元数据定义
+ * 安全竞赛类放在首位（本期开放），其他分类暂时不可用
  */
 const CATEGORY_META: Omit<CategoryMeta, 'count'>[] = [
-  { id: TemplateCategory.ALL, name: "全部模板", icon: "📦" },
-  { id: TemplateCategory.ECOMMERCE, name: "电商类", icon: "🛒" },
-  { id: TemplateCategory.SOCIAL, name: "社交类", icon: "💬" },
-  { id: TemplateCategory.TOOLS, name: "工具类", icon: "🔧" },
-  { id: TemplateCategory.CONTENT, name: "内容类", icon: "📝" },
-  { id: TemplateCategory.EDUCATION, name: "教育类", icon: "🎓" },
-  { id: TemplateCategory.OTHER, name: "其他", icon: "📱" },
+  { id: TemplateCategory.ALL, name: "全部模板", icon: "📦", isAvailable: true },
+  { id: TemplateCategory.SAFETY_CHALLENGE, name: "安全竞赛", icon: "🛡️", isAvailable: true },
+  { id: TemplateCategory.ECOMMERCE, name: "电商类", icon: "🛒", isAvailable: false },
+  { id: TemplateCategory.SOCIAL, name: "社交类", icon: "💬", isAvailable: false },
+  { id: TemplateCategory.TOOLS, name: "工具类", icon: "🔧", isAvailable: false },
+  { id: TemplateCategory.CONTENT, name: "内容类", icon: "📝", isAvailable: false },
+  { id: TemplateCategory.EDUCATION, name: "教育类", icon: "🎓", isAvailable: false },
+  { id: TemplateCategory.OTHER, name: "其他", icon: "📱", isAvailable: false },
 ];
 
 /**

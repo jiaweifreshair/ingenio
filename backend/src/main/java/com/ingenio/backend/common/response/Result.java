@@ -1,10 +1,6 @@
 package com.ingenio.backend.common.response;
 
 import com.ingenio.backend.common.exception.ErrorCode;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 
@@ -14,10 +10,6 @@ import java.io.Serializable;
  *
  * @param <T> 数据类型
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class Result<T> implements Serializable {
 
     /**
@@ -40,15 +32,60 @@ public class Result<T> implements Serializable {
      */
     private Long timestamp;
 
+    public Result() {
+    }
+
+    public Result(String code, String message, T data, Long timestamp) {
+        this.code = code;
+        this.message = message;
+        this.data = data;
+        this.timestamp = timestamp;
+    }
+
+    public static <T> ResultBuilder<T> builder() {
+        return new ResultBuilder<>();
+    }
+
+    public static class ResultBuilder<T> {
+        private String code;
+        private String message;
+        private T data;
+        private Long timestamp;
+
+        public ResultBuilder<T> code(String code) {
+            this.code = code;
+            return this;
+        }
+
+        public ResultBuilder<T> message(String message) {
+            this.message = message;
+            return this;
+        }
+
+        public ResultBuilder<T> data(T data) {
+            this.data = data;
+            return this;
+        }
+
+        public ResultBuilder<T> timestamp(Long timestamp) {
+            this.timestamp = timestamp;
+            return this;
+        }
+
+        public Result<T> build() {
+            return new Result<>(code, message, data, timestamp);
+        }
+    }
+
     /**
      * 成功响应（无数据）
      */
     public static <T> Result<T> success() {
         return Result.<T>builder()
-            .code(ErrorCode.SUCCESS.getCode())
-            .message(ErrorCode.SUCCESS.getMessage())
-            .timestamp(System.currentTimeMillis())
-            .build();
+                .code(ErrorCode.SUCCESS.getCode())
+                .message(ErrorCode.SUCCESS.getMessage())
+                .timestamp(System.currentTimeMillis())
+                .build();
     }
 
     /**
@@ -56,11 +93,11 @@ public class Result<T> implements Serializable {
      */
     public static <T> Result<T> success(T data) {
         return Result.<T>builder()
-            .code(ErrorCode.SUCCESS.getCode())
-            .message(ErrorCode.SUCCESS.getMessage())
-            .data(data)
-            .timestamp(System.currentTimeMillis())
-            .build();
+                .code(ErrorCode.SUCCESS.getCode())
+                .message(ErrorCode.SUCCESS.getMessage())
+                .data(data)
+                .timestamp(System.currentTimeMillis())
+                .build();
     }
 
     /**
@@ -68,11 +105,11 @@ public class Result<T> implements Serializable {
      */
     public static <T> Result<T> success(String message, T data) {
         return Result.<T>builder()
-            .code(ErrorCode.SUCCESS.getCode())
-            .message(message)
-            .data(data)
-            .timestamp(System.currentTimeMillis())
-            .build();
+                .code(ErrorCode.SUCCESS.getCode())
+                .message(message)
+                .data(data)
+                .timestamp(System.currentTimeMillis())
+                .build();
     }
 
     /**
@@ -80,10 +117,10 @@ public class Result<T> implements Serializable {
      */
     public static <T> Result<T> error(ErrorCode errorCode) {
         return Result.<T>builder()
-            .code(errorCode.getCode())
-            .message(errorCode.getMessage())
-            .timestamp(System.currentTimeMillis())
-            .build();
+                .code(errorCode.getCode())
+                .message(errorCode.getMessage())
+                .timestamp(System.currentTimeMillis())
+                .build();
     }
 
     /**
@@ -91,11 +128,11 @@ public class Result<T> implements Serializable {
      */
     public static <T> Result<T> error(ErrorCode errorCode, T data) {
         return Result.<T>builder()
-            .code(errorCode.getCode())
-            .message(errorCode.getMessage())
-            .data(data)
-            .timestamp(System.currentTimeMillis())
-            .build();
+                .code(errorCode.getCode())
+                .message(errorCode.getMessage())
+                .data(data)
+                .timestamp(System.currentTimeMillis())
+                .build();
     }
 
     /**
@@ -103,10 +140,10 @@ public class Result<T> implements Serializable {
      */
     public static <T> Result<T> error(String code, String message) {
         return Result.<T>builder()
-            .code(code)
-            .message(message)
-            .timestamp(System.currentTimeMillis())
-            .build();
+                .code(code)
+                .message(message)
+                .timestamp(System.currentTimeMillis())
+                .build();
     }
 
     /**
@@ -114,11 +151,11 @@ public class Result<T> implements Serializable {
      */
     public static <T> Result<T> error(String code, String message, T data) {
         return Result.<T>builder()
-            .code(code)
-            .message(message)
-            .data(data)
-            .timestamp(System.currentTimeMillis())
-            .build();
+                .code(code)
+                .message(message)
+                .data(data)
+                .timestamp(System.currentTimeMillis())
+                .build();
     }
 
     /**
@@ -126,5 +163,38 @@ public class Result<T> implements Serializable {
      */
     public boolean isSuccess() {
         return ErrorCode.SUCCESS.getCode().equals(this.code);
+    }
+
+    // Getters and Setters
+    public String getCode() {
+        return code;
+    }
+
+    public void setCode(String code) {
+        this.code = code;
+    }
+
+    public String getMessage() {
+        return message;
+    }
+
+    public void setMessage(String message) {
+        this.message = message;
+    }
+
+    public T getData() {
+        return data;
+    }
+
+    public void setData(T data) {
+        this.data = data;
+    }
+
+    public Long getTimestamp() {
+        return timestamp;
+    }
+
+    public void setTimestamp(Long timestamp) {
+        this.timestamp = timestamp;
     }
 }

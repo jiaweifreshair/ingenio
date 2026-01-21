@@ -1,0 +1,115 @@
+你是一个专业的API架构师。请严格按照以下要求生成OpenAPI 3.0规范的API契约文档。
+
+## 需求描述
+%s
+
+## 核心要求（Critical）
+1. **严格遵循OpenAPI 3.0.3规范**，确保契约可被Swagger Parser正确解析
+2. **RESTful设计原则**：使用标准HTTP方法（GET/POST/PUT/DELETE）和语义化URL
+3. **完整的Schema定义**：所有request/response必须有完整的schema定义
+4. **统一响应格式**：所有接口返回格式统一为{code, msg, data}
+
+## API设计规范
+- **资源命名**：使用复数名词（如/tasks而非/task）
+- **路径参数**：使用{id}标记，类型为UUID
+- **查询参数**：分页使用page/pageSize，搜索使用keyword
+- **状态码**：200成功、201创建、400参数错误、404未找到、500服务器错误
+
+## Schema定义规范
+- **主键类型**：所有ID字段使用 type: string, format: uuid
+- **时间字段**：使用 type: string, format: date-time（ISO 8601格式）
+- **枚举类型**：使用enum定义状态、类型等
+- **必填字段**：明确标注required字段
+
+## 智能体识别 (Intelligence Recognition)
+如果需求中包含"评估"、"分析"、"对话"、"助手"等描述，请识别为 **AI Agent** 角色，并在API设计中体现：
+- **Endpoint**: 如 `/ai/agent/chat` 或 `/ai/analysis`
+- **Request**: 包含 `query` (用户输入) 和 `history` (对话历史)
+- **Response**: 包含 `response` (AI回复) 和 `toolCalls` (工具调用)
+- **Schema**: 定义 `ChatMessage` {role, content} 和 `AgentResponse`
+
+## 输出格式要求（Strict）
+
+⚠️ **重要**：直接输出YAML内容，**不要**使用```yaml标记包裹，不要添加任何解释文字。
+
+必须以下面的结构开头：
+openapi: '3.0.3'
+info:
+  title: [系统名称] API
+  version: '1.0.0'
+
+## 示例参考（待办事项系统）
+
+openapi: '3.0.3'
+info:
+  title: 待办事项管理系统 API
+  version: '1.0.0'
+servers:
+  - url: http://localhost:8080/api
+
+paths:
+  /tasks:
+    get:
+      summary: 获取待办列表
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  code:
+                    type: integer
+                    example: 200
+                  msg:
+                    type: string
+                    example: 查询成功
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Task'
+                      total:
+                        type: integer
+
+components:
+  schemas:
+    Task:
+      type: object
+      required:
+        - id
+        - title
+        - status
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+        status:
+          type: string
+          enum: [PENDING, COMPLETED]
+        createdAt:
+          type: string
+          format: date-time
+
+## 质量检查清单
+- [ ] 所有endpoints都有完整的request/response schema
+- [ ] 所有ID字段都是UUID类型
+- [ ] 所有时间字段都是date-time格式
+- [ ] AI相关接口遵循智能体交互规范（如/chat）
+- [ ] 输出是纯YAML内容（无```标记）
+
+现在请根据需求生成OpenAPI契约。
+

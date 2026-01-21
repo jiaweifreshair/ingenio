@@ -9,9 +9,14 @@ import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.entity.g3.G3SessionMemory;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
+import com.ingenio.backend.mapper.g3.G3ArtifactMapper;
 import com.ingenio.backend.prompt.PromptTemplateService;
 import com.ingenio.backend.service.g3.G3ContextBuilder;
+import com.ingenio.backend.service.g3.G3KnowledgeStorePort;
+import com.ingenio.backend.service.g3.G3ToolsetService;
+import com.ingenio.backend.service.g3.hooks.G3HookPipeline;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -34,15 +39,24 @@ import java.util.stream.Collectors;
  *
  * Coach是G3引擎"自修复"能力的核心组件
  */
-@Slf4j
 @Component
+@ConditionalOnProperty(name = "ingenio.g3.agent.engine", havingValue = "legacy", matchIfMissing = true)
 public class CoachAgentImpl implements ICoachAgent {
+
+    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(CoachAgentImpl.class);
 
     private static final String AGENT_NAME = "CoachAgent";
 
     private final AIProviderFactory aiProviderFactory;
     private final PromptTemplateService promptTemplateService;
     private final G3ContextBuilder contextBuilder;
+    private final G3ArtifactMapper artifactMapper;
+    private final G3KnowledgeStorePort knowledgeStore;
+    private final G3HookPipeline hookPipeline;
+    /**
+     * Toolset 服务，用于兜底的本地搜索能力。
+     */
+    private final G3ToolsetService toolsetService;
 
     /**
      * 可自动修复的错误模式
@@ -85,13 +99,48 @@ public class CoachAgentImpl implements ICoachAgent {
             "unknown host",
             "timed out");
 
+    /**
+     * 修复前分析与计划日志的截断长度。
+     *
+     * 是什么：日志输出的最大字符数。
+     * 做什么：控制分析/计划在日志流中的长度，避免前端显示过长。
+     * 为什么：降低日志噪声与传输开销，同时保留关键信息。
+     */
+    private static final int REPAIR_LOG_TRUNCATE_CHARS = 1200;
+
+    /**
+     * 修复前错误摘要的最大长度。
+     *
+     * 是什么：用于分析/计划的错误摘要长度上限。
+     * 做什么：对编译输出做截断，避免提示词超长。
+     * 为什么：提升模型对关键信息的聚焦能力，减少无效上下文。
+     */
+    private static final int REPAIR_ERROR_SUMMARY_CHARS = 4000;
+
+    /**
+     * 修复前上下文摘要的最大长度。
+     *
+     * 是什么：用于计划与分析阶段的上下文截断长度。
+     * 做什么：限制类索引/上下文输入规模，避免提示词过长。
+     * 为什么：保证分析与计划阶段能稳定读取关键信息。
+     */
+    private static final int REPAIR_CONTEXT_SUMMARY_CHARS = 2000;
+
     public CoachAgentImpl(
             AIProviderFactory aiProviderFactory,
             PromptTemplateService promptTemplateService,
-            G3ContextBuilder contextBuilder) {
+            G3ContextBuilder contextBuilder,
+            G3ArtifactMapper artifactMapper,
+            G3KnowledgeStorePort knowledgeStore,
+            G3ToolsetService toolsetService,
+            G3HookPipeline hookPipeline) {
         this.aiProviderFactory = aiProviderFactory;
         this.promptTemplateService = promptTemplateService;
         this.contextBuilder = contextBuilder;
+        this.artifactMapper = artifactMapper;
+        this.knowledgeStore = knowledgeStore;
+        this.toolsetService = toolsetService;
+        this.hookPipeline = hookPipeline;
     }
 
     @Override
@@ -123,7 +172,7 @@ public class CoachAgentImpl implements ICoachAgent {
         }
 
         try {
-            AIProvider aiProvider = aiProviderFactory.getProvider();
+            AIProvider aiProvider = hookPipeline.wrapProvider(aiProviderFactory.getProvider(), job, logConsumer);
             if (!aiProvider.isAvailable()) {
                 return CoachResult.failure("AI提供商不可用");
             }
@@ -131,7 +180,8 @@ public class CoachAgentImpl implements ICoachAgent {
             logConsumer.accept(G3LogEntry.info(getRole(), "开始分析 " + errorArtifacts.size() + " 个错误文件..."));
 
             // 构建“可用类索引”（来自 context.md），用于提升 import/类型修复的命中率
-            String compactContext = buildSafeCompactContext(job, logConsumer);
+            // v2.2.0增强：使用智能压缩上下文
+            String compactContext = buildSafeCompactContext(job, validationResults, logConsumer);
 
             List<G3ArtifactEntity> fixedArtifacts = new ArrayList<>();
             StringBuilder analysisReport = new StringBuilder();
@@ -148,6 +198,39 @@ public class CoachAgentImpl implements ICoachAgent {
 
             // 构建修复历史上下文（v2.1.0 新增）
             String repairHistoryContext = sessionMemory != null ? sessionMemory.buildCoachContext() : "";
+
+            // 修复前原因分析与计划
+            String safeContext = (compactContext == null || compactContext.isBlank()) ? "(暂无可用类索引)\n" : compactContext;
+            String safeHistory = (repairHistoryContext == null || repairHistoryContext.isBlank()) ? "(首次修复)\n"
+                    : repairHistoryContext;
+            String repairTargetSummary = buildRepairTargetSummary(errorArtifacts);
+            String compilerOutputSummary = buildCompilerOutputSummary(validationResults, errorArtifacts);
+
+            String repairAnalysis = generateRepairAnalysis(
+                    repairTargetSummary,
+                    compilerOutputSummary,
+                    safeContext,
+                    safeHistory,
+                    aiProvider,
+                    logConsumer);
+            logConsumer.accept(G3LogEntry.info(getRole(),
+                    "原因分析:\n" + truncate(repairAnalysis, REPAIR_LOG_TRUNCATE_CHARS)));
+
+            String repairPlan = generateRepairPlan(
+                    repairTargetSummary,
+                    compilerOutputSummary,
+                    repairAnalysis,
+                    safeContext,
+                    safeHistory,
+                    aiProvider,
+                    logConsumer);
+            logConsumer.accept(G3LogEntry.info(getRole(),
+                    "修复计划:\n" + truncate(repairPlan, REPAIR_LOG_TRUNCATE_CHARS)));
+            analysisReport.append("### 修复前原因分析\n")
+                    .append(repairAnalysis)
+                    .append("\n\n### 修复计划\n")
+                    .append(repairPlan)
+                    .append("\n\n");
 
             // 按优先级排序产物
             List<G3ArtifactEntity> sortedArtifacts = prioritizeArtifacts(errorArtifacts, aggregation);
@@ -180,8 +263,14 @@ public class CoachAgentImpl implements ICoachAgent {
 
                 // 执行修复
                 try {
-                    String fixedCode = generateFixWithHistory(artifact, compilerOutput, compactContext,
-                            repairHistoryContext, aiProvider);
+                    String fixedCode = generateFixWithHistory(
+                            artifact,
+                            compilerOutput,
+                            compactContext,
+                            repairHistoryContext,
+                            repairAnalysis,
+                            repairPlan,
+                            aiProvider);
 
                     if (fixedCode != null && !fixedCode.isBlank()) {
                         G3ArtifactEntity fixedArtifact = createFixedArtifact(artifact, fixedCode);
@@ -252,7 +341,7 @@ public class CoachAgentImpl implements ICoachAgent {
     @Override
     public String analyzeError(G3ArtifactEntity artifact, String compilerOutput) {
         try {
-            AIProvider aiProvider = aiProviderFactory.getProvider();
+            AIProvider aiProvider = hookPipeline.wrapProvider(aiProviderFactory.getProvider(), null, null);
             if (!aiProvider.isAvailable()) {
                 return "AI提供商不可用，无法分析错误";
             }
@@ -309,6 +398,8 @@ public class CoachAgentImpl implements ICoachAgent {
             String compilerOutput,
             String compactContext,
             String repairHistory,
+            String repairAnalysis,
+            String repairPlan,
             AIProvider aiProvider) {
         String fileName = artifact.getFileName() != null ? artifact.getFileName() : "";
         String filePath = artifact.getFilePath() != null ? artifact.getFilePath() : "";
@@ -316,14 +407,22 @@ public class CoachAgentImpl implements ICoachAgent {
         // pom.xml 走专用 XML 修复流程
         if ("pom.xml".equalsIgnoreCase(fileName) || filePath.endsWith("/pom.xml")
                 || "pom.xml".equalsIgnoreCase(filePath)) {
-            return generatePomFix(artifact, compilerOutput, aiProvider);
+            return generatePomFix(artifact, compilerOutput, repairAnalysis, repairPlan, aiProvider);
         }
 
         String safeContext = (compactContext == null || compactContext.isBlank()) ? "(暂无可用类索引)\n" : compactContext;
         String safeHistory = (repairHistory == null || repairHistory.isBlank()) ? "(首次修复)\n" : repairHistory;
+        String safeAnalysis = (repairAnalysis == null || repairAnalysis.isBlank()) ? "(原因分析为空)\n" : repairAnalysis;
+        String safePlan = (repairPlan == null || repairPlan.isBlank()) ? "(修复计划为空)\n" : repairPlan;
 
-        // fix.txt 模板现在需要4个参数: 修复历史、上下文、代码、错误信息
-        String prompt = String.format(promptTemplateService.coachFixTemplate(), safeHistory, safeContext, artifact.getContent(),
+        // fix.txt 模板现在需要6个参数: 修复历史、上下文、原因分析、修复计划、代码、错误信息
+        String prompt = String.format(
+                promptTemplateService.coachFixTemplate(),
+                safeHistory,
+                safeContext,
+                safeAnalysis,
+                safePlan,
+                artifact.getContent(),
                 compilerOutput);
 
         AIProvider.AIResponse response = aiProvider.generate(prompt,
@@ -376,9 +475,20 @@ public class CoachAgentImpl implements ICoachAgent {
     /**
      * 生成 pom.xml 修复内容
      */
-    private String generatePomFix(G3ArtifactEntity artifact, String compilerOutput, AIProvider aiProvider) {
-        String prompt = String.format(promptTemplateService.coachFixPomXmlTemplate(), artifact.getContent(),
-                compilerOutput);
+    private String generatePomFix(
+            G3ArtifactEntity artifact,
+            String compilerOutput,
+            String repairAnalysis,
+            String repairPlan,
+            AIProvider aiProvider) {
+        String safeAnalysis = (repairAnalysis == null || repairAnalysis.isBlank()) ? "(原因分析为空)\n" : repairAnalysis;
+        String safePlan = (repairPlan == null || repairPlan.isBlank()) ? "(修复计划为空)\n" : repairPlan;
+        String prompt = String.format(
+                promptTemplateService.coachFixPomXmlTemplate(),
+                artifact.getContent(),
+                compilerOutput,
+                safeAnalysis,
+                safePlan);
 
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
@@ -407,16 +517,245 @@ public class CoachAgentImpl implements ICoachAgent {
      * <li>仅用于辅助 AI 判断“类/包是否存在”，不应导致主流程中断。</li>
      * </ul>
      */
-    private String buildSafeCompactContext(G3JobEntity job, Consumer<G3LogEntry> logConsumer) {
+    private String buildSafeCompactContext(
+            G3JobEntity job,
+            List<G3ValidationResultEntity> errors,
+            Consumer<G3LogEntry> logConsumer) {
         try {
             if (job == null || job.getId() == null)
                 return "";
-            String ctx = contextBuilder.buildGlobalContext(job.getId());
-            // 兜底限制：避免 context.md 过大导致 token 浪费/上游超时
-            return truncate(ctx, 8000);
+            // 1. 获取基础上下文 (M2)
+            // 使用 ArtifactMapper 获取当前最新的所有产物
+            List<G3ArtifactEntity> allArtifacts = artifactMapper.selectByJobId(job.getId());
+            // 4k tokens budget for base context
+            String baseContext = contextBuilder.buildCompactContext(job.getId(), allArtifacts, 4000);
+
+            // 2. 构造检索 Query（基于错误信息）
+            String query = buildRagQuery(errors);
+
+            // 3. Job 级 RAG (M6)
+            StringBuilder ragContext = new StringBuilder();
+            if (!query.isBlank()) {
+                var relatedDocs = knowledgeStore.search(query, job.getId(), 5);
+                if (!relatedDocs.isEmpty()) {
+                    ragContext.append("\n\n").append(knowledgeStore.formatForContext(relatedDocs));
+                }
+            }
+
+            // 4. Repo 级 RAG (M6+)
+            if (!query.isBlank()) {
+                var repoDocs = knowledgeStore.searchRepo(query, job.getTenantId(), job.getAppSpecId(), 5);
+                if (!repoDocs.isEmpty()) {
+                    ragContext.append("\n\n").append(knowledgeStore.formatForContext(repoDocs));
+                } else {
+                    // 兜底：使用 Toolset 做关键字搜索（避免纯空上下文）
+                    var fallback = toolsetService.searchWorkspace(job, query, 10, logConsumer);
+                    if (fallback.isSuccess() && fallback.getMatches() != null && !fallback.getMatches().isEmpty()) {
+                        List<String> filePaths = fallback.getMatches().stream()
+                                .map(match -> match.getFilePath())
+                                .distinct()
+                                .limit(5)
+                                .collect(Collectors.toList());
+
+                        var summary = toolsetService.summarizeWorkspaceFiles(
+                                filePaths,
+                                80,
+                                1200,
+                                job,
+                                logConsumer
+                        );
+                        if (summary.isSuccess() && summary.getSummary() != null && !summary.getSummary().isBlank()) {
+                            ragContext.append("\n\n").append(summary.getSummary());
+                        } else {
+                            ragContext.append("\n\n### 相关片段 (Workspace Search)\n");
+                            for (var match : fallback.getMatches()) {
+                                ragContext.append(String.format("#### %s:%d\n```\n%s\n```\n",
+                                        match.getFilePath(), match.getLineNumber(), match.getLine()));
+                            }
+                        }
+                    }
+                }
+            }
+
+            return baseContext + ragContext.toString();
         } catch (Exception e) {
             logConsumer.accept(G3LogEntry.warn(getRole(), "构建可用类索引失败（忽略）: " + e.getMessage()));
             return "";
+        }
+    }
+
+    /**
+     * 构建 RAG 检索 Query。
+     *
+     * <p>目的：</p>
+     * <ul>
+     *   <li>将编译错误与 stderr 聚合为简短检索语句；</li>
+     *   <li>限制长度，避免超出检索预算。</li>
+     * </ul>
+     */
+    private String buildRagQuery(List<G3ValidationResultEntity> errors) {
+        if (errors == null || errors.isEmpty()) {
+            return "";
+        }
+        String query = errors.stream()
+                .map(e -> (e.getParsedErrors() != null ? e.getParsedErrors().toString() : "") + " "
+                        + (e.getStderr() != null ? e.getStderr() : ""))
+                .limit(3)
+                .collect(Collectors.joining(" "));
+
+        if (query.length() > 500) {
+            query = query.substring(0, 500);
+        }
+        return query.trim();
+    }
+
+    /**
+     * 构建修复目标摘要。
+     *
+     * 是什么：对待修复文件做清单化摘要。
+     * 做什么：将文件路径/名称整理为计划与分析输入。
+     * 为什么：让模型明确修复范围，避免生成不相关改动。
+     */
+    private String buildRepairTargetSummary(List<G3ArtifactEntity> errorArtifacts) {
+        if (errorArtifacts == null || errorArtifacts.isEmpty()) {
+            return "(未提供修复目标)";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (G3ArtifactEntity artifact : errorArtifacts) {
+            String filePath = artifact.getFilePath() != null && !artifact.getFilePath().isBlank()
+                    ? artifact.getFilePath()
+                    : artifact.getFileName();
+            sb.append("- ").append(filePath != null ? filePath : "(未知文件)").append("\n");
+        }
+
+        return sb.toString().trim();
+    }
+
+    /**
+     * 构建编译输出摘要。
+     *
+     * 是什么：从验证结果与错误产物中提取可读的错误摘要。
+     * 做什么：合并 stdout/stderr/parsedErrors 作为分析与计划输入。
+     * 为什么：提升模型对错误全貌的理解，减少只看单文件的偏差。
+     */
+    private String buildCompilerOutputSummary(
+            List<G3ValidationResultEntity> validationResults,
+            List<G3ArtifactEntity> errorArtifacts) {
+        StringBuilder sb = new StringBuilder();
+
+        if (validationResults != null) {
+            for (G3ValidationResultEntity result : validationResults) {
+                if (result == null) {
+                    continue;
+                }
+                if (result.getParsedErrors() != null && !result.getParsedErrors().isEmpty()) {
+                    sb.append("解析错误: ").append(result.getParsedErrors()).append("\n");
+                }
+                if (result.getStderr() != null && !result.getStderr().isBlank()) {
+                    sb.append(result.getStderr()).append("\n");
+                }
+                if (result.getStdout() != null && !result.getStdout().isBlank()) {
+                    sb.append(result.getStdout()).append("\n");
+                }
+            }
+        }
+
+        if (sb.length() == 0 && errorArtifacts != null) {
+            for (G3ArtifactEntity artifact : errorArtifacts) {
+                String compilerOutput = artifact.getCompilerOutput();
+                if (compilerOutput != null && !compilerOutput.isBlank()) {
+                    sb.append(compilerOutput).append("\n");
+                }
+            }
+        }
+
+        String summary = sb.toString().trim();
+        if (summary.isBlank()) {
+            summary = "编译输出为空";
+        }
+
+        return truncate(summary, REPAIR_ERROR_SUMMARY_CHARS);
+    }
+
+    /**
+     * 生成修复前原因分析。
+     *
+     * 是什么：面向本轮修复的错误原因分析阶段。
+     * 做什么：基于错误摘要与上下文生成结构化分析文本。
+     * 为什么：确保修复前先明确根因，避免盲目修改。
+     */
+    private String generateRepairAnalysis(
+            String repairTargetSummary,
+            String compilerOutputSummary,
+            String classIndexSummary,
+            String repairHistory,
+            AIProvider aiProvider,
+            Consumer<G3LogEntry> logConsumer) {
+        try {
+            String contextBlock = truncate(classIndexSummary, REPAIR_CONTEXT_SUMMARY_CHARS);
+            String analysisInput = "修复目标文件:\n" + repairTargetSummary
+                    + "\n\n修复历史:\n" + repairHistory
+                    + "\n\n可用类索引摘要:\n" + contextBlock;
+
+            String prompt = String.format(
+                    promptTemplateService.coachAnalysisTemplate(),
+                    analysisInput,
+                    compilerOutputSummary);
+
+            AIProvider.AIResponse response = aiProvider.generate(prompt,
+                    AIProvider.AIRequest.builder()
+                            .temperature(0.1)
+                            .maxTokens(1200)
+                            .build());
+
+            String result = response.content();
+            return result != null && !result.isBlank() ? result.trim() : "原因分析为空";
+        } catch (Exception e) {
+            if (logConsumer != null) {
+                logConsumer.accept(G3LogEntry.warn(getRole(), "原因分析生成失败: " + e.getMessage()));
+            }
+            return "原因分析生成失败: " + e.getMessage();
+        }
+    }
+
+    /**
+     * 生成修复计划。
+     *
+     * 是什么：面向本轮修复的计划阶段。
+     * 做什么：根据原因分析与错误摘要输出可执行的修复步骤。
+     * 为什么：让修复动作可追踪、可验证，避免随机改动。
+     */
+    private String generateRepairPlan(
+            String repairTargetSummary,
+            String compilerOutputSummary,
+            String repairAnalysis,
+            String classIndexSummary,
+            String repairHistory,
+            AIProvider aiProvider,
+            Consumer<G3LogEntry> logConsumer) {
+        try {
+            String contextBlock = truncate(classIndexSummary, REPAIR_CONTEXT_SUMMARY_CHARS);
+            String prompt = String.format(
+                    promptTemplateService.coachPlanTemplate(),
+                    repairTargetSummary,
+                    compilerOutputSummary,
+                    repairAnalysis,
+                    contextBlock + "\n\n修复历史:\n" + repairHistory);
+
+            AIProvider.AIResponse response = aiProvider.generate(prompt,
+                    AIProvider.AIRequest.builder()
+                            .temperature(0.1)
+                            .maxTokens(1200)
+                            .build());
+
+            String result = response.content();
+            return result != null && !result.isBlank() ? result.trim() : "修复计划为空";
+        } catch (Exception e) {
+            if (logConsumer != null) {
+                logConsumer.accept(G3LogEntry.warn(getRole(), "修复计划生成失败: " + e.getMessage()));
+            }
+            return "修复计划生成失败: " + e.getMessage();
         }
     }
 
@@ -689,6 +1028,8 @@ public class CoachAgentImpl implements ICoachAgent {
             String compilerOutput,
             String compactContext,
             String repairHistoryContext,
+            String repairAnalysis,
+            String repairPlan,
             AIProvider aiProvider) {
 
         String fileName = artifact.getFileName() != null ? artifact.getFileName() : "";
@@ -697,15 +1038,23 @@ public class CoachAgentImpl implements ICoachAgent {
         // pom.xml 走专用 XML 修复流程
         if ("pom.xml".equalsIgnoreCase(fileName) || filePath.endsWith("/pom.xml")
                 || "pom.xml".equalsIgnoreCase(filePath)) {
-            return generatePomFix(artifact, compilerOutput, aiProvider);
+            return generatePomFix(artifact, compilerOutput, repairAnalysis, repairPlan, aiProvider);
         }
 
         String safeContext = (compactContext == null || compactContext.isBlank()) ? "(暂无可用类索引)\n" : compactContext;
         String safeHistory = (repairHistoryContext == null || repairHistoryContext.isBlank()) ? "(首次修复)\n"
                 : repairHistoryContext;
+        String safeAnalysis = (repairAnalysis == null || repairAnalysis.isBlank()) ? "(原因分析为空)\n" : repairAnalysis;
+        String safePlan = (repairPlan == null || repairPlan.isBlank()) ? "(修复计划为空)\n" : repairPlan;
 
         // 使用增强版 Prompt（包含修复历史）
-        String prompt = buildEnhancedFixPrompt(safeHistory, safeContext, artifact.getContent(), compilerOutput);
+        String prompt = buildEnhancedFixPrompt(
+                safeHistory,
+                safeContext,
+                safeAnalysis,
+                safePlan,
+                artifact.getContent(),
+                compilerOutput);
 
         AIProvider.AIResponse response = aiProvider.generate(prompt,
                 AIProvider.AIRequest.builder()
@@ -734,6 +1083,8 @@ public class CoachAgentImpl implements ICoachAgent {
     private String buildEnhancedFixPrompt(
             String repairHistory,
             String classIndex,
+            String repairAnalysis,
+            String repairPlan,
             String fileContent,
             String compilerOutput) {
 
@@ -742,6 +1093,12 @@ public class CoachAgentImpl implements ICoachAgent {
                 %s
 
                 ## 可用类索引
+                %s
+
+                ## 原因分析（已完成）
+                %s
+
+                ## 修复计划（必须遵循）
                 %s
 
                 ## 当前文件内容
@@ -763,6 +1120,6 @@ public class CoachAgentImpl implements ICoachAgent {
                 3. 检查方法名是否匹配（例如 Result.error(msg) vs Result.failed(msg)）
                 4. 检查是否缺少 Lombok 注解或 import
                 5. 只输出修复后的完整 Java 文件，不要任何解释
-                """, repairHistory, classIndex, fileContent, compilerOutput);
+                """, repairHistory, classIndex, repairAnalysis, repairPlan, fileContent, compilerOutput);
     }
 }

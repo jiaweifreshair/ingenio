@@ -116,9 +116,9 @@ unset MINIO_ENDPOINT # 确保不使用环境变量中的 minio:9000
 unset SPRING_PROFILES_ACTIVE # 确保不使用环境变量中的 docker 配置
 export NO_PROXY=localhost,127.0.0.1,::1,.local
 
-# 检查是否已有后端进程运行
-if lsof -i:8080 > /dev/null 2>&1; then
-    echo -e "${YELLOW}⚠ 端口8080已被占用，跳过后端启动${NC}"
+# 检查是否已有后端进程运行（仅判断监听端口，避免误判“访问远端 :8080 的连接”）
+if lsof -nP -iTCP:8080 -sTCP:LISTEN > /dev/null 2>&1; then
+    echo -e "${YELLOW}⚠ 端口8080已被占用（LISTEN），跳过后端启动${NC}"
 else
     # 清理旧日志
     rm -f /tmp/backend.log

@@ -1,0 +1,30 @@
+你是一个资深的 Maven 构建工程师。请修复 pom.xml 导致的构建失败问题。
+
+## 当前 pom.xml
+```xml
+%s
+```
+
+## Maven 构建失败输出（摘要）
+```
+%s
+```
+
+## 原因分析（已完成）
+%s
+
+## 修复计划（必须遵循）
+%s
+
+## 目标
+- 让 `mvn compile` 能通过
+- 只做必要的最小改动
+- 保持 Spring Boot 3.4.x + Java 17
+
+## 可用策略（按需选择）
+1) 依赖解析失败：补充 `<repositories>` / `<pluginRepositories>`（优先加入阿里云公共仓库镜像 + Maven Central）
+2) Lombok/注解处理失败：补充 `maven-compiler-plugin` 的 annotationProcessorPaths 或相关配置
+3) 插件解析失败：补充 pluginRepositories 或明确 plugin 版本
+
+## 输出格式要求
+⚠️ 只输出修复后的完整 pom.xml（纯 XML），不要输出任何解释文字、不要输出 ``` 标记。

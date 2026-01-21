@@ -26,6 +26,22 @@ public class BlueprintSpec {
         private String database;
         private String auth;
         private String apiStyle;
+
+        public String getTechStack() {
+            return techStack;
+        }
+
+        public String getDatabase() {
+            return database;
+        }
+
+        public String getAuth() {
+            return auth;
+        }
+
+        public String getApiStyle() {
+            return apiStyle;
+        }
     }
 
     @Data
@@ -34,6 +50,18 @@ public class BlueprintSpec {
         private String tableName;
         private String comment;
         private List<SchemaColumn> columns;
+
+        public String getTableName() {
+            return tableName;
+        }
+
+        public String getComment() {
+            return comment;
+        }
+
+        public List<SchemaColumn> getColumns() {
+            return columns;
+        }
     }
 
     @Data
@@ -44,5 +72,66 @@ public class BlueprintSpec {
         private String constraints;
         private String comment;
         private List<String> columns; // For composite keys
+
+        public String getName() {
+            return name;
+        }
+
+        public String getType() {
+            return type;
+        }
+
+        public String getConstraints() {
+            return constraints;
+        }
+
+        public String getComment() {
+            return comment;
+        }
+
+        public List<String> getColumns() {
+            return columns;
+        }
+    }
+
+    // Manual getters for BlueprintSpec
+    public String getId() {
+        return id;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public String getSubcategory() {
+        return subcategory;
+    }
+
+    public List<String> getKeywords() {
+        return keywords;
+    }
+
+    public String getComplexity() {
+        return complexity;
+    }
+
+    public Constraints getConstraints() {
+        return constraints;
+    }
+
+    public List<SchemaTable> getSchema() {
+        return schema;
+    }
+
+    public List<String> getFeatures() {
+        return features;
     }
 }

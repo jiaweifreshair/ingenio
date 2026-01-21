@@ -4,13 +4,13 @@ import { useMemo, useState } from "react";
 import type { G3JobStatusResponse } from "@/lib/api/g3";
 import { getG3ArtifactContent } from "@/lib/api/g3";
 import type { G3ArtifactContent, G3ArtifactSummary } from "@/types/g3";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CheckCircle2, FileText, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { FileTree } from "./file-tree";
 
 /**
  * G3 结果展示对话框
@@ -46,12 +46,6 @@ export function G3ResultDialog({
   const [contentCache, setContentCache] = useState<Record<string, G3ArtifactContent>>({});
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [contentError, setContentError] = useState<string | null>(null);
-
-  const filtered = useMemo(() => {
-    const kw = keyword.trim().toLowerCase();
-    if (!kw) return artifacts;
-    return artifacts.filter((a) => a.filePath.toLowerCase().includes(kw));
-  }, [artifacts, keyword]);
 
   const selected = selectedId ? contentCache[selectedId] : null;
 
@@ -190,7 +184,7 @@ export function G3ResultDialog({
             </DialogHeader>
 
             <div className="grid grid-cols-12 gap-4 h-[70vh] min-h-0">
-              {/* 左侧：文件列表 */}
+              {/* 左侧：IDE风格文件树 */}
               <div className="col-span-4 flex flex-col min-h-0">
                 <Input
                   value={keyword}
@@ -198,40 +192,24 @@ export function G3ResultDialog({
                   placeholder="搜索文件路径..."
                   className="h-10 bg-white/[0.04] border-white/[0.10] text-white placeholder:text-white/30 rounded-xl"
                 />
-                <ScrollArea className="flex-1 mt-3 rounded-xl border border-white/[0.08] bg-white/[0.02]">
-                  <div className="p-2 space-y-1">
-                    {filtered.map((a) => (
-                      <button
-                        key={a.id}
-                        className={cn(
-                          "w-full text-left px-2 py-2 rounded-lg hover:bg-white/[0.06] transition-colors",
-                          selectedId === a.id && "bg-white/[0.08]"
-                        )}
-                        onClick={async () => {
-                          setSelectedId(a.id);
-                          await ensureContent(a.id);
-                        }}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs text-white/80 truncate">{a.filePath}</span>
-                          {a.hasErrors && (
-                            <Badge className="bg-red-500/10 text-red-300 border border-red-500/20 text-[10px]">
-                              错误
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="mt-0.5 text-[10px] text-white/35">
-                          {a.generatedBy} · round {a.round}
-                        </div>
-                      </button>
-                    ))}
-                    {filtered.length === 0 && (
-                      <div className="py-10 text-center text-xs text-white/40">
-                        没有匹配的文件
-                      </div>
-                    )}
-                  </div>
-                </ScrollArea>
+                <div className="flex-1 mt-3 rounded-xl border border-white/[0.08] bg-white/[0.02] overflow-hidden">
+                  <FileTree
+                    files={artifacts.map((a) => ({
+                      id: a.id,
+                      filePath: a.filePath,
+                      hasErrors: a.hasErrors,
+                      generatedBy: a.generatedBy,
+                      round: a.round,
+                    }))}
+                    selectedId={selectedId}
+                    onSelect={async (id) => {
+                      setSelectedId(id);
+                      await ensureContent(id);
+                    }}
+                    keyword={keyword}
+                    className="h-full"
+                  />
+                </div>
               </div>
 
               {/* 右侧：内容预览 */}

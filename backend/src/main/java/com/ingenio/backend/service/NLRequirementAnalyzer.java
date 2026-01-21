@@ -882,4 +882,354 @@ public class NLRequirementAnalyzer {
         }
         return "Standard Entity";
     }
+
+    /**
+     * 执行单个步骤的分析（用于交互式分析）
+     *
+     * @param requirement 需求描述
+     * @param step 步骤编号 (1-6)
+     * @param stepResults 之前步骤的结果
+     * @param stepFeedback 之前步骤的反馈
+     * @param currentFeedback 当前步骤的反馈
+     * @param progressCallback 进度回调
+     * @return 步骤执行结果
+     */
+    public Object analyzeSingleStep(
+            String requirement,
+            int step,
+            Map<Integer, Object> stepResults,
+            Map<Integer, String> stepFeedback,
+            String currentFeedback,
+            Consumer<AnalysisProgressMessage> progressCallback) {
+
+        log.info("执行单步分析: step={}, hasFeedback={}, previousSteps={}",
+                step, currentFeedback != null, stepResults != null ? stepResults.size() : 0);
+
+        // 构建累积上下文
+        String context = buildCumulativeContext(requirement, step, stepResults, stepFeedback, currentFeedback);
+
+        try {
+            switch (step) {
+                case 1 -> {
+                    // 步骤1：需求语义解析
+                    return executeStep1(requirement, context, progressCallback);
+                }
+                case 2 -> {
+                    // 步骤2：实体关系建模
+                    return executeStep2(requirement, context, progressCallback);
+                }
+                case 3 -> {
+                    // 步骤3：功能意图识别
+                    return executeStep3(requirement, context, progressCallback);
+                }
+                case 4 -> {
+                    // 步骤4：技术架构选型
+                    return executeStep4(requirement, context, progressCallback);
+                }
+                case 5 -> {
+                    // 步骤5：复杂度与风险评估
+                    return executeStep5(requirement, context, progressCallback);
+                }
+                case 6 -> {
+                    // 步骤6：Ultrathink 深度规划
+                    return executeStep6(requirement, context, progressCallback);
+                }
+                default -> throw new IllegalArgumentException("无效的步骤编号: " + step);
+            }
+        } catch (Exception e) {
+            log.error("单步分析失败: step={}", step, e);
+            throw new RuntimeException("步骤 " + step + " 执行失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 构建累积上下文
+     * 将之前步骤的结果和反馈整合到提示词中
+     */
+    private String buildCumulativeContext(
+            String requirement,
+            int step,
+            Map<Integer, Object> stepResults,
+            Map<Integer, String> stepFeedback,
+            String currentFeedback) {
+
+        StringBuilder context = new StringBuilder();
+
+        // 原始需求
+        context.append("# 原始需求\n").append(requirement).append("\n\n");
+
+        // 添加之前步骤的结果和反馈
+        if (stepResults != null && !stepResults.isEmpty()) {
+            for (int i = 1; i < step; i++) {
+                if (stepResults.containsKey(i)) {
+                    context.append("## Step ").append(i).append(" 结果\n");
+                    try {
+                        context.append(objectMapper.writeValueAsString(stepResults.get(i))).append("\n\n");
+                    } catch (Exception e) {
+                        context.append(stepResults.get(i).toString()).append("\n\n");
+                    }
+                }
+
+                if (stepFeedback != null && stepFeedback.containsKey(i)) {
+                    context.append("## Step ").append(i).append(" 用户反馈\n");
+                    context.append(stepFeedback.get(i)).append("\n\n");
+                }
+            }
+        }
+
+        // 当前步骤反馈
+        if (currentFeedback != null && !currentFeedback.isEmpty()) {
+            context.append("## 当前步骤用户反馈\n");
+            context.append(currentFeedback).append("\n\n");
+        }
+
+        // 当前步骤任务描述
+        context.append("## 当前任务 (Step ").append(step).append(")\n");
+        context.append(getStepDescription(step)).append("\n");
+
+        log.debug("构建的累积上下文长度: {} 字符", context.length());
+        return context.toString();
+    }
+
+    /**
+     * 获取步骤描述
+     */
+    private String getStepDescription(int step) {
+        return switch (step) {
+            case 1 -> "需求语义解析: 理解用户需求,提取核心意图和关键信息";
+            case 2 -> "实体关系建模: 基于Step 1的结果,识别数据实体和关系";
+            case 3 -> "功能意图识别: 基于前面步骤的结果,分析功能模块和业务逻辑";
+            case 4 -> "技术架构选型: 基于前面步骤的结果,推荐技术栈和架构方案";
+            case 5 -> "复杂度与风险评估: 基于前面步骤的结果,评估项目规模和风险";
+            case 6 -> "Ultrathink 深度规划: 基于前面所有步骤的结果,生成完整的技术实施蓝图";
+            default -> "未知步骤";
+        };
+    }
+
+    private Object executeStep1(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(1)
+                .stepName("需求语义解析")
+                .status(AnalysisProgressMessage.StepStatus.RUNNING)
+                .description("正在调用AI模型理解您的需求...")
+                .detail("AI正在深度分析您的自然语言描述，提取核心意图和关键信息")
+                .progress(5)
+                .timestamp(Instant.now())
+                .build());
+
+        // 使用累积上下文调用AI
+        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
+
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(1)
+                .stepName("需求语义解析")
+                .status(AnalysisProgressMessage.StepStatus.COMPLETED)
+                .description("AI已成功理解您的需求")
+                .detail("需求解析完成，正在提取结构化信息...")
+                .progress(100)
+                .result(analysisResult)
+                .timestamp(Instant.now())
+                .build());
+
+        return analysisResult;
+    }
+
+    private Object executeStep2(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(2)
+                .stepName("实体关系建模")
+                .status(AnalysisProgressMessage.StepStatus.RUNNING)
+                .description("正在识别核心数据实体与关联...")
+                .detail("基于Step 1的结果,从需求中提取数据模型")
+                .progress(25)
+                .timestamp(Instant.now())
+                .build());
+
+        // 使用累积上下文调用AI
+        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
+        Map<String, Object> entities = extractMap(analysisResult, "entities");
+        Map<String, Object> relationships = extractMap(analysisResult, "relationships");
+
+        Thread.sleep(500);
+
+        Map<String, Object> result = Map.of(
+                "entities", entities,
+                "relationships", relationships,
+                "entitiesCount", entities.size(),
+                "relationshipsCount", relationships.size()
+        );
+
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(2)
+                .stepName("实体关系建模")
+                .status(AnalysisProgressMessage.StepStatus.COMPLETED)
+                .description("数据模型构建完成")
+                .detail(String.format("识别到 %d 个实体，%d 个关系", entities.size(), relationships.size()))
+                .progress(100)
+                .result(result)
+                .timestamp(Instant.now())
+                .build());
+
+        return result;
+    }
+
+    private Object executeStep3(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(3)
+                .stepName("功能意图识别")
+                .status(AnalysisProgressMessage.StepStatus.RUNNING)
+                .description("正在分析所需的功能模块与业务逻辑...")
+                .detail("基于前面步骤的结果,提取CRUD操作、业务流程")
+                .progress(45)
+                .timestamp(Instant.now())
+                .build());
+
+        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
+        Map<String, Object> operations = extractMap(analysisResult, "operations");
+        Map<String, Object> constraints = extractMap(analysisResult, "constraints");
+
+        Thread.sleep(500);
+
+        Map<String, Object> result = Map.of(
+                "operations", operations,
+                "constraints", constraints,
+                "operationsCount", operations.size(),
+                "constraintsCount", constraints.size()
+        );
+
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(3)
+                .stepName("功能意图识别")
+                .status(AnalysisProgressMessage.StepStatus.COMPLETED)
+                .description("功能模块分析完成")
+                .detail(String.format("识别到 %d 个操作，%d 个约束条件", operations.size(), constraints.size()))
+                .progress(100)
+                .result(result)
+                .timestamp(Instant.now())
+                .build());
+
+        return result;
+    }
+
+    private Object executeStep4(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(4)
+                .stepName("技术架构选型")
+                .status(AnalysisProgressMessage.StepStatus.RUNNING)
+                .description("正在从AI分析结果中提取技术栈推荐...")
+                .detail("基于前面步骤的结果,智能匹配技术方案")
+                .progress(65)
+                .timestamp(Instant.now())
+                .build());
+
+        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
+        TechStackRecommendation techStack = recommendTechStack(analysisResult);
+
+        Thread.sleep(300);
+
+        Map<String, Object> result = Map.of(
+                "platform", techStack.getPlatform(),
+                "uiFramework", techStack.getUiFramework(),
+                "backend", techStack.getBackend(),
+                "database", techStack.getDatabase(),
+                "confidence", techStack.getConfidence(),
+                "reason", techStack.getReason()
+        );
+
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(4)
+                .stepName("技术架构选型")
+                .status(AnalysisProgressMessage.StepStatus.COMPLETED)
+                .description("技术方案已确定")
+                .detail(String.format("推荐: %s + %s + %s", techStack.getPlatform(), techStack.getUiFramework(), techStack.getBackend()))
+                .progress(100)
+                .result(result)
+                .timestamp(Instant.now())
+                .build());
+
+        return result;
+    }
+
+    private Object executeStep5(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(5)
+                .stepName("复杂度与风险评估")
+                .status(AnalysisProgressMessage.StepStatus.RUNNING)
+                .description("正在从AI分析结果中提取复杂度评估...")
+                .detail("基于前面步骤的结果,评估项目规模和风险")
+                .progress(85)
+                .timestamp(Instant.now())
+                .build());
+
+        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
+        ComplexityAssessment complexity = assessComplexity(analysisResult);
+        BigDecimal confidenceScore = extractConfidenceScore(analysisResult);
+
+        Thread.sleep(300);
+
+        Map<String, Object> result = Map.of(
+                "complexityLevel", complexity.getLevel().name(),
+                "estimatedDays", complexity.getEstimatedDays(),
+                "estimatedLines", complexity.getEstimatedLines(),
+                "confidenceScore", confidenceScore,
+                "description", complexity.getDescription()
+        );
+
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(5)
+                .stepName("复杂度与风险评估")
+                .status(AnalysisProgressMessage.StepStatus.COMPLETED)
+                .description("评估完成")
+                .detail(String.format("复杂度: %s，预计 %d 天，约 %d 行代码",
+                        complexity.getLevel(), complexity.getEstimatedDays(), complexity.getEstimatedLines()))
+                .progress(100)
+                .result(result)
+                .timestamp(Instant.now())
+                .build());
+
+        return result;
+    }
+
+    private Object executeStep6(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(6)
+                .stepName("Ultrathink 深度规划")
+                .status(AnalysisProgressMessage.StepStatus.RUNNING)
+                .description("正在生成技术实施蓝图...")
+                .detail("基于前面所有步骤的结果,构建系统架构与实施路径")
+                .progress(95)
+                .timestamp(Instant.now())
+                .build());
+
+        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
+        TechStackRecommendation techStack = recommendTechStack(analysisResult);
+        ComplexityAssessment complexity = assessComplexity(analysisResult);
+        String technicalBlueprint = generateTechnicalBlueprint(analysisResult, techStack, complexity);
+
+        Thread.sleep(800);
+
+        Map<String, Object> result = Map.of(
+                "blueprint", technicalBlueprint,
+                "sections", 4
+        );
+
+        progressCallback.accept(AnalysisProgressMessage.builder()
+                .step(6)
+                .stepName("Ultrathink 深度规划")
+                .status(AnalysisProgressMessage.StepStatus.COMPLETED)
+                .description("技术蓝图构建完成")
+                .detail(technicalBlueprint)
+                .progress(100)
+                .result(result)
+                .timestamp(Instant.now())
+                .build());
+
+        return result;
+    }
 }

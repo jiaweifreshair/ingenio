@@ -2,10 +2,6 @@ package com.ingenio.backend.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
 import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.Map;
@@ -27,10 +23,6 @@ import java.util.UUID;
  * @author Ingenio Team
  * @since 2.0.0 Phase 3
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 @TableName(value = "validation_results")
 public class ValidationResultEntity {
 
@@ -150,6 +142,269 @@ public class ValidationResultEntity {
      */
     @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private Instant updatedAt;
+
+    public ValidationResultEntity() {
+    }
+
+    public ValidationResultEntity(UUID id, UUID tenantId, UUID appSpecId, String validationType, String status,
+            Boolean isPassed, Map<String, Object> validationDetails, java.util.List<String> errorMessages,
+            java.util.List<String> warningMessages, Integer qualityScore, Instant startedAt, Instant completedAt,
+            Long durationMs, Map<String, Object> metadata, Instant createdAt, Instant updatedAt) {
+        this.id = id;
+        this.tenantId = tenantId;
+        this.appSpecId = appSpecId;
+        this.validationType = validationType;
+        this.status = status;
+        this.isPassed = isPassed;
+        this.validationDetails = validationDetails;
+        this.errorMessages = errorMessages;
+        this.warningMessages = warningMessages;
+        this.qualityScore = qualityScore;
+        this.startedAt = startedAt;
+        this.completedAt = completedAt;
+        this.durationMs = durationMs;
+        this.metadata = metadata;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
+
+    public static ValidationResultEntityBuilder builder() {
+        return new ValidationResultEntityBuilder();
+    }
+
+    public static class ValidationResultEntityBuilder {
+        private UUID id;
+        private UUID tenantId;
+        private UUID appSpecId;
+        private String validationType;
+        private String status;
+        private Boolean isPassed;
+        private Map<String, Object> validationDetails;
+        private java.util.List<String> errorMessages;
+        private java.util.List<String> warningMessages;
+        private Integer qualityScore;
+        private Instant startedAt;
+        private Instant completedAt;
+        private Long durationMs;
+        private Map<String, Object> metadata;
+        private Instant createdAt;
+        private Instant updatedAt;
+
+        public ValidationResultEntityBuilder id(UUID id) {
+            this.id = id;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder tenantId(UUID tenantId) {
+            this.tenantId = tenantId;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder appSpecId(UUID appSpecId) {
+            this.appSpecId = appSpecId;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder validationType(String validationType) {
+            this.validationType = validationType;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder status(String status) {
+            this.status = status;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder isPassed(Boolean isPassed) {
+            this.isPassed = isPassed;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder validationDetails(Map<String, Object> validationDetails) {
+            this.validationDetails = validationDetails;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder errorMessages(java.util.List<String> errorMessages) {
+            this.errorMessages = errorMessages;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder warningMessages(java.util.List<String> warningMessages) {
+            this.warningMessages = warningMessages;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder qualityScore(Integer qualityScore) {
+            this.qualityScore = qualityScore;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder startedAt(Instant startedAt) {
+            this.startedAt = startedAt;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder completedAt(Instant completedAt) {
+            this.completedAt = completedAt;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder durationMs(Long durationMs) {
+            this.durationMs = durationMs;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder metadata(Map<String, Object> metadata) {
+            this.metadata = metadata;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder createdAt(Instant createdAt) {
+            this.createdAt = createdAt;
+            return this;
+        }
+
+        public ValidationResultEntityBuilder updatedAt(Instant updatedAt) {
+            this.updatedAt = updatedAt;
+            return this;
+        }
+
+        public ValidationResultEntity build() {
+            return new ValidationResultEntity(id, tenantId, appSpecId, validationType, status, isPassed,
+                    validationDetails, errorMessages, warningMessages, qualityScore, startedAt, completedAt, durationMs,
+                    metadata, createdAt, updatedAt);
+        }
+    }
+
+    // Getters and Setters
+    public UUID getId() {
+        return id;
+    }
+
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
+    public UUID getTenantId() {
+        return tenantId;
+    }
+
+    public void setTenantId(UUID tenantId) {
+        this.tenantId = tenantId;
+    }
+
+    public UUID getAppSpecId() {
+        return appSpecId;
+    }
+
+    public void setAppSpecId(UUID appSpecId) {
+        this.appSpecId = appSpecId;
+    }
+
+    public String getValidationType() {
+        return validationType;
+    }
+
+    public void setValidationType(String validationType) {
+        this.validationType = validationType;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public Boolean getIsPassed() {
+        return isPassed;
+    }
+
+    public void setIsPassed(Boolean isPassed) {
+        this.isPassed = isPassed;
+    }
+
+    public Map<String, Object> getValidationDetails() {
+        return validationDetails;
+    }
+
+    public void setValidationDetails(Map<String, Object> validationDetails) {
+        this.validationDetails = validationDetails;
+    }
+
+    public java.util.List<String> getErrorMessages() {
+        return errorMessages;
+    }
+
+    public void setErrorMessages(java.util.List<String> errorMessages) {
+        this.errorMessages = errorMessages;
+    }
+
+    public java.util.List<String> getWarningMessages() {
+        return warningMessages;
+    }
+
+    public void setWarningMessages(java.util.List<String> warningMessages) {
+        this.warningMessages = warningMessages;
+    }
+
+    public Integer getQualityScore() {
+        return qualityScore;
+    }
+
+    public void setQualityScore(Integer qualityScore) {
+        this.qualityScore = qualityScore;
+    }
+
+    public Instant getStartedAt() {
+        return startedAt;
+    }
+
+    public void setStartedAt(Instant startedAt) {
+        this.startedAt = startedAt;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+        this.completedAt = completedAt;
+    }
+
+    public Long getDurationMs() {
+        return durationMs;
+    }
+
+    public void setDurationMs(Long durationMs) {
+        this.durationMs = durationMs;
+    }
+
+    public Map<String, Object> getMetadata() {
+        return metadata;
+    }
+
+    public void setMetadata(Map<String, Object> metadata) {
+        this.metadata = metadata;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(Instant updatedAt) {
+        this.updatedAt = updatedAt;
+    }
 
     /**
      * 验证类型枚举

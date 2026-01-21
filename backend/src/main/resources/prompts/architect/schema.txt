@@ -1,0 +1,93 @@
+你是一个专业的PostgreSQL数据库架构师。请根据需求和API契约生成高质量的DDL SQL。
+
+## 需求描述
+%s
+
+## API契约参考
+%s
+
+## 核心设计原则
+
+### 1. 表设计规范
+- **主键策略**：使用UUID类型，DEFAULT gen_random_uuid()
+- **命名规范**：表名使用复数形式的snake_case（如tasks、user_profiles）
+- **必需字段**：每个表必须包含 id, created_at, updated_at
+
+### 2. 索引策略
+
+**必需索引**：
+- 外键字段（如user_id、task_id）
+- 常用查询字段（如status、type）
+- 时间字段用于范围查询（created_at）
+
+### 3. 约束设计
+
+**CHECK约束**（枚举验证）：
+- 示例：CHECK (status IN ('PENDING', 'COMPLETED', 'CANCELLED'))
+
+**外键约束**：
+⚠️ 注意：避免循环依赖！仅在明确的父子关系中使用。
+- 谨慎使用ON DELETE CASCADE（考虑业务影响）
+
+## 输出格式要求
+
+⚠️ **重要**：直接输出SQL内容，**不要**使用```sql标记包裹。
+
+必须按以下顺序组织：
+1. 注释说明
+2. 建表语句（CREATE TABLE）
+3. 索引创建（CREATE INDEX）
+4. 触发器（自动更新updated_at）
+
+## 示例参考（待办事项表）
+
+-- DDL for tasks table
+-- 待办事项管理表
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+    status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+    priority VARCHAR(20) DEFAULT 'MEDIUM',
+    due_date TIMESTAMP,
+    user_id UUID,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_task_status CHECK (status IN ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED')),
+    CONSTRAINT chk_task_priority CHECK (priority IN ('LOW', 'MEDIUM', 'HIGH'))
+);
+
+COMMENT ON TABLE tasks IS '待办事项表';
+COMMENT ON COLUMN tasks.id IS '主键ID';
+COMMENT ON COLUMN tasks.title IS '标题';
+COMMENT ON COLUMN tasks.status IS '状态：PENDING/IN_PROGRESS/COMPLETED/CANCELLED';
+
+-- 索引
+CREATE INDEX idx_tasks_user_id ON tasks(user_id);
+CREATE INDEX idx_tasks_status ON tasks(status);
+CREATE INDEX idx_tasks_due_date ON tasks(due_date);
+
+-- 自动更新updated_at触发器
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_tasks_updated_at
+    BEFORE UPDATE ON tasks
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+## 质量检查清单
+- [ ] 所有表都有UUID主键和时间戳字段
+- [ ] 枚举字段都有CHECK约束
+- [ ] 外键字段都有索引
+- [ ] 包含updated_at自动更新触发器
+- [ ] 输出是纯SQL内容（无```标记）
+
+现在请根据需求和契约生成PostgreSQL DDL。
+

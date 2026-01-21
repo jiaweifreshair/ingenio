@@ -1,10 +1,108 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { G3LogViewer } from '@/components/generation/G3LogViewer';
 import { queryTemplates } from '@/lib/api/templates';
 import type { Template } from '@/types/template';
 import { Loader2 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { getApiBaseUrl } from '@/lib/api/base-url';
+import { getToken } from '@/lib/auth/token';
+
+/**
+ * 后端统一响应结构
+ */
+interface BackendResult<T> {
+  code?: number;
+  success?: boolean;
+  message?: string;
+  data?: T;
+}
+
+/**
+ * Repo 索引结果
+ */
+interface RepoIndexResult {
+  success: boolean;
+  skipped: boolean;
+  fileCount: number;
+  skippedCount: number;
+  chunkCount: number;
+  message: string;
+}
+
+/**
+ * Repo 语义检索命中
+ */
+interface RepoSearchHit {
+  filePath: string;
+  score: number;
+  content: string;
+}
+
+/**
+ * Toolset 搜索命中
+ */
+interface ToolSearchMatch {
+  filePath: string;
+  lineNumber: number;
+  line: string;
+}
+
+/**
+ * Toolset 搜索结果
+ */
+interface ToolSearchResult {
+  success: boolean;
+  message: string;
+  matches?: ToolSearchMatch[];
+}
+
+/**
+ * Toolset 文件读取结果
+ */
+interface ToolFileReadResult {
+  success: boolean;
+  content?: string;
+  message: string;
+}
+
+/**
+ * Toolset 命令执行结果
+ */
+interface ToolCommandResult {
+  success: boolean;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number;
+  durationMs?: number;
+  message: string;
+  policyDecision?: string;
+  policyReason?: string;
+}
+
+/**
+ * 统一请求后端 Result<T> 并返回 data
+ */
+async function requestBackendResult<T>(url: string, options: RequestInit = {}): Promise<T> {
+  const resp = await fetch(url, options);
+  if (!resp.ok) {
+    throw new Error(`HTTP ${resp.status}`);
+  }
+  const body = await resp.json() as BackendResult<T>;
+  if (body.code && body.code !== 200) {
+    throw new Error(body.message || '后端响应失败');
+  }
+  if (body.success === false) {
+    throw new Error(body.message || '后端响应失败');
+  }
+  if (typeof body.data === 'undefined') {
+    throw new Error(body.message || '后端响应为空');
+  }
+  return body.data;
+}
 
 /**
  * Lab 页面 - G3 引擎测试控制台
@@ -15,10 +113,59 @@ import { Loader2 } from 'lucide-react';
  * - 启动 G3 任务并实时查看日志
  */
 export default function LabPage() {
-  const [requirement, setRequirement] = useState('');
+  const [requirement, setRequirement] = useState(
+    '创建一个安全事故管理应用 (Safety Incident App)。\n' +
+    '功能要求：\n' +
+    '1. 事故上报：员工可以提交事故报告，包含时间、地点、描述、图片等信息。\n' +
+    '2. 审核流程：安全专员审核上报的事故，进行定级和指派。\n' +
+    '3. 处理追踪：被指派的负责人更新处理进度，直至事故关闭。\n' +
+    '4. 统计看板：展示各类型事故的数量、处理状态分布。\n' +
+    '技术要求：\n' +
+    '- 使用 Spring Boot 和 MyBatis-Plus\n' +
+    '- 生成完整的 Entity, Mapper, Service, Controller\n' +
+    '- 包含必要的 DTO 和 API 接口'
+  );
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | undefined>();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(true);
+  const [jobId, setJobId] = useState<string | null>(null);
+
+  const [ragIndexResult, setRagIndexResult] = useState<RepoIndexResult | null>(null);
+  const [ragIndexError, setRagIndexError] = useState<string | null>(null);
+  const [ragIndexLoading, setRagIndexLoading] = useState(false);
+  const [ragQuery, setRagQuery] = useState('G3OrchestratorService');
+  const [ragResults, setRagResults] = useState<RepoSearchHit[]>([]);
+  const [ragSearchLoading, setRagSearchLoading] = useState(false);
+  const [ragSearchError, setRagSearchError] = useState<string | null>(null);
+
+  const [toolQuery, setToolQuery] = useState('G3OrchestratorService');
+  const [toolResults, setToolResults] = useState<ToolSearchMatch[]>([]);
+  const [toolSearchLoading, setToolSearchLoading] = useState(false);
+  const [toolSearchError, setToolSearchError] = useState<string | null>(null);
+
+  const [filePath, setFilePath] = useState('');
+  const [fileReadResult, setFileReadResult] = useState<ToolFileReadResult | null>(null);
+  const [fileReadLoading, setFileReadLoading] = useState(false);
+
+  const [shellCommand, setShellCommand] = useState('rg --version');
+  const [shellResult, setShellResult] = useState<ToolCommandResult | null>(null);
+  const [shellLoading, setShellLoading] = useState(false);
+
+  const apiBaseUrl = getApiBaseUrl();
+
+  /**
+   * 构建后端请求头（携带 Token）
+   */
+  const buildHeaders = useCallback(() => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const token = getToken();
+    if (token) {
+      headers.Authorization = token;
+    }
+    return headers;
+  }, []);
 
   // 加载模板列表
   useEffect(() => {
@@ -37,6 +184,128 @@ export default function LabPage() {
 
   // 找到选中的模板
   const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
+
+  const handleRepoIndex = useCallback(async () => {
+    setRagIndexLoading(true);
+    setRagIndexError(null);
+    try {
+      const result = await requestBackendResult<RepoIndexResult>(
+        `${apiBaseUrl}/v1/g3/knowledge/repo/index`,
+        {
+          method: 'POST',
+          headers: buildHeaders(),
+          body: JSON.stringify({}),
+        }
+      );
+      setRagIndexResult(result);
+    } catch (error) {
+      setRagIndexError(error instanceof Error ? error.message : '索引失败');
+    } finally {
+      setRagIndexLoading(false);
+    }
+  }, [apiBaseUrl, buildHeaders]);
+
+  const handleRepoSearch = useCallback(async () => {
+    const keyword = ragQuery.trim();
+    if (!keyword) return;
+    setRagSearchLoading(true);
+    setRagSearchError(null);
+    try {
+      const result = await requestBackendResult<RepoSearchHit[]>(
+        `${apiBaseUrl}/v1/g3/knowledge/repo/search?q=${encodeURIComponent(keyword)}&topK=5`,
+        {
+          method: 'GET',
+          headers: buildHeaders(),
+        }
+      );
+      setRagResults(result);
+    } catch (error) {
+      setRagSearchError(error instanceof Error ? error.message : '检索失败');
+    } finally {
+      setRagSearchLoading(false);
+    }
+  }, [apiBaseUrl, buildHeaders, ragQuery]);
+
+  const handleToolSearch = useCallback(async () => {
+    const keyword = toolQuery.trim();
+    if (!keyword) return;
+    setToolSearchLoading(true);
+    setToolSearchError(null);
+    try {
+      const result = await requestBackendResult<ToolSearchResult>(
+        `${apiBaseUrl}/v1/g3/tools/search?q=${encodeURIComponent(keyword)}&maxMatches=20`,
+        {
+          method: 'GET',
+          headers: buildHeaders(),
+        }
+      );
+      setToolResults(result.matches || []);
+    } catch (error) {
+      setToolSearchError(error instanceof Error ? error.message : '搜索失败');
+    } finally {
+      setToolSearchLoading(false);
+    }
+  }, [apiBaseUrl, buildHeaders, toolQuery]);
+
+  const handleReadFile = useCallback(async () => {
+    const target = filePath.trim();
+    if (!target) {
+      setFileReadResult({ success: false, message: '请输入文件路径' });
+      return;
+    }
+    setFileReadLoading(true);
+    setFileReadResult(null);
+    try {
+      const result = await requestBackendResult<ToolFileReadResult>(
+        `${apiBaseUrl}/v1/g3/tools/read-file?path=${encodeURIComponent(target)}&maxLines=200`,
+        {
+          method: 'GET',
+          headers: buildHeaders(),
+        }
+      );
+      setFileReadResult(result);
+    } catch (error) {
+      setFileReadResult({
+        success: false,
+        message: error instanceof Error ? error.message : '读取失败',
+      });
+    } finally {
+      setFileReadLoading(false);
+    }
+  }, [apiBaseUrl, buildHeaders, filePath]);
+
+  const handleExecuteCommand = useCallback(async () => {
+    const command = shellCommand.trim();
+    if (!command) return;
+    if (!jobId) {
+      setShellResult({ success: false, message: '请先启动 G3 任务' });
+      return;
+    }
+    setShellLoading(true);
+    setShellResult(null);
+    try {
+      const result = await requestBackendResult<ToolCommandResult>(
+        `${apiBaseUrl}/v1/g3/tools/execute`,
+        {
+          method: 'POST',
+          headers: buildHeaders(),
+          body: JSON.stringify({
+            jobId,
+            command,
+            timeoutSeconds: 15,
+          }),
+        }
+      );
+      setShellResult(result);
+    } catch (error) {
+      setShellResult({
+        success: false,
+        message: error instanceof Error ? error.message : '执行失败',
+      });
+    } finally {
+      setShellLoading(false);
+    }
+  }, [apiBaseUrl, buildHeaders, jobId, shellCommand]);
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
@@ -180,15 +449,176 @@ export default function LabPage() {
               <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">
                 G3 执行日志
               </h2>
-              <div className="text-xs font-mono text-slate-400">
-                {selectedTemplate ? `模板: ${selectedTemplate.name}` : '纯需求模式'}
+              <div className="text-xs font-mono text-slate-400 space-x-2">
+                <span>{selectedTemplate ? `模板: ${selectedTemplate.name}` : '纯需求模式'}</span>
+                <span title={jobId || ''}>
+                  任务ID: {jobId ? `${jobId.slice(0, 8)}...` : '未启动'}
+                </span>
               </div>
             </div>
             <G3LogViewer
               requirement={requirement}
               templateId={selectedTemplateId}
               disabled={!requirement || requirement.trim().length < 10}
+              onJobIdChange={setJobId}
             />
+          </section>
+
+          {/* RAG + Toolset 操作区 */}
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div className="p-6 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">RAG 知识库</h2>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleRepoIndex}
+                  disabled={ragIndexLoading}
+                >
+                  {ragIndexLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : '索引仓库'}
+                </Button>
+              </div>
+              {ragIndexResult && (
+                <div className="text-xs text-slate-500">
+                  {ragIndexResult.success
+                    ? `索引完成：文件 ${ragIndexResult.fileCount}，切片 ${ragIndexResult.chunkCount}`
+                    : ragIndexResult.skipped
+                      ? `索引跳过：${ragIndexResult.message}`
+                      : `索引失败：${ragIndexResult.message}`}
+                </div>
+              )}
+              {ragIndexError && (
+                <div className="text-xs text-red-500">索引失败：{ragIndexError}</div>
+              )}
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={ragQuery}
+                    onChange={(e) => setRagQuery(e.target.value)}
+                    placeholder="输入检索关键词..."
+                  />
+                  <Button size="sm" onClick={handleRepoSearch} disabled={ragSearchLoading}>
+                    {ragSearchLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : '检索'}
+                  </Button>
+                </div>
+                {ragSearchError && (
+                  <div className="text-xs text-red-500">检索失败：{ragSearchError}</div>
+                )}
+                <ScrollArea className="h-56 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3">
+                  {ragResults.length === 0 ? (
+                    <div className="text-xs text-slate-500">暂无检索结果</div>
+                  ) : (
+                    <div className="space-y-3">
+                      {ragResults.map((hit, index) => (
+                        <div key={`${hit.filePath}-${index}`} className="text-xs text-slate-600 dark:text-slate-300">
+                          <div className="font-mono text-[11px] text-indigo-500">{hit.filePath}</div>
+                          <div className="text-[10px] text-slate-400">相似度: {hit.score?.toFixed(3)}</div>
+                          <pre className="mt-1 whitespace-pre-wrap text-[11px] leading-relaxed">
+                            {hit.content}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
+            </div>
+
+            <div className="p-6 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-4">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">Toolset / Shell</h2>
+                <div className="text-xs text-slate-500">
+                  {jobId ? `当前任务: ${jobId.slice(0, 8)}...` : '请先启动任务'}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={toolQuery}
+                    onChange={(e) => setToolQuery(e.target.value)}
+                    placeholder="搜索工作区内容..."
+                  />
+                  <Button size="sm" onClick={handleToolSearch} disabled={toolSearchLoading}>
+                    {toolSearchLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : '搜索'}
+                  </Button>
+                </div>
+                {toolSearchError && (
+                  <div className="text-xs text-red-500">搜索失败：{toolSearchError}</div>
+                )}
+                <ScrollArea className="h-40 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3">
+                  {toolResults.length === 0 ? (
+                    <div className="text-xs text-slate-500">暂无搜索结果</div>
+                  ) : (
+                    <div className="space-y-2">
+                      {toolResults.map((match, index) => (
+                        <div key={`${match.filePath}-${match.lineNumber}-${index}`} className="text-xs text-slate-600 dark:text-slate-300">
+                          <div className="font-mono text-[11px] text-emerald-500">
+                            {match.filePath}:{match.lineNumber}
+                          </div>
+                          <div className="text-[11px] whitespace-pre-wrap">{match.line}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </ScrollArea>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={filePath}
+                    onChange={(e) => setFilePath(e.target.value)}
+                    placeholder="读取文件路径，例如 backend/src/main/java/..."
+                  />
+                  <Button size="sm" onClick={handleReadFile} disabled={fileReadLoading}>
+                    {fileReadLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : '读取'}
+                  </Button>
+                </div>
+                <ScrollArea className="h-40 rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3">
+                  {!fileReadResult ? (
+                    <div className="text-xs text-slate-500">等待读取文件</div>
+                  ) : fileReadResult.success ? (
+                    <pre className="text-[11px] whitespace-pre-wrap leading-relaxed text-slate-700 dark:text-slate-200">
+                      {fileReadResult.content}
+                    </pre>
+                  ) : (
+                    <div className="text-xs text-red-500">读取失败：{fileReadResult.message}</div>
+                  )}
+                </ScrollArea>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <Input
+                    value={shellCommand}
+                    onChange={(e) => setShellCommand(e.target.value)}
+                    placeholder='输入只读命令，例如 rg "G3" -n backend/src'
+                  />
+                  <Button size="sm" onClick={handleExecuteCommand} disabled={shellLoading || !jobId}>
+                    {shellLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : '执行'}
+                  </Button>
+                </div>
+                <div className="rounded-md border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-3 text-xs text-slate-600 dark:text-slate-300">
+                  {!shellResult ? (
+                    <div>等待执行命令</div>
+                  ) : shellResult.success ? (
+                    <div className="space-y-2">
+                      <div>退出码: {shellResult.exitCode}，耗时: {shellResult.durationMs}ms</div>
+                      {shellResult.stdout && (
+                        <pre className="whitespace-pre-wrap text-[11px]">{shellResult.stdout}</pre>
+                      )}
+                      {shellResult.stderr && (
+                        <pre className="whitespace-pre-wrap text-[11px] text-red-500">{shellResult.stderr}</pre>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-red-500">执行失败：{shellResult.message}</div>
+                  )}
+                </div>
+              </div>
+            </div>
           </section>
 
           {/* Agent 角色说明 */}

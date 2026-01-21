@@ -307,3 +307,27 @@ export async function archiveProject(id: string): Promise<void> {
     throw new Error(result.message || result.error || '归档项目失败');
   }
 }
+
+/**
+ * 获取项目执行历史
+ * 查询项目关联的所有生成任务
+ */
+export async function getProjectExecutionHistory(id: string): Promise<import('@/types/project').GenerationTask[]> {
+  const response = await fetch(
+    `${API_BASE_URL}/v1/projects/${id}/execution-history`,
+    buildFetchOptions({ method: 'GET' })
+  );
+
+  if (!response.ok) {
+    throw new Error(`获取执行历史失败: ${response.statusText}`);
+  }
+
+  const raw = await response.json();
+  const result = normalizeApiResponse<import('@/types/project').GenerationTask[]>(raw);
+
+  if (!result.success) {
+    throw new Error(result.message || result.error || '获取执行历史失败');
+  }
+
+  return result.data as import('@/types/project').GenerationTask[];
+}

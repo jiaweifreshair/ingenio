@@ -3,10 +3,6 @@ package com.ingenio.backend.dto.request.validation;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotNull;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.util.Map;
 import java.util.UUID;
@@ -17,10 +13,6 @@ import java.util.UUID;
  * @author Ingenio Team
  * @since 2.0.0 Phase 3
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class QualityGateRequest {
 
     /**
@@ -43,13 +35,90 @@ public class QualityGateRequest {
      */
     @Min(value = 0, message = "覆盖率阈值必须≥0")
     @Max(value = 100, message = "覆盖率阈值必须≤100")
-    @Builder.Default
     private Integer coverageThreshold = 85;
 
     /**
      * 圈复杂度阈值（默认10）
      */
     @Min(value = 0, message = "圈复杂度阈值必须≥0")
-    @Builder.Default
     private Integer complexityThreshold = 10;
+
+    public QualityGateRequest() {
+    }
+
+    public QualityGateRequest(UUID appSpecId, Map<String, Integer> metrics, Integer coverageThreshold,
+            Integer complexityThreshold) {
+        this.appSpecId = appSpecId;
+        this.metrics = metrics;
+        this.coverageThreshold = coverageThreshold != null ? coverageThreshold : 85;
+        this.complexityThreshold = complexityThreshold != null ? complexityThreshold : 10;
+    }
+
+    public static QualityGateRequestBuilder builder() {
+        return new QualityGateRequestBuilder();
+    }
+
+    public static class QualityGateRequestBuilder {
+        private UUID appSpecId;
+        private Map<String, Integer> metrics;
+        private Integer coverageThreshold = 85;
+        private Integer complexityThreshold = 10;
+
+        public QualityGateRequestBuilder appSpecId(UUID appSpecId) {
+            this.appSpecId = appSpecId;
+            return this;
+        }
+
+        public QualityGateRequestBuilder metrics(Map<String, Integer> metrics) {
+            this.metrics = metrics;
+            return this;
+        }
+
+        public QualityGateRequestBuilder coverageThreshold(Integer coverageThreshold) {
+            this.coverageThreshold = coverageThreshold;
+            return this;
+        }
+
+        public QualityGateRequestBuilder complexityThreshold(Integer complexityThreshold) {
+            this.complexityThreshold = complexityThreshold;
+            return this;
+        }
+
+        public QualityGateRequest build() {
+            return new QualityGateRequest(appSpecId, metrics, coverageThreshold, complexityThreshold);
+        }
+    }
+
+    // Getters and Setters
+    public UUID getAppSpecId() {
+        return appSpecId;
+    }
+
+    public void setAppSpecId(UUID appSpecId) {
+        this.appSpecId = appSpecId;
+    }
+
+    public Map<String, Integer> getMetrics() {
+        return metrics;
+    }
+
+    public void setMetrics(Map<String, Integer> metrics) {
+        this.metrics = metrics;
+    }
+
+    public Integer getCoverageThreshold() {
+        return coverageThreshold;
+    }
+
+    public void setCoverageThreshold(Integer coverageThreshold) {
+        this.coverageThreshold = coverageThreshold;
+    }
+
+    public Integer getComplexityThreshold() {
+        return complexityThreshold;
+    }
+
+    public void setComplexityThreshold(Integer complexityThreshold) {
+        this.complexityThreshold = complexityThreshold;
+    }
 }

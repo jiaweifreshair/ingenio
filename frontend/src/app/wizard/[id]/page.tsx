@@ -37,6 +37,9 @@ import { QuickActionCards } from '@/components/wizard/quick-action-cards';
 import { GenerationStats, type GenerationStats as GenerationStatsType } from '@/components/wizard/generation-stats';
 import { useGenerationTask } from '@/hooks/use-generation-task';
 import { useGenerationWebSocket } from '@/hooks/use-generation-websocket';
+import { useToast } from '@/hooks/use-toast';
+import { getToken } from '@/lib/auth/token';
+import { getApiBaseUrl } from '@/lib/api/base-url';
 
 /**
  * 生成任务状态
@@ -80,6 +83,7 @@ export default function WizardPage() {
   const params = useParams();
   const router = useRouter();
   const appSpecId = params.id as string;
+  const { toast } = useToast();
 
   // 使用任务状态管理Hook
   const {
@@ -136,6 +140,77 @@ export default function WizardPage() {
 
   // 合并连接状态
   const isConnected = isApiConnected || isWebSocketConnected;
+
+  // 处理下载
+  const handleDownload = useCallback(async () => {
+    const currentAppSpecId = task.appSpecId || taskStatus?.appSpecId;
+    if (!currentAppSpecId) {
+      toast({
+        variant: 'destructive',
+        title: '下载失败',
+        description: '未找到应用ID',
+      });
+      return;
+    }
+
+    try {
+      toast({
+        title: '正在打包下载...',
+        description: '请稍候，正在生成ZIP文件',
+      });
+
+      const token = getToken();
+      const baseUrl = getApiBaseUrl();
+      const url = `${baseUrl}/v1/timemachine/appspec/${currentAppSpecId}/download-latest`;
+
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'Authorization': token || '',
+        },
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        console.error('Download failed:', text);
+        throw new Error(response.statusText || '下载失败');
+      }
+
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+
+      // 从响应头获取文件名
+      const disposition = response.headers.get('Content-Disposition');
+      let filename = `ingenio-app-${currentAppSpecId}.zip`;
+      if (disposition && disposition.indexOf('attachment') !== -1) {
+        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
+        const matches = filenameRegex.exec(disposition);
+        if (matches != null && matches[1]) {
+          filename = matches[1].replace(/['"]/g, '');
+        }
+      }
+
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(downloadUrl);
+      document.body.removeChild(a);
+
+      toast({
+        title: '下载成功',
+        description: '文件已开始下载',
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: '下载失败',
+        description: '无法下载应用代码，请稍后重试',
+      });
+    }
+  }, [taskStatus?.appSpecId, toast]);
 
   // 状态管理
   const [task, setTask] = useState<GenerationTask>({
@@ -451,7 +526,7 @@ export default function WizardPage() {
               <QuickActionCards
                 appId={task.appSpecId || taskStatus?.appSpecId || ''}
                 projectId={task.appSpecId || taskStatus?.appSpecId || ''}
-                onDownload={() => taskStatus?.downloadUrl && window.open(taskStatus.downloadUrl, '_blank')}
+                onDownload={handleDownload}
                 onShare={() => {}}
               />
             </div>
@@ -551,11 +626,11 @@ export default function WizardPage() {
 
   return (
     <div className="h-screen bg-background">
-      {/* 顶部标题栏 */}
-      <div className="border-b bg-background px-6 py-4">
-        <div className="flex items-center gap-4">
-          <h1 className="text-xl font-semibold">AppSpec 生成向导</h1>
-          <Badge variant="outline" className="text-sm">
+      {/* 顶部标题栏 - 压缩高度 */}
+      <div className="border-b bg-background px-4 py-2">
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-semibold">AppSpec 生成向导</h1>
+          <Badge variant="outline" className="text-xs">
             {task.status === 'generating' ? '生成中' : task.status === 'completed' ? '已完成' : '待配置'}
           </Badge>
           {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
@@ -565,8 +640,8 @@ export default function WizardPage() {
         </div>
       </div>
 
-      {/* 分屏布局 */}
-      <div className="h-[calc(100vh-73px)]">
+      {/* 分屏布局 - 扩大工作区高度 */}
+      <div className="h-[calc(100vh-49px)]">
         <SplitLayout
           leftContent={
             currentStepIndex === 0 ? (

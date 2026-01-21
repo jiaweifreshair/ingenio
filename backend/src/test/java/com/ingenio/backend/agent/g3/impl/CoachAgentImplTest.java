@@ -7,6 +7,13 @@ import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
+import com.ingenio.backend.prompt.PromptTemplateService;
+import com.ingenio.backend.service.g3.G3ContextBuilder;
+import com.ingenio.backend.service.g3.G3ToolsetService;
+import com.ingenio.backend.service.g3.G3ToolsetService.SearchResult;
+import com.ingenio.backend.service.g3.hooks.G3HookPipeline;
+import com.ingenio.backend.service.g3.G3KnowledgeStore;
+import com.ingenio.backend.mapper.g3.G3ArtifactMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -42,6 +49,24 @@ class CoachAgentImplTest {
     private AIProvider aiProvider;
 
     @Mock
+    private PromptTemplateService promptTemplateService;
+
+    @Mock
+    private G3ContextBuilder contextBuilder;
+
+    @Mock
+    private G3ArtifactMapper artifactMapper;
+
+    @Mock
+    private G3KnowledgeStore knowledgeStore;
+
+    @Mock
+    private G3ToolsetService toolsetService;
+
+    @Mock
+    private G3HookPipeline hookPipeline;
+
+    @Mock
     private Consumer<G3LogEntry> logConsumer;
 
     @InjectMocks
@@ -55,6 +80,17 @@ class CoachAgentImplTest {
     @BeforeEach
     void setUp() {
         testJobId = UUID.randomUUID();
+
+        // 说明：部分用例不会触发 AI 调用或提示词拼装，这里使用 lenient 避免 Strict Stubs 因“未使用桩”报错。
+        lenient().when(promptTemplateService.coachAnalysisTemplate()).thenReturn("分析\\n%s\\n%s");
+        lenient().when(promptTemplateService.coachFixTemplate()).thenReturn("修复\\n%s\\n%s\\n%s");
+        lenient().when(promptTemplateService.coachFixPomXmlTemplate()).thenReturn("pom.xml\\n%s\\n%s");
+        lenient().when(contextBuilder.buildGlobalContext(any())).thenReturn("# 可用类索引\\n");
+        lenient().when(knowledgeStore.search(anyString(), any(), anyInt())).thenReturn(List.of());
+        lenient().when(knowledgeStore.searchRepo(anyString(), any(), any(), anyInt())).thenReturn(List.of());
+        lenient().when(toolsetService.searchWorkspace(any(), anyString(), anyInt(), any()))
+                .thenReturn(SearchResult.success(new ArrayList<>()));
+        lenient().when(hookPipeline.wrapProvider(any(), any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
 
         testJob = G3JobEntity.builder()
                 .id(testJobId)

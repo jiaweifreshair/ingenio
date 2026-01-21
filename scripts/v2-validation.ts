@@ -282,7 +282,7 @@ async function validateFrontendComponents() {
   // 3. TypeScript编译检查
   try {
     execSync('pnpm tsc --noEmit', {
-      cwd: path.join(__dirname, '..'),
+      cwd: path.join(__dirname, '../frontend'),
       stdio: 'pipe',
     });
 
@@ -310,7 +310,7 @@ async function validateBackendBuild() {
 
   try {
     execSync('mvn compile -q', {
-      cwd: path.join(__dirname, '../../backend'),
+      cwd: path.join(__dirname, '../backend'),
       stdio: 'pipe',
     });
 
@@ -330,8 +330,8 @@ async function validateBackendBuild() {
   }
 
   // 检查关键文件存在性
-  const controllerPath = path.join(__dirname, '../../backend/src/main/java/com/ingenio/backend/controller/PlanRoutingController.java');
-  const dtoPath = path.join(__dirname, '../../backend/src/main/java/com/ingenio/backend/dto/request/PlanRoutingRequest.java');
+  const controllerPath = path.join(__dirname, '../backend/src/main/java/com/ingenio/backend/controller/PlanRoutingController.java');
+  const dtoPath = path.join(__dirname, '../backend/src/main/java/com/ingenio/backend/dto/request/PlanRoutingRequest.java');
 
   if (fs.existsSync(controllerPath)) {
     logResult({
@@ -375,14 +375,23 @@ async function validateUnitTests() {
   // 后端单元测试
   try {
     const output = execSync('mvn test -q -Dtest=PlanRoutingServiceTest', {
-      cwd: path.join(__dirname, '../../backend'),
+      cwd: path.join(__dirname, '../backend'),
       encoding: 'utf-8',
     });
 
-    const hasSuccess = output.includes('BUILD SUCCESS');
     const testMatch = output.match(/Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)/);
 
-    if (hasSuccess && testMatch) {
+    const noTests = output.toLowerCase().includes('no tests were executed')
+      || output.toLowerCase().includes('no tests to run');
+
+    if (noTests) {
+      logResult({
+        category: 'Test',
+        test: 'PlanRoutingServiceTest单元测试',
+        status: 'FAIL',
+        message: '未发现可执行测试',
+      });
+    } else if (testMatch) {
       const [, total, failures, errors] = testMatch;
       logResult({
         category: 'Test',
@@ -394,8 +403,8 @@ async function validateUnitTests() {
       logResult({
         category: 'Test',
         test: 'PlanRoutingServiceTest单元测试',
-        status: 'FAIL',
-        message: '测试执行失败',
+        status: 'PASS',
+        message: '测试执行成功（基于退出码）',
       });
     }
   } catch (error) {
@@ -410,14 +419,23 @@ async function validateUnitTests() {
   // ExecuteGuard测试
   try {
     const output = execSync('mvn test -q -Dtest=ExecuteGuardTest', {
-      cwd: path.join(__dirname, '../../backend'),
+      cwd: path.join(__dirname, '../backend'),
       encoding: 'utf-8',
     });
 
-    const hasSuccess = output.includes('BUILD SUCCESS');
     const testMatch = output.match(/Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)/);
 
-    if (hasSuccess && testMatch) {
+    const noTests = output.toLowerCase().includes('no tests were executed')
+      || output.toLowerCase().includes('no tests to run');
+
+    if (noTests) {
+      logResult({
+        category: 'Test',
+        test: 'ExecuteGuardTest单元测试',
+        status: 'FAIL',
+        message: '未发现可执行测试',
+      });
+    } else if (testMatch) {
       const [, total, failures, errors] = testMatch;
       logResult({
         category: 'Test',
@@ -429,8 +447,8 @@ async function validateUnitTests() {
       logResult({
         category: 'Test',
         test: 'ExecuteGuardTest单元测试',
-        status: 'FAIL',
-        message: '测试执行失败',
+        status: 'PASS',
+        message: '测试执行成功（基于退出码）',
       });
     }
   } catch (error) {

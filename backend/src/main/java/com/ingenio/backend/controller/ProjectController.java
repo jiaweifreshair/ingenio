@@ -515,6 +515,44 @@ public class ProjectController {
     }
 
     /**
+     * 获取项目执行历史
+     * 查询项目关联的所有生成任务
+     *
+     * @param id 项目ID
+     * @return 执行历史列表
+     */
+    @SaCheckLogin
+    @GetMapping("/{id}/execution-history")
+    public Result<java.util.List<GenerationTaskEntity>> getExecutionHistory(@PathVariable UUID id) {
+        // 获取租户ID
+        String userIdStr = StpUtil.getLoginIdAsString();
+        String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
+        UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : UUID.fromString(userIdStr);
+
+        log.info("获取项目执行历史: projectId={}, tenantId={}", id, tenantId);
+
+        // 验证项目存在且属于当前租户
+        ProjectEntity project = projectService.getByIdAndTenantId(id, tenantId);
+        if (project == null) {
+            log.warn("项目不存在: id={}", id);
+            throw new BusinessException(ErrorCode.PROJECT_NOT_FOUND);
+        }
+
+        // 查询项目关联的所有生成任务
+        LambdaQueryWrapper<GenerationTaskEntity> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(GenerationTaskEntity::getTenantId, tenantId)
+                .and(w -> w.eq(GenerationTaskEntity::getAppSpecId, project.getAppSpecId())
+                        .or()
+                        .like(GenerationTaskEntity::getUserRequirement, project.getName()))
+                .orderByDesc(GenerationTaskEntity::getCreatedAt);
+
+        java.util.List<GenerationTaskEntity> tasks = generationTaskMapper.selectList(wrapper);
+
+        log.info("获取项目执行历史成功: projectId={}, taskCount={}", id, tasks.size());
+        return Result.success(tasks);
+    }
+
+    /**
      * 将ProjectEntity转换为ProjectResponse
      *
      * @param project 项目实体

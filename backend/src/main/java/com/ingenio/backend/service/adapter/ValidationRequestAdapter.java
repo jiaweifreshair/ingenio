@@ -4,7 +4,8 @@ import com.ingenio.backend.dto.CodeGenerationResult;
 import com.ingenio.backend.dto.CodeGenerationResult.GeneratedFile;
 import com.ingenio.backend.dto.request.validation.CompileValidationRequest;
 import com.ingenio.backend.dto.request.validation.TestValidationRequest;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -27,9 +28,10 @@ import java.util.Map;
  * @author Ingenio Team
  * @since 2.0.0 Phase 1
  */
-@Slf4j
 @Component
 public class ValidationRequestAdapter {
+
+    private static final Logger log = LoggerFactory.getLogger(ValidationRequestAdapter.class);
 
     /**
      * 将CompileValidationRequest转换为CodeGenerationResult

@@ -19,6 +19,7 @@ import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Sparkles, Zap } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { PaywallGuard } from '@/components/billing/paywall-guard';
 
 /**
  * FormActions组件Props
@@ -92,45 +93,47 @@ export function FormActions({
           V2.0智能创建（推荐）
         </Button>
 
-        {/* 完整生成按钮（保留兼容） */}
-        <Button
-          type="submit"
-          onClick={onFullGeneration}
-          disabled={isLoading || !isValid}
-          size="lg"
-          className="h-14 flex-1 gap-2 rounded-2xl text-base font-semibold shadow-lg transition-all hover:shadow-xl"
-        >
-          {isLoading ? (
-            <>
-              <svg
-                className="h-5 w-5 animate-spin"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-              AI正在分析你的需求...
-            </>
-          ) : (
-            <>
-              <Sparkles className="h-5 w-5" />
-              直接生成
-            </>
-          )}
-        </Button>
+        {/* 完整生成按钮（需要付费） */}
+        <PaywallGuard requiredCredits={1}>
+          <Button
+            type="submit"
+            onClick={onFullGeneration}
+            disabled={isLoading || !isValid}
+            size="lg"
+            className="h-14 flex-1 gap-2 rounded-2xl text-base font-semibold shadow-lg transition-all hover:shadow-xl"
+          >
+            {isLoading ? (
+              <>
+                <svg
+                  className="h-5 w-5 animate-spin"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                AI正在分析你的需求...
+              </>
+            ) : (
+              <>
+                <Sparkles className="h-5 w-5" />
+                直接生成
+              </>
+            )}
+          </Button>
+        </PaywallGuard>
       </div>
 
       {/* 快捷提示 */}

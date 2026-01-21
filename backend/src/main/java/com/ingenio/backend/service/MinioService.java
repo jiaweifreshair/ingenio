@@ -33,6 +33,18 @@ public interface MinioService {
     String uploadFile(String objectName, InputStream inputStream, String contentType, long size, Map<String, String> metadata);
 
     /**
+     * 流式上传文件（不需要提前知道文件总大小）
+     *
+     * @param objectName 对象名称（文件路径）
+     * @param inputStream 输入流（可边写边传）
+     * @param contentType 内容类型
+     * @param partSize 分片大小（字节），用于MinIO分片上传
+     * @param metadata 自定义元数据
+     * @return 文件访问URL
+     */
+    String uploadStream(String objectName, InputStream inputStream, String contentType, long partSize, Map<String, String> metadata);
+
+    /**
      * 下载文件
      *
      * @param objectName 对象名称（文件路径）

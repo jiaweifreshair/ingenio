@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS g3_jobs (
     requirement TEXT NOT NULL,                            -- 原始需求文本
     status VARCHAR(50) NOT NULL DEFAULT 'QUEUED',         -- 任务状态：QUEUED/PLANNING/CODING/TESTING/COMPLETED/FAILED
     current_round INTEGER NOT NULL DEFAULT 0,             -- 当前修复轮次（0表示首次生成）
-    max_rounds INTEGER NOT NULL DEFAULT 3,                -- 最大修复轮次限制
+    max_rounds INTEGER NOT NULL DEFAULT 20,                -- 最大修复轮次限制
 
     -- 契约相关
     contract_yaml TEXT,                                   -- OpenAPI契约YAML（由Architect生成）

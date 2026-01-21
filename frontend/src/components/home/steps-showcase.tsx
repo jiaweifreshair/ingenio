@@ -1,3 +1,7 @@
+"use client";
+
+import { useLanguage } from "@/contexts/LanguageContext";
+
 /**
  * 步骤接口
  */
@@ -10,41 +14,42 @@ interface Step {
   description: string;
 }
 
-/**
- * 三步法数据
- */
-const steps: ReadonlyArray<Step> = [
-  {
-    number: 1,
-    title: "描述需求",
-    description: "用一句话告诉系统你要做什么。",
-  },
-  {
-    number: 2,
-    title: "需求分析",
-    description: "AI智能拆解业务逻辑，生成思维导图与架构方案。",
-  },
-  {
-    number: 3,
-    title: "一键发布",
-    description: "发布到网页/小程序，立刻投入使用。",
-  },
-] as const;
+// Removed static steps array
 
 /**
  * StepsShowcase组件
  * 三步创建流程展示
  */
 export function StepsShowcase(): React.ReactElement {
+  const { t } = useLanguage();
+
+  const steps: ReadonlyArray<Step> = [
+    {
+      number: 1,
+      title: t('steps.step1_title'),
+      description: t('steps.step1_desc'),
+    },
+    {
+      number: 2,
+      title: t('steps.step2_title'),
+      description: t('steps.step2_desc'),
+    },
+    {
+      number: 3,
+      title: t('steps.step3_title'),
+      description: t('steps.step3_desc'),
+    },
+  ] as const;
+
   return (
     <section id="how" className="w-full py-12 bg-slate-50/50 dark:bg-slate-950/50">
       <div className="container mx-auto px-6">
         <div className="mx-auto flex max-w-[58rem] flex-col items-center space-y-4 text-center mb-10">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground tracking-tight">
-            简单三步，即刻上线
+            {t('steps.title')}
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl">
-            摒弃繁琐的配置，专注于你的核心创意
+            {t('steps.subtitle')}
           </p>
         </div>
 

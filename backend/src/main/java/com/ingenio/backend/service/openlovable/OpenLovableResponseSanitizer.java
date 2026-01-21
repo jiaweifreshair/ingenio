@@ -175,7 +175,7 @@ public final class OpenLovableResponseSanitizer {
      * 提取 AI 输出中的所有文件块
      *
      * 是什么：解析 <file path="...">...</file> 片段并结构化返回。
-     * 做什么：供 apply 阶段构建“纯文件响应”与后续校验。
+     * 做什么：供 apply 阶段构建"纯文件响应"与后续校验。
      * 为什么：避免非文件文本干扰上游解析与自动修复。
      */
     public static List<FileBlock> extractFileBlocks(String response) {
@@ -205,7 +205,44 @@ public final class OpenLovableResponseSanitizer {
             orderedBlocks.put(normalizedPath, block);
         }
 
-        return List.copyOf(orderedBlocks.values());
+        List<FileBlock> blocks = List.copyOf(orderedBlocks.values());
+
+        // 检测未标记代码：如果没有文件块但响应看起来像代码，记录警告
+        if (blocks.isEmpty() && looksLikeCode(response)) {
+            log.warn("检测到未标记代码：AI返回了代码但没有使用 <file> 标签包裹。响应长度: {}, 前200字符: {}",
+                response.length(),
+                response.substring(0, Math.min(200, response.length())));
+        }
+
+        // 记录Prompt合规率指标
+        log.info("OpenLovable响应分析: 文件数={}, 响应长度={}, 包含未标记代码={}",
+            blocks.size(), response.length(), blocks.isEmpty() && looksLikeCode(response));
+
+        return blocks;
+    }
+
+    /**
+     * 检测响应是否看起来像代码
+     *
+     * 是什么：启发式检测方法，判断文本是否包含代码特征。
+     * 做什么：检查常见的代码关键词和模式。
+     * 为什么：用于识别AI返回了代码但没有使用文件标签的情况。
+     */
+    private static boolean looksLikeCode(String response) {
+        if (response == null || response.isBlank()) {
+            return false;
+        }
+
+        // 检查常见的代码关键词
+        return response.contains("import ") ||
+               response.contains("export ") ||
+               response.contains("function ") ||
+               response.contains("const ") ||
+               response.contains("class ") ||
+               response.contains("interface ") ||
+               response.contains("return (") ||
+               response.contains("useState") ||
+               response.contains("useEffect");
     }
 
     /**
@@ -362,10 +399,10 @@ public final class OpenLovableResponseSanitizer {
      * 检测文件内容是否被截断
      *
      * 检测模式:
-     * 1. 单独一行的"..."或"…"
-     * 2. 行尾的"// ..."或"// …"
-     * 3. 注释块"/* ... */"或"/* … */"
-     * 4. 文件末尾的"..."或"…"
+     * 1. 单独一行的省略号
+     * 2. 行尾的注释省略号
+     * 3. 注释块中的省略号
+     * 4. 文件末尾的省略号
      */
     private static boolean isTruncated(String content) {
         if (content == null || content.isBlank()) {

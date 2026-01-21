@@ -8,41 +8,48 @@ import java.util.List;
 /**
  * 数据库索引定义
  *
- * <p>表示一个数据库索引，包括索引名、索引字段、索引类型等</p>
+ * <p>
+ * 表示一个数据库索引，包括索引名、索引字段、索引类型等
+ * </p>
  *
- * <p>索引类型说明：</p>
+ * <p>
+ * 索引类型说明：
+ * </p>
  * <ul>
- *   <li>BTREE：B树索引（默认，适用于大部分查询场景）</li>
- *   <li>HASH：哈希索引（适用于等值查询）</li>
- *   <li>GIN：GIN索引（适用于全文搜索、数组、JSONB）</li>
- *   <li>GIST：GIST索引（适用于地理空间数据）</li>
+ * <li>BTREE：B树索引（默认，适用于大部分查询场景）</li>
+ * <li>HASH：哈希索引（适用于等值查询）</li>
+ * <li>GIN：GIN索引（适用于全文搜索、数组、JSONB）</li>
+ * <li>GIST：GIST索引（适用于地理空间数据）</li>
  * </ul>
  *
- * <p>使用示例：</p>
+ * <p>
+ * 使用示例：
+ * </p>
+ * 
  * <pre>{@code
  * // 单列索引
  * Index emailIndex = Index.builder()
- *     .name("users_email_idx")
- *     .columns(List.of("email"))
- *     .type(IndexType.BTREE)
- *     .unique(true)
- *     .build();
+ *         .name("users_email_idx")
+ *         .columns(List.of("email"))
+ *         .type(IndexType.BTREE)
+ *         .unique(true)
+ *         .build();
  *
  * // 复合索引
  * Index userPostIndex = Index.builder()
- *     .name("posts_user_created_idx")
- *     .columns(List.of("user_id", "created_at"))
- *     .type(IndexType.BTREE)
- *     .unique(false)
- *     .build();
+ *         .name("posts_user_created_idx")
+ *         .columns(List.of("user_id", "created_at"))
+ *         .type(IndexType.BTREE)
+ *         .unique(false)
+ *         .build();
  *
  * // JSONB索引
  * Index metadataIndex = Index.builder()
- *     .name("posts_metadata_gin_idx")
- *     .columns(List.of("metadata"))
- *     .type(IndexType.GIN)
- *     .unique(false)
- *     .build();
+ *         .name("posts_metadata_gin_idx")
+ *         .columns(List.of("metadata"))
+ *         .type(IndexType.GIN)
+ *         .unique(false)
+ *         .build();
  * }</pre>
  *
  * @author Justin
@@ -84,7 +91,9 @@ public class Index {
     /**
      * 索引类型枚举
      *
-     * <p>PostgreSQL支持的索引类型</p>
+     * <p>
+     * PostgreSQL支持的索引类型
+     * </p>
      */
     public enum IndexType {
         /**
@@ -135,7 +144,10 @@ public class Index {
     /**
      * 生成PostgreSQL CREATE INDEX语句
      *
-     * <p>示例输出：</p>
+     * <p>
+     * 示例输出：
+     * </p>
+     * 
      * <pre>
      * CREATE UNIQUE INDEX users_email_idx ON users USING BTREE (email);
      * CREATE INDEX posts_user_created_idx ON users USING BTREE (user_id, created_at);
@@ -199,5 +211,21 @@ public class Index {
      */
     public String getPrimaryColumn() {
         return (columns != null && !columns.isEmpty()) ? columns.get(0) : null;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public List<String> getColumns() {
+        return columns;
+    }
+
+    public IndexType getType() {
+        return type;
+    }
+
+    public boolean isUnique() {
+        return unique;
     }
 }

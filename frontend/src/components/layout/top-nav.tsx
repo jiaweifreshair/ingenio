@@ -19,14 +19,25 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { User, Bell, Menu, LogIn, UserPlus, LogOut } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { User, Bell, Menu, LogIn, UserPlus, LogOut, CreditCard } from "lucide-react";
 import { getUnreadCount } from "@/lib/api/notifications";
 import { getToken } from "@/lib/auth/token";
 import { logout } from "@/lib/api/auth";
 import { useRouter } from "next/navigation";
+import { useLanguage } from "@/contexts/LanguageContext";
+import { LanguageSwitcher } from "./language-switcher";
 
 export function TopNav(): React.ReactElement {
   const router = useRouter();
+  const { t } = useLanguage();
   const [unreadCount, setUnreadCount] = React.useState(0);
   const [mobileMenuOpen, setMobileMenuOpen] = React.useState(false);
   const [pollEnabled, setPollEnabled] = React.useState(true); // 控制轮询开关
@@ -116,8 +127,14 @@ export function TopNav(): React.ReactElement {
    * - 产品功能介绍
    */
   const navLinks = [
-    { href: "/dashboard", label: "我的项目" },   // ✅ 修复: /projects → /dashboard（实际路由）
-    { href: "/templates", label: "应用模版" },     // ✅ 保留: 快速启动
+    { href: "/dashboard", label: t('nav.projects') },
+    { href: "/templates", label: t('nav.templates') },
+    ...(process.env.NODE_ENV === "development"
+      ? [
+          { href: "/benchmarks", label: "Benchmarks 对照" },
+          { href: "/examples", label: "TSX 示例" },
+        ]
+      : []),
   ];
 
   return (
@@ -150,7 +167,7 @@ export function TopNav(): React.ReactElement {
             <SheetTrigger asChild>
               <Button variant="ghost" size="icon" className="ml-2 rounded-full">
                 <Menu className="h-5 w-5" />
-                <span className="sr-only">打开菜单</span>
+                <span className="sr-only">{t('nav.menu')}</span>
               </Button>
             </SheetTrigger>
             <SheetContent side="left" className="w-[280px] sm:w-[320px]">
@@ -177,6 +194,9 @@ export function TopNav(): React.ReactElement {
 
               {/* 快捷操作按钮 */}
               <div className="flex flex-col space-y-2">
+                <div className="px-4 py-2">
+                    <LanguageSwitcher />
+                </div>
                 {isLoggedIn ? (
                   // 已登录：显示免费开始、通知、个人中心
                   <>
@@ -186,7 +206,7 @@ export function TopNav(): React.ReactElement {
                         data-location="mobile-menu"
                         onClick={() => setMobileMenuOpen(false)}
                       >
-                        免费开始
+                        {t('nav.getStarted')}
                       </Link>
                     </Button>
                     <Button
@@ -199,7 +219,7 @@ export function TopNav(): React.ReactElement {
                         onClick={() => setMobileMenuOpen(false)}
                       >
                         <Bell className="h-4 w-4 mr-2" />
-                        通知
+                        {t('nav.notifications')}
                         {unreadCount > 0 && (
                           <Badge variant="destructive" className="ml-auto">
                             {unreadCount > 99 ? "99+" : unreadCount}
@@ -213,11 +233,24 @@ export function TopNav(): React.ReactElement {
                       asChild
                     >
                       <Link
+                        href="/billing"
+                        onClick={() => setMobileMenuOpen(false)}
+                      >
+                        <CreditCard className="h-4 w-4 mr-2" />
+                        {t('nav.billing')}
+                      </Link>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="w-full justify-start rounded-full"
+                      asChild
+                    >
+                      <Link
                         href="/account"
                         onClick={() => setMobileMenuOpen(false)}
                       >
                         <User className="h-4 w-4 mr-2" />
-                        个人中心
+                        {t('nav.profile')}
                       </Link>
                     </Button>
                     <Button
@@ -227,7 +260,7 @@ export function TopNav(): React.ReactElement {
                       disabled={isLoggingOut}
                     >
                       <LogOut className="h-4 w-4 mr-2" />
-                      {isLoggingOut ? "退出中..." : "退出登录"}
+                      {isLoggingOut ? t('nav.loggingOut') : t('nav.logout')}
                     </Button>
                   </>
                 ) : (
@@ -239,7 +272,7 @@ export function TopNav(): React.ReactElement {
                         onClick={() => setMobileMenuOpen(false)}
                       >
                         <LogIn className="h-4 w-4 mr-2" />
-                        登录
+                        {t('nav.login')}
                       </Link>
                     </Button>
                     <Button
@@ -252,7 +285,7 @@ export function TopNav(): React.ReactElement {
                         onClick={() => setMobileMenuOpen(false)}
                       >
                         <UserPlus className="h-4 w-4 mr-2" />
-                        注册
+                        {t('nav.register')}
                       </Link>
                     </Button>
                   </>
@@ -264,37 +297,62 @@ export function TopNav(): React.ReactElement {
 
         {/* 桌面端CTA按钮 */}
         <div className="hidden lg:flex flex-1 items-center justify-end space-x-4">
+          <LanguageSwitcher />
           {isLoggedIn ? (
             // 已登录：显示通知、个人中心、免费开始
             <>
-              {/* 通知中心按钮 */}
-              <Button variant="ghost" size="icon" asChild className="relative rounded-full w-8 h-8">
-                <Link href="/notifications">
-                  <Bell className="h-4 w-4 text-muted-foreground" />
-                  {unreadCount > 0 && (
-                    <Badge
-                      variant="destructive"
-                      className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center p-0 text-[10px]"
-                    >
-                      {unreadCount > 99 ? "99+" : unreadCount}
-                    </Badge>
-                  )}
-                  <span className="sr-only">通知中心 ({unreadCount} 条未读)</span>
+              {/* 通知中心下拉 */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="relative rounded-full w-8 h-8">
+                    <Bell className="h-4 w-4 text-muted-foreground" />
+                    {unreadCount > 0 && (
+                      <Badge
+                        variant="destructive"
+                        className="absolute -top-1 -right-1 h-4 w-4 flex items-center justify-center p-0 text-[10px]"
+                      >
+                        {unreadCount > 99 ? "99+" : unreadCount}
+                      </Badge>
+                    )}
+                    <span className="sr-only">{t('nav.notificationCenter')} ({unreadCount})</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-80 z-[60]">
+                  <DropdownMenuLabel>{t('nav.notifications')}</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <div className="max-h-64 overflow-y-auto">
+                    {unreadCount > 0 ? (
+                      <div className="p-3 text-sm text-muted-foreground">
+                        {t('nav.unreadNotifications')}: {unreadCount}
+                      </div>
+                    ) : (
+                      <div className="p-3 text-sm text-muted-foreground text-center">
+                        {t('nav.noNotifications')}
+                      </div>
+                    )}
+                  </div>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem asChild>
+                    <Link href="/notifications" className="w-full cursor-pointer">
+                      {t('nav.viewAllNotifications')}
+                    </Link>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {/* 账单中心按钮 */}
+              <Button variant="ghost" size="icon" asChild className="rounded-full w-8 h-8">
+                <Link href="/billing">
+                  <CreditCard className="h-4 w-4 text-muted-foreground" />
+                  <span className="sr-only">{t('nav.billing')}</span>
                 </Link>
               </Button>
 
-              {/* 个人中心按钮 */}
+              {/* 个人中心按钮 - 登录后显示绿色 */}
               <Button variant="ghost" size="icon" asChild className="rounded-full w-8 h-8">
                 <Link href="/account">
-                  <User className="h-4 w-4 text-muted-foreground" />
-                  <span className="sr-only">个人中心</span>
-                </Link>
-              </Button>
-
-              {/* 免费开始按钮 */}
-              <Button asChild size="sm" className="rounded-md px-4 font-medium">
-                <Link href="/" data-location="header">
-                  免费开始
+                  <User className="h-4 w-4 text-green-500" />
+                  <span className="sr-only">{t('nav.profile')}</span>
                 </Link>
               </Button>
 
@@ -304,11 +362,11 @@ export function TopNav(): React.ReactElement {
                 size="icon"
                 onClick={handleLogout}
                 disabled={isLoggingOut}
-                title="退出登录"
+                title={t('nav.logout')}
                 className="rounded-full w-8 h-8 text-muted-foreground hover:text-destructive"
               >
                 <LogOut className="h-4 w-4" />
-                <span className="sr-only">退出登录</span>
+                <span className="sr-only">{t('nav.logout')}</span>
               </Button>
             </>
           ) : (
@@ -316,13 +374,13 @@ export function TopNav(): React.ReactElement {
             <>
               <Button variant="ghost" size="sm" asChild className="rounded-md text-muted-foreground hover:text-foreground font-medium">
                 <Link href="/login">
-                  登录
+                  {t('nav.login')}
                 </Link>
               </Button>
 
               <Button asChild size="sm" className="rounded-md px-4 font-medium">
                 <Link href="/register">
-                  注册
+                  {t('nav.register')}
                 </Link>
               </Button>
             </>

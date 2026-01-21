@@ -7,8 +7,8 @@ import com.ingenio.backend.entity.AppSpecEntity;
 import com.ingenio.backend.entity.ValidationResultEntity;
 import com.ingenio.backend.mapper.AppSpecMapper;
 import com.ingenio.backend.mapper.ValidationResultMapper;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -47,10 +47,10 @@ import java.util.concurrent.Executor;
  * @author Ingenio Team
  * @since 2.0.0 Phase 1-6
  */
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class ValidationService {
+
+    private static final Logger log = LoggerFactory.getLogger(ValidationService.class);
 
     private final ValidationResultMapper validationResultMapper;
     private final AppSpecMapper appSpecMapper;
@@ -70,6 +70,20 @@ public class ValidationService {
     @Autowired
     @Qualifier("validationExecutor")
     private Executor validationExecutor;
+
+    public ValidationService(ValidationResultMapper validationResultMapper, AppSpecMapper appSpecMapper,
+            CompilationValidator compilationValidator,
+            com.ingenio.backend.service.adapter.ValidationRequestAdapter validationRequestAdapter,
+            com.ingenio.backend.service.adapter.ValidationResultAdapter validationResultAdapter,
+            TestExecutor testExecutor, CoverageCalculator coverageCalculator) {
+        this.validationResultMapper = validationResultMapper;
+        this.appSpecMapper = appSpecMapper;
+        this.compilationValidator = compilationValidator;
+        this.validationRequestAdapter = validationRequestAdapter;
+        this.validationResultAdapter = validationResultAdapter;
+        this.testExecutor = testExecutor;
+        this.coverageCalculator = coverageCalculator;
+    }
 
     /**
      * 编译验证（Phase 1重构版：委托CompilationValidator）
@@ -93,20 +107,18 @@ public class ValidationService {
         try {
             // Step 1: 适配器转换请求（CompileValidationRequest → CodeGenerationResult）
             log.debug("Step 1/4: 适配器转换请求");
-            com.ingenio.backend.dto.CodeGenerationResult codeResult =
-                    validationRequestAdapter.toCodeGenerationResult(request);
+            com.ingenio.backend.dto.CodeGenerationResult codeResult = validationRequestAdapter
+                    .toCodeGenerationResult(request);
 
             // Step 2: 委托CompilationValidator执行真实编译
             log.debug("Step 2/4: 委托CompilationValidator执行真实编译");
-            com.ingenio.backend.dto.CompilationResult compilationResult =
-                    compilationValidator.compile(codeResult);
+            com.ingenio.backend.dto.CompilationResult compilationResult = compilationValidator.compile(codeResult);
 
             // Step 3: 适配器转换结果（CompilationResult → ValidationResponse）
             log.debug("Step 3/4: 适配器转换结果");
             ValidationResponse response = validationResultAdapter.toValidationResponse(
                     compilationResult,
-                    request.getAppSpecId()
-            );
+                    request.getAppSpecId());
 
             // Step 4: 保存验证记录到数据库
             log.debug("Step 4/4: 保存验证记录到数据库");
@@ -116,8 +128,7 @@ public class ValidationService {
                     tenantId,
                     response,
                     startTime,
-                    ValidationResultEntity.ValidationType.COMPILE
-            );
+                    ValidationResultEntity.ValidationType.COMPILE);
 
             log.info("编译验证完成 - success: {}, errors: {}, warnings: {}, qualityScore: {}, durationMs: {}",
                     response.getPassed(),
@@ -137,10 +148,10 @@ public class ValidationService {
     /**
      * 保存验证结果到数据库
      *
-     * @param appSpecId 应用规格ID
-     * @param tenantId 租户ID（用于多租户隔离）
-     * @param response 验证响应
-     * @param startTime 开始时间
+     * @param appSpecId      应用规格ID
+     * @param tenantId       租户ID（用于多租户隔离）
+     * @param response       验证响应
+     * @param startTime      开始时间
      * @param validationType 验证类型（compile/test/coverage等）
      */
     private void saveValidationResult(
@@ -148,16 +159,14 @@ public class ValidationService {
             UUID tenantId,
             ValidationResponse response,
             Instant startTime,
-            ValidationResultEntity.ValidationType validationType
-    ) {
+            ValidationResultEntity.ValidationType validationType) {
         ValidationResultEntity entity = ValidationResultEntity.builder()
                 .id(response.getValidationId())
                 .appSpecId(appSpecId)
                 .tenantId(tenantId)
                 .validationType(validationType.getValue())
-                .status(response.getPassed() ?
-                        ValidationResultEntity.Status.PASSED.getValue() :
-                        ValidationResultEntity.Status.FAILED.getValue())
+                .status(response.getPassed() ? ValidationResultEntity.Status.PASSED.getValue()
+                        : ValidationResultEntity.Status.FAILED.getValue())
                 .isPassed(response.getPassed())
                 .validationDetails(response.getDetails())
                 .errorMessages(response.getErrors())
@@ -221,8 +230,8 @@ public class ValidationService {
 
         try {
             // Step 1: 适配器转换测试请求
-            com.ingenio.backend.dto.CodeGenerationResult codeResult =
-                    validationRequestAdapter.toCodeGenerationResultForTest(request);
+            com.ingenio.backend.dto.CodeGenerationResult codeResult = validationRequestAdapter
+                    .toCodeGenerationResultForTest(request);
             log.debug("适配器转换完成 - projectType: {}, projectRoot: {}",
                     codeResult.getProjectType(), codeResult.getProjectRoot());
 
@@ -243,7 +252,7 @@ public class ValidationService {
                 }
                 default -> throw new IllegalArgumentException(
                         "不支持的测试类型: " + request.getTestType() +
-                        "，支持的类型: unit, integration, e2e");
+                                "，支持的类型: unit, integration, e2e");
             };
 
             log.debug("测试执行完成 - allPassed: {}, totalTests: {}, coverage: {}",
@@ -260,8 +269,7 @@ public class ValidationService {
                     tenantId,
                     response,
                     startTime,
-                    ValidationResultEntity.ValidationType.TEST
-            );
+                    ValidationResultEntity.ValidationType.TEST);
 
             log.info("测试验证完成（Phase 2重构版） - passed: {}/{}, coverage: {}, qualityScore: {}, durationMs: {}",
                     testResult.getPassedTests(), testResult.getTotalTests(),
@@ -282,7 +290,7 @@ public class ValidationService {
     /**
      * 测试覆盖率验证（Phase 3重构版 - 调用CoverageCalculator）
      *
-     * @param appSpecId AppSpec ID
+     * @param appSpecId   AppSpec ID
      * @param projectRoot 项目根目录
      * @param projectType 项目类型（nextjs/spring-boot/kmp）
      * @return 验证响应
@@ -296,8 +304,8 @@ public class ValidationService {
 
         try {
             // Step 1: 委托CoverageCalculator计算真实覆盖率
-            com.ingenio.backend.dto.CoverageResult coverageResult =
-                    coverageCalculator.calculate(projectRoot, projectType);
+            com.ingenio.backend.dto.CoverageResult coverageResult = coverageCalculator.calculate(projectRoot,
+                    projectType);
 
             log.info("覆盖率计算完成 - tool: {}, overall: {:.2f}%, meetsQualityGate: {}",
                     coverageResult.getTool(),
@@ -315,8 +323,7 @@ public class ValidationService {
                     tenantId,
                     response,
                     startTime,
-                    ValidationResultEntity.ValidationType.COVERAGE
-            );
+                    ValidationResultEntity.ValidationType.COVERAGE);
 
             log.info("覆盖率验证完成 - overall: {:.2f}%, line: {:.2f}%, branch: {:.2f}%, qualityScore: {}, durationMs: {}",
                     coverageResult.getOverallCoverage() * 100,
@@ -347,9 +354,9 @@ public class ValidationService {
      * - 调用此方法将结果保存到validation_results表
      * - 实现G3和ValidationService的数据格式统一
      *
-     * @param appSpecId 应用规格ID
-     * @param tenantId 租户ID（用于多租户隔离）
-     * @param response 验证响应（由外部系统生成，如G3ValidationAdapter转换的结果）
+     * @param appSpecId      应用规格ID
+     * @param tenantId       租户ID（用于多租户隔离）
+     * @param response       验证响应（由外部系统生成，如G3ValidationAdapter转换的结果）
      * @param validationType 验证类型（compile/test/coverage等）
      */
     @Transactional(rollbackFor = Exception.class)
@@ -363,9 +370,9 @@ public class ValidationService {
                 appSpecId, tenantId, validationType, response.getPassed());
 
         // 计算startTime（从completedAt和durationMs反推）
-        Instant startTime = response.getCompletedAt() != null ?
-                response.getCompletedAt().minusMillis(response.getDurationMs()) :
-                Instant.now().minusMillis(response.getDurationMs());
+        Instant startTime = response.getCompletedAt() != null
+                ? response.getCompletedAt().minusMillis(response.getDurationMs())
+                : Instant.now().minusMillis(response.getDurationMs());
 
         // 调用私有方法保存结果
         saveValidationResult(appSpecId, tenantId, response, startTime, validationType);
@@ -495,7 +502,7 @@ public class ValidationService {
      * - 检查API路径命名规范
      * - 验证HTTP方法使用合理性
      *
-     * @param appSpecId AppSpec ID
+     * @param appSpecId   AppSpec ID
      * @param openApiSpec OpenAPI规范
      * @return 验证响应
      */
@@ -519,7 +526,8 @@ public class ValidationService {
             Map<String, Object> details = new HashMap<>();
             details.put("openApiVersion", openApiSpec.get("openapi"));
             details.put("pathCount", openApiSpec.containsKey("paths")
-                    ? ((Map<?, ?>) openApiSpec.get("paths")).size() : 0);
+                    ? ((Map<?, ?>) openApiSpec.get("paths")).size()
+                    : 0);
 
             Instant endTime = Instant.now();
             long durationMs = endTime.toEpochMilli() - startTime.toEpochMilli();
@@ -583,7 +591,7 @@ public class ValidationService {
      * - 验证Schema与API契约的匹配度
      *
      * @param appSpecId AppSpec ID
-     * @param schema Schema定义
+     * @param schema    Schema定义
      * @return 验证响应
      */
     @Transactional(rollbackFor = Exception.class)
@@ -631,7 +639,8 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("Schema验证完成 - valid: {}, tables: {}, tenantId: {}, durationMs: {}", isValid, details.get("tableCount"), tenantId, durationMs);
+            log.info("Schema验证完成 - valid: {}, tables: {}, tenantId: {}, durationMs: {}", isValid,
+                    details.get("tableCount"), tenantId, durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -668,7 +677,7 @@ public class ValidationService {
      * - 验证权限和角色定义合理性
      *
      * @param appSpecId AppSpec ID
-     * @param flows 业务流程列表
+     * @param flows     业务流程列表
      * @return 验证响应
      */
     @Transactional(rollbackFor = Exception.class)
@@ -714,7 +723,8 @@ public class ValidationService {
 
             validationResultMapper.insert(entity);
 
-            log.info("业务流程验证完成 - valid: {}, flows: {}, tenantId: {}, durationMs: {}", isValid, details.get("flowCount"), tenantId, durationMs);
+            log.info("业务流程验证完成 - valid: {}, flows: {}, tenantId: {}, durationMs: {}", isValid, details.get("flowCount"),
+                    tenantId, durationMs);
 
             return ValidationResponse.builder()
                     .validationId(entity.getId())
@@ -854,8 +864,7 @@ public class ValidationService {
                         .details(Map.of(
                                 "validationId", validationResponse.getValidationId(),
                                 "qualityScore", validationResponse.getQualityScore(),
-                                "details", validationResponse.getDetails()
-                        ))
+                                "details", validationResponse.getDetails()))
                         .durationMs(stageDuration)
                         .build());
 
@@ -946,8 +955,7 @@ public class ValidationService {
                             .details(Map.of(
                                     "validationId", validationResponse.getValidationId(),
                                     "qualityScore", validationResponse.getQualityScore(),
-                                    "details", validationResponse.getDetails()
-                            ))
+                                    "details", validationResponse.getDetails()))
                             .durationMs(stageDuration)
                             .build();
 
@@ -996,22 +1004,22 @@ public class ValidationService {
      *
      * 支持的阶段及参数要求：
      * 1. compile: 需要code和language参数
-     *    - 委托CompilationValidator执行真实编译
-     *    - CompilationValidator自动创建临时项目目录
+     * - 委托CompilationValidator执行真实编译
+     * - CompilationValidator自动创建临时项目目录
      *
      * 2. test: 需要testFiles参数（可选）
-     *    - 委托TestExecutor执行单元测试
-     *    - generateCoverage默认为true
+     * - 委托TestExecutor执行单元测试
+     * - generateCoverage默认为true
      *
      * 3. coverage: 需要projectRoot和projectType参数
-     *    - 委托CoverageCalculator解析覆盖率报告
-     *    - 支持Istanbul（nextjs）和JaCoCo（spring-boot）
+     * - 委托CoverageCalculator解析覆盖率报告
+     * - 支持Istanbul（nextjs）和JaCoCo（spring-boot）
      *
      * 4. business: 无强制参数要求
-     *    - 当前为基础版实现，仅验证基本格式
-     *    - 未来需扩展FullValidationRequest添加openApiSpec、schema、flows字段
+     * - 当前为基础版实现，仅验证基本格式
+     * - 未来需扩展FullValidationRequest添加openApiSpec、schema、flows字段
      *
-     * @param stage 验证阶段（compile/test/coverage/business）
+     * @param stage   验证阶段（compile/test/coverage/business）
      * @param request 全量验证请求（包含各阶段所需的参数）
      * @return 验证响应（包含通过状态、质量评分、错误信息）
      * @throws IllegalArgumentException 当阶段不支持或必需参数缺失时抛出
@@ -1055,9 +1063,9 @@ public class ValidationService {
                 // 业务验证链路（基础版本）
                 // 当前实现：仅验证API契约基本格式
                 // 未来扩展：需要在FullValidationRequest中添加以下字段后实现完整链路
-                //   - Map<String, Object> openApiSpec (API契约规范)
-                //   - Map<String, Object> schema (数据库Schema定义)
-                //   - List<Map<String, Object>> flows (业务流程定义)
+                // - Map<String, Object> openApiSpec (API契约规范)
+                // - Map<String, Object> schema (数据库Schema定义)
+                // - List<Map<String, Object>> flows (业务流程定义)
                 // 完整链路：contract验证 → schema验证 → business_flow验证 → 聚合结果
                 log.warn("business验证当前为简化实现，仅验证基本格式。完整实现需扩展FullValidationRequest");
                 ValidationResponse contractResult = validateContract(request.getAppSpecId(), new HashMap<>());

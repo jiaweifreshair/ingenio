@@ -1,6 +1,0 @@
-fastapi
-uvicorn
-agentscope
-python-dotenv
-pydantic
-httpx

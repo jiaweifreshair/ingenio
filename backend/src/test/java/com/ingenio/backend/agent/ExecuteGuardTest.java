@@ -44,6 +44,25 @@ class ExecuteGuardTest {
     @InjectMocks
     private ExecuteGuard executeGuard;
 
+    /**
+     * URL可达性检查器Mock。
+     *
+     * 是什么：用于替换真实HTTP检测的Mock实现。
+     * 做什么：在单测中控制URL可达性结果。
+     * 为什么：避免受限环境下端口绑定或外网依赖导致测试不稳定。
+     */
+    @Mock
+    private UrlAccessibilityChecker urlAccessibilityChecker;
+
+    /**
+     * 可访问的URL。
+     *
+     * 是什么：用于模拟可达性检查的URL样例。
+     * 做什么：在测试中配合Mock返回可访问结果。
+     * 为什么：保持测试数据稳定且与生产检测逻辑解耦。
+     */
+    private static final String REACHABLE_URL = "https://example.com/preview";
+
     private UUID testAppSpecId;
     private AppSpecEntity validAppSpec;
 
@@ -61,7 +80,7 @@ class ExecuteGuardTest {
             .intentType("DESIGN_FROM_SCRATCH")
             .selectedStyle("A")
             .frontendPrototype(frontendPrototype)
-            .frontendPrototypeUrl("https://example.com/preview")
+            .frontendPrototypeUrl(REACHABLE_URL)
             .designConfirmed(true)
             .designConfirmedAt(Instant.now())
             .build();
@@ -255,8 +274,8 @@ class ExecuteGuardTest {
         @Test
         @DisplayName("当用户未确认设计时应抛出EXECUTE_GUARD_PROTOTYPE_NOT_CONFIRMED异常")
         void shouldThrowExceptionWhenDesignNotConfirmed() {
-            // Given - 设置可访问的URL（使用httpbin.org）
-            validAppSpec.setFrontendPrototypeUrl("https://httpbin.org/get");
+            // Given - 设置可访问的URL（由Mock控制可达性）
+            validAppSpec.setFrontendPrototypeUrl(REACHABLE_URL);
             validAppSpec.setDesignConfirmed(false);
             when(appSpecMapper.selectById(testAppSpecId)).thenReturn(validAppSpec);
 
@@ -270,7 +289,7 @@ class ExecuteGuardTest {
         @DisplayName("当设计确认标志为null时应抛出异常")
         void shouldThrowExceptionWhenDesignConfirmedIsNull() {
             // Given
-            validAppSpec.setFrontendPrototypeUrl("https://httpbin.org/get");
+            validAppSpec.setFrontendPrototypeUrl(REACHABLE_URL);
             validAppSpec.setDesignConfirmed(null);
             when(appSpecMapper.selectById(testAppSpecId)).thenReturn(validAppSpec);
 
@@ -332,8 +351,9 @@ class ExecuteGuardTest {
         void shouldProvideCorrectBlockingReason() {
             // Given - 设计未确认
             validAppSpec.setDesignConfirmed(false);
-            validAppSpec.setFrontendPrototypeUrl("https://httpbin.org/get");
+            validAppSpec.setFrontendPrototypeUrl(REACHABLE_URL);
             when(appSpecMapper.selectById(testAppSpecId)).thenReturn(validAppSpec);
+            when(urlAccessibilityChecker.isAccessible(REACHABLE_URL)).thenReturn(true);
 
             // When
             ExecuteGuardReport report = executeGuard.getCheckReport(testAppSpecId);
@@ -354,12 +374,13 @@ class ExecuteGuardTest {
                 .intentType("DESIGN_FROM_SCRATCH")
                 .selectedStyle("A")
                 .frontendPrototype(frontendPrototype)
-                .frontendPrototypeUrl("https://httpbin.org/get")
+                .frontendPrototypeUrl(REACHABLE_URL)
                 .designConfirmed(true)
                 .designConfirmedAt(Instant.now())
                 .build();
 
             when(appSpecMapper.selectById(testAppSpecId)).thenReturn(completeAppSpec);
+            when(urlAccessibilityChecker.isAccessible(REACHABLE_URL)).thenReturn(true);
 
             // When
             ExecuteGuardReport report = executeGuard.getCheckReport(testAppSpecId);

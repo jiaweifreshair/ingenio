@@ -2,8 +2,8 @@ package com.ingenio.backend.service;
 
 import com.ingenio.backend.dto.CodeGenerationResult;
 import com.ingenio.backend.dto.CompilationResult;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
@@ -31,10 +31,10 @@ import java.util.regex.Pattern;
  * 4. 解析编译输出
  * 5. 提取错误和警告
  */
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class CompilationValidator {
+
+    private static final Logger log = LoggerFactory.getLogger(CompilationValidator.class);
 
     /**
      * 编译生成的代码
@@ -92,8 +92,7 @@ public class CompilationValidator {
                     .errors(List.of(
                             CompilationResult.CompilationError.builder()
                                     .message("编译过程异常: " + e.getMessage())
-                                    .build()
-                    ))
+                                    .build()))
                     .fullOutput(e.toString())
                     .durationMs(System.currentTimeMillis() - startTime)
                     .build();
@@ -132,8 +131,7 @@ public class CompilationValidator {
                     .errors(List.of(
                             CompilationResult.CompilationError.builder()
                                     .message(e.getMessage())
-                                    .build()
-                    ))
+                                    .build()))
                     .fullOutput(e.toString())
                     .build();
         }
@@ -175,8 +173,7 @@ public class CompilationValidator {
                     .errors(List.of(
                             CompilationResult.CompilationError.builder()
                                     .message(e.getMessage())
-                                    .build()
-                    ))
+                                    .build()))
                     .fullOutput(e.toString())
                     .build();
         }
@@ -214,8 +211,7 @@ public class CompilationValidator {
                     .errors(List.of(
                             CompilationResult.CompilationError.builder()
                                     .message(e.getMessage())
-                                    .build()
-                    ))
+                                    .build()))
                     .fullOutput(e.toString())
                     .build();
         }

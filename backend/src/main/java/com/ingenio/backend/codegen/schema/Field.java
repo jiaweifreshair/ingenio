@@ -1,122 +1,198 @@
 package com.ingenio.backend.codegen.schema;
 
-import lombok.Builder;
-import lombok.Data;
-
 /**
  * 数据库字段定义
- *
- * <p>表示数据库表中的一个字段，包括字段名、类型、约束等</p>
- *
- * <p>示例：</p>
- * <pre>{@code
- * Field emailField = Field.builder()
- *     .name("email")
- *     .type(FieldType.VARCHAR)
- *     .length(255)
- *     .nullable(false)
- *     .unique(true)
- *     .description("用户邮箱")
- *     .build();
- * }</pre>
- *
- * @author Justin
- * @since 2025-11-17 V2.0 Phase 2: 数据库Schema生成器
  */
-@Data
-@Builder
 public class Field {
 
-    /**
-     * 字段名（PostgreSQL规范：小写+下划线）
-     * 示例：id, email, created_at, order_total_amount
-     */
     private String name;
-
-    /**
-     * 字段类型
-     */
     private FieldType type;
-
-    /**
-     * 字段长度（仅VARCHAR类型需要）
-     * 示例：email VARCHAR(255)
-     */
     private Integer length;
-
-    /**
-     * 数值精度（仅NUMERIC类型需要）
-     * 示例：price NUMERIC(10, 2)
-     */
     private Integer precision;
-
-    /**
-     * 数值小数位数（仅NUMERIC类型需要）
-     */
     private Integer scale;
-
-    /**
-     * 是否主键
-     */
-    @Builder.Default
-    private boolean primaryKey = false;
-
-    /**
-     * 是否唯一约束
-     */
-    @Builder.Default
-    private boolean unique = false;
-
-    /**
-     * 是否允许NULL
-     */
-    @Builder.Default
-    private boolean nullable = true;
-
-    /**
-     * 默认值（SQL表达式）
-     * 示例：
-     * - "uuid_generate_v4()"（UUID主键）
-     * - "NOW()"（时间戳）
-     * - "'pending'"（字符串字面量）
-     * - "0"（数值字面量）
-     */
+    private boolean primaryKey;
+    private boolean unique;
+    private boolean nullable;
     private String defaultValue;
-
-    /**
-     * CHECK约束（SQL表达式）
-     * 示例：
-     * - "age >= 0 AND age <= 150"
-     * - "email ~ '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z]{2,}$'"
-     * - "status IN ('pending', 'approved', 'rejected')"
-     */
     private String checkConstraint;
-
-    /**
-     * 外键引用
-     * 格式：表名.字段名
-     * 示例：users.id, products.id
-     */
     private String foreignKey;
-
-    /**
-     * 外键删除策略
-     * CASCADE: 级联删除
-     * SET NULL: 设置为NULL
-     * RESTRICT: 限制删除（默认）
-     */
-    @Builder.Default
-    private String onDelete = "RESTRICT";
-
-    /**
-     * 字段描述（用于生成注释）
-     */
+    private String onDelete;
     private String description;
+    private boolean indexed;
 
-    /**
-     * 是否创建索引
-     * true: 为该字段创建单独的索引
-     */
-    @Builder.Default
-    private boolean indexed = false;
+    // Full Constructor
+    public Field(String name, FieldType type, Integer length, Integer precision, Integer scale, boolean primaryKey,
+            boolean unique, boolean nullable, String defaultValue, String checkConstraint, String foreignKey,
+            String onDelete, String description, boolean indexed) {
+        this.name = name;
+        this.type = type;
+        this.length = length;
+        this.precision = precision;
+        this.scale = scale;
+        this.primaryKey = primaryKey;
+        this.unique = unique;
+        this.nullable = nullable;
+        this.defaultValue = defaultValue;
+        this.checkConstraint = checkConstraint;
+        this.foreignKey = foreignKey;
+        this.onDelete = onDelete != null ? onDelete : "RESTRICT";
+        this.description = description;
+        this.indexed = indexed;
+    }
+
+    public static FieldBuilder builder() {
+        return new FieldBuilder();
+    }
+
+    public static class FieldBuilder {
+        private String name;
+        private FieldType type;
+        private Integer length;
+        private Integer precision;
+        private Integer scale;
+        private boolean primaryKey = false;
+        private boolean unique = false;
+        private boolean nullable = true;
+        private String defaultValue;
+        private String checkConstraint;
+        private String foreignKey;
+        private String onDelete = "RESTRICT";
+        private String description;
+        private boolean indexed = false;
+
+        FieldBuilder() {
+        }
+
+        public FieldBuilder name(String name) {
+            this.name = name;
+            return this;
+        }
+
+        public FieldBuilder type(FieldType type) {
+            this.type = type;
+            return this;
+        }
+
+        public FieldBuilder length(Integer length) {
+            this.length = length;
+            return this;
+        }
+
+        public FieldBuilder precision(Integer precision) {
+            this.precision = precision;
+            return this;
+        }
+
+        public FieldBuilder scale(Integer scale) {
+            this.scale = scale;
+            return this;
+        }
+
+        public FieldBuilder primaryKey(boolean primaryKey) {
+            this.primaryKey = primaryKey;
+            return this;
+        }
+
+        public FieldBuilder unique(boolean unique) {
+            this.unique = unique;
+            return this;
+        }
+
+        public FieldBuilder nullable(boolean nullable) {
+            this.nullable = nullable;
+            return this;
+        }
+
+        public FieldBuilder defaultValue(String defaultValue) {
+            this.defaultValue = defaultValue;
+            return this;
+        }
+
+        public FieldBuilder checkConstraint(String checkConstraint) {
+            this.checkConstraint = checkConstraint;
+            return this;
+        }
+
+        public FieldBuilder foreignKey(String foreignKey) {
+            this.foreignKey = foreignKey;
+            return this;
+        }
+
+        public FieldBuilder onDelete(String onDelete) {
+            this.onDelete = onDelete;
+            return this;
+        }
+
+        public FieldBuilder description(String description) {
+            this.description = description;
+            return this;
+        }
+
+        public FieldBuilder indexed(boolean indexed) {
+            this.indexed = indexed;
+            return this;
+        }
+
+        public Field build() {
+            return new Field(name, type, length, precision, scale, primaryKey, unique, nullable, defaultValue,
+                    checkConstraint, foreignKey, onDelete, description, indexed);
+        }
+    }
+
+    // Getters
+    public String getName() {
+        return name;
+    }
+
+    public FieldType getType() {
+        return type;
+    }
+
+    public Integer getLength() {
+        return length;
+    }
+
+    public Integer getPrecision() {
+        return precision;
+    }
+
+    public Integer getScale() {
+        return scale;
+    }
+
+    public boolean isPrimaryKey() {
+        return primaryKey;
+    }
+
+    public boolean isUnique() {
+        return unique;
+    }
+
+    public boolean isNullable() {
+        return nullable;
+    }
+
+    public String getDefaultValue() {
+        return defaultValue;
+    }
+
+    public String getCheckConstraint() {
+        return checkConstraint;
+    }
+
+    public String getForeignKey() {
+        return foreignKey;
+    }
+
+    public String getOnDelete() {
+        return onDelete;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public boolean isIndexed() {
+        return indexed;
+    }
 }

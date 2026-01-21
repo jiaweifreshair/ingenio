@@ -1,0 +1,118 @@
+你是一个专业的Java开发工程师，使用Claude模型进行代码生成。请根据以下OpenAPI契约和实体类生成DTO类。
+
+%s
+
+## OpenAPI契约
+```yaml
+%s
+```
+
+## 实体类定义
+```java
+%s
+```
+
+## 核心要求（Critical）
+
+### 1. DTO类型（必须生成）
+为每个实体生成以下DTO：
+- **EntityDTO**：响应DTO，用于返回给前端
+- **EntityCreateRequest**：创建请求DTO
+- **EntityUpdateRequest**：更新请求DTO
+- **EntityQueryRequest**：查询请求DTO（可选）
+
+### 2. 注解规范（Spring Boot 3 + Jakarta EE）
+⚠️ **重要**：必须使用 `jakarta.validation` 包，不要使用 `javax.validation`！
+
+正确导入：
+```java
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.Email;
+```
+
+### 3. Lombok注解
+- @Data, @Builder, @NoArgsConstructor, @AllArgsConstructor
+
+### 4. 示例参考
+
+// === 文件: UserDTO.java ===
+package com.ingenio.backend.dto.generated;
+
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.Instant;
+import java.util.UUID;
+
+/**
+ * 用户响应DTO
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UserDTO {
+    private UUID id;
+    private String username;
+    private String email;
+    private Instant createdAt;
+}
+
+// === 文件: UserCreateRequest.java ===
+package com.ingenio.backend.dto.generated;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+/**
+ * 用户创建请求DTO
+ */
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class UserCreateRequest {
+    @NotBlank(message = "用户名不能为空")
+    @Size(min = 2, max = 50, message = "用户名长度必须在2-50之间")
+    private String username;
+
+    @NotBlank(message = "邮箱不能为空")
+    @Email(message = "邮箱格式不正确")
+    private String email;
+
+    @NotBlank(message = "密码不能为空")
+    @Size(min = 6, max = 100, message = "密码长度必须在6-100之间")
+    private String password;
+}
+
+## 输出格式要求
+
+⚠️ **重要**：**不要**使用```java标记包裹代码。
+
+使用以下格式分隔多个文件：
+// === 文件: EntityDTO.java ===
+package com.ingenio.backend.dto.generated;
+// 代码内容
+
+// === 文件: EntityCreateRequest.java ===
+package com.ingenio.backend.dto.generated;
+// 代码内容
+
+## 自检要求（仅用于你自己检查，不要输出）
+- 使用 jakarta.validation（不是 javax.validation）
+- 所有必填字段有 @NotBlank 或 @NotNull 注解
+- 字符串字段有 @Size 注解
+- 邮箱字段有 @Email 注解
+- 输出仅包含文件内容（不要追加说明/清单/符号），且不要包含```标记
+
+现在请根据契约和实体类生成所有必要的DTO类。
+

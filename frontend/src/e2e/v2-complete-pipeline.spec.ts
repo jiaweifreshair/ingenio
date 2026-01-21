@@ -186,7 +186,7 @@ test.describe('Blueprint E2E（API + UI）', () => {
     expect(data.styleVariants.length).toBeGreaterThanOrEqual(1);
     expect(typeof data.selectedStyleId).toBe('string');
     expect(data.prototypeGenerated).toBe(false);
-    expect(data.nextAction).toContain('流式');
+    expect(data.nextAction).toContain('设计风格');
   });
 
   test('UI：登录 → 生成 → 原型确认 → 确认设计 → 进入 Execute', async ({ page }) => {
@@ -194,7 +194,8 @@ test.describe('Blueprint E2E（API + UI）', () => {
 
     await loginViaUi(page);
     await page.goto('/');
-    await expect(page.getByText('你的创意，AI 实现')).toBeVisible();
+    await expect(page.getByText('你的创意，')).toBeVisible();
+    await expect(page.getByText('AI 实现')).toBeVisible();
 
     // 提交克隆需求，确保后端直接生成原型（无需等待前端 SSE 生成）
     const input = page.locator('textarea[placeholder*="在这里输入你想做什么"]');
@@ -249,6 +250,6 @@ test.describe('Blueprint E2E（API + UI）', () => {
     expect(confirmDesignBody.code).toBe('0000');
 
     // 进入 Execute（G3 Console）
-    await expect(page.getByRole('heading', { name: 'G3 Battle Console' })).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByTestId('g3-atoms-console')).toBeVisible({ timeout: 60_000 });
   });
 });

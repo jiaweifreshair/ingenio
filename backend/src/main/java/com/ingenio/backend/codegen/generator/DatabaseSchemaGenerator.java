@@ -4,8 +4,8 @@ import com.ingenio.backend.codegen.analyzer.EntityAnalyzer;
 import com.ingenio.backend.codegen.builder.SupabaseSchemaBuilder;
 import com.ingenio.backend.codegen.schema.Entity;
 import com.ingenio.backend.codegen.schema.EntityRelationship;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -20,9 +20,14 @@ import java.util.List;
 /**
  * 数据库Schema生成器（V2.0核心组件）
  *
- * <p>整合EntityAnalyzer和SupabaseSchemaBuilder，提供端到端的数据库Schema生成能力。</p>
+ * <p>
+ * 整合EntityAnalyzer和SupabaseSchemaBuilder，提供端到端的数据库Schema生成能力。
+ * </p>
  *
- * <p>核心流程：</p>
+ * <p>
+ * 核心流程：
+ * </p>
+ * 
  * <pre>
  * 用户需求文本
  *     ↓
@@ -35,7 +40,10 @@ import java.util.List;
  * 写入迁移文件到磁盘
  * </pre>
  *
- * <p>使用示例：</p>
+ * <p>
+ * 使用示例：
+ * </p>
+ * 
  * <pre>{@code
  * @Autowired
  * private DatabaseSchemaGenerator schemaGenerator;
@@ -52,19 +60,21 @@ import java.util.List;
  * }
  * }</pre>
  *
- * <p>输出文件格式：</p>
+ * <p>
+ * 输出文件格式：
+ * </p>
  * <ul>
- *   <li>迁移文件：migrations/V{timestamp}__create_tables.sql</li>
- *   <li>回滚文件：migrations/V{timestamp}__rollback.sql</li>
+ * <li>迁移文件：migrations/V{timestamp}__create_tables.sql</li>
+ * <li>回滚文件：migrations/V{timestamp}__rollback.sql</li>
  * </ul>
  *
  * @author Justin
  * @since 2025-11-17 V2.0 Phase 2.3: 数据库Schema生成器整合
  */
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class DatabaseSchemaGenerator {
+
+    private static final Logger log = LoggerFactory.getLogger(DatabaseSchemaGenerator.class);
 
     /**
      * 实体分析器（依赖注入）
@@ -78,6 +88,11 @@ public class DatabaseSchemaGenerator {
      */
     private final SupabaseSchemaBuilder schemaBuilder;
 
+    public DatabaseSchemaGenerator(EntityAnalyzer entityAnalyzer, SupabaseSchemaBuilder schemaBuilder) {
+        this.entityAnalyzer = entityAnalyzer;
+        this.schemaBuilder = schemaBuilder;
+    }
+
     /**
      * 迁移文件输出目录
      * 可通过配置文件覆盖：ingenio.codegen.migration-dir
@@ -89,14 +104,16 @@ public class DatabaseSchemaGenerator {
     /**
      * 生成数据库Schema（核心方法）
      *
-     * <p>完整的端到端流程：</p>
+     * <p>
+     * 完整的端到端流程：
+     * </p>
      * <ol>
-     *   <li>调用EntityAnalyzer提取实体定义</li>
-     *   <li>调用EntityAnalyzer推断实体间关系</li>
-     *   <li>调用SupabaseSchemaBuilder生成迁移SQL</li>
-     *   <li>调用SupabaseSchemaBuilder生成回滚SQL</li>
-     *   <li>将SQL写入磁盘文件</li>
-     *   <li>返回生成结果</li>
+     * <li>调用EntityAnalyzer提取实体定义</li>
+     * <li>调用EntityAnalyzer推断实体间关系</li>
+     * <li>调用SupabaseSchemaBuilder生成迁移SQL</li>
+     * <li>调用SupabaseSchemaBuilder生成回滚SQL</li>
+     * <li>将SQL写入磁盘文件</li>
+     * <li>返回生成结果</li>
      * </ol>
      *
      * @param userRequirement 用户需求描述（自然语言）
@@ -172,10 +189,14 @@ public class DatabaseSchemaGenerator {
     /**
      * 写入迁移SQL脚本到磁盘
      *
-     * <p>文件命名规则：V{timestamp}__create_tables.sql</p>
-     * <p>示例：V20251117143025__create_tables.sql</p>
+     * <p>
+     * 文件命名规则：V{timestamp}__create_tables.sql
+     * </p>
+     * <p>
+     * 示例：V20251117143025__create_tables.sql
+     * </p>
      *
-     * @param timestamp 时间戳（格式：yyyyMMddHHmmss）
+     * @param timestamp    时间戳（格式：yyyyMMddHHmmss）
      * @param migrationSQL 迁移SQL脚本内容
      * @return Path 迁移文件路径
      * @throws IOException 当文件写入失败时抛出
@@ -197,8 +218,7 @@ public class DatabaseSchemaGenerator {
                 filePath,
                 migrationSQL,
                 StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING
-        );
+                StandardOpenOption.TRUNCATE_EXISTING);
 
         log.info("[DatabaseSchemaGenerator] 迁移文件已写入: {} ({} bytes)",
                 fileName, Files.size(filePath));
@@ -209,10 +229,14 @@ public class DatabaseSchemaGenerator {
     /**
      * 写入回滚SQL脚本到磁盘
      *
-     * <p>文件命名规则：V{timestamp}__rollback.sql</p>
-     * <p>示例：V20251117143025__rollback.sql</p>
+     * <p>
+     * 文件命名规则：V{timestamp}__rollback.sql
+     * </p>
+     * <p>
+     * 示例：V20251117143025__rollback.sql
+     * </p>
      *
-     * @param timestamp 时间戳（格式：yyyyMMddHHmmss）
+     * @param timestamp   时间戳（格式：yyyyMMddHHmmss）
      * @param rollbackSQL 回滚SQL脚本内容
      * @return Path 回滚文件路径
      * @throws IOException 当文件写入失败时抛出
@@ -233,8 +257,7 @@ public class DatabaseSchemaGenerator {
                 filePath,
                 rollbackSQL,
                 StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING
-        );
+                StandardOpenOption.TRUNCATE_EXISTING);
 
         log.info("[DatabaseSchemaGenerator] 回滚文件已写入: {} ({} bytes)",
                 fileName, Files.size(filePath));
@@ -245,7 +268,9 @@ public class DatabaseSchemaGenerator {
     /**
      * 数据库Schema生成结果
      *
-     * <p>封装生成过程的所有输入、输出和元数据</p>
+     * <p>
+     * 封装生成过程的所有输入、输出和元数据
+     * </p>
      */
     @lombok.Data
     @lombok.Builder
@@ -336,26 +361,27 @@ public class DatabaseSchemaGenerator {
         public String getSummary() {
             return String.format(
                     "数据库Schema生成摘要:\n" +
-                    "  - 实体数量: %d\n" +
-                    "  - 关系数量: %d\n" +
-                    "  - 迁移SQL行数: %d\n" +
-                    "  - 迁移文件: %s\n" +
-                    "  - 回滚文件: %s\n" +
-                    "  - 总耗时: %s",
+                            "  - 实体数量: %d\n" +
+                            "  - 关系数量: %d\n" +
+                            "  - 迁移SQL行数: %d\n" +
+                            "  - 迁移文件: %s\n" +
+                            "  - 回滚文件: %s\n" +
+                            "  - 总耗时: %s",
                     getEntityCount(),
                     getRelationshipCount(),
                     getMigrationSQLLineCount(),
                     migrationFilePath,
                     rollbackFilePath,
-                    getFormattedElapsedTime()
-            );
+                    getFormattedElapsedTime());
         }
     }
 
     /**
      * Schema生成异常
      *
-     * <p>当Schema生成过程中发生错误时抛出</p>
+     * <p>
+     * 当Schema生成过程中发生错误时抛出
+     * </p>
      */
     public static class SchemaGenerationException extends RuntimeException {
         public SchemaGenerationException(String message) {

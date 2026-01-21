@@ -10,6 +10,15 @@
 # 停止本地数据库：brew services stop postgresql@15
 # ============================================================================
 spring:
+  # 本地开发：自动加载项目根目录与 backend/ 目录下的 .env（不入库）
+  # 目的：避免通过 IDE / mvn spring-boot:run 启动时忘记手动 source 导致密钥缺失（401 Invalid API Key）。
+  # 说明：使用 `[.properties]` 强制按 properties 解析（.env 扩展名默认不被 Spring Boot 识别）。
+  config:
+    import:
+      - optional:file:../.env[.properties]
+      - optional:file:./.env[.properties]
+      - optional:file:./backend/.env[.properties]
+
   # 数据源配置（连接Docker中的PostgreSQL）
   # ⚠️ localhost:5432 = Docker容器暴露的端口，不是本地PostgreSQL
   datasource:
@@ -72,12 +81,12 @@ redisson:
 # SaToken JWT配置
 sa-token:
   token-name: Authorization
-  timeout: 604800                # Token总有效期：7天（秒）
-  activity-timeout: 86400        # 活动超时：1天（秒）- 用户活跃时自动续期
-  is-concurrent: true            # 允许同一账号并发登录
-  is-share: false                # 不共享Token（每次登录生成新Token）
-  token-style: jwt               # 使用JWT风格Token
-  is-log: true                   # 开启日志输出
+  timeout: 604800 # Token总有效期：7天（秒）
+  activity-timeout: 86400 # 活动超时：1天（秒）- 用户活跃时自动续期
+  is-concurrent: true # 允许同一账号并发登录
+  is-share: false # 不共享Token（每次登录生成新Token）
+  token-style: jwt # 使用JWT风格Token
+  is-log: true # 开启日志输出
   jwt-secret-key: ${JWT_SECRET_KEY:please-change-this-secret-key-min-32-characters}
   # 路由鉴权配置（Servlet Filter层 - 在Spring MVC拦截器之前执行）
   # 注意：这是SaToken的路由检查过滤器配置，需要与拦截器白名单保持一致
@@ -132,9 +141,9 @@ jeecgboot:
   api:
     base-url: ${JEECGBOOT_API_URL:http://localhost:7008}
     token: ${JEECGBOOT_API_TOKEN:}
-    connect-timeout: 60000    # 连接超时：60秒
-    read-timeout: 300000      # 读取超时：5分钟（AI生成可能较慢）
-    write-timeout: 60000      # 写入超时：60秒
+    connect-timeout: 60000 # 连接超时：60秒
+    read-timeout: 300000 # 读取超时：5分钟（AI生成可能较慢）
+    write-timeout: 60000 # 写入超时：60秒
 
 # Ingenio配置
 ingenio:
@@ -149,6 +158,13 @@ ingenio:
   # 参考 open-lovable-cn 的实现：使用更合理的重试机制
   # deepseek-v3 模型的 RPM 限制相对宽松（约 30-60 RPM）
   ai:
+    # Primary AI 配置（优先使用）：Claude via 本地代理
+    primary:
+      enabled: true
+      base-url: http://127.0.0.1:8045/v1
+      api-key: sk-418de7bda2824845967ff0c8b97bfbc9
+      model: claude-opus-4-5-thinking
+    # 速率限制配置
     rate-limit:
       # 每分钟最大请求数：30 RPM（deepseek-v3 的限制约 60 RPM，留余量）
       rpm: 30
@@ -159,7 +175,7 @@ ingenio:
 
   # Open-Lovable集成配置
   # Docker部署：3001端口（docker-compose映射3001:3000）
-  # 本地开发：设置环境变量 OPENLOVABLE_BASE_URL=http://localhost:3000
+  # 本地开发：3001端口（确保3000端口未被占用）
   openlovable:
     base-url: ${OPENLOVABLE_BASE_URL:http://localhost:3001}
 

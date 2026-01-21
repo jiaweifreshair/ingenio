@@ -175,8 +175,9 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
   /**
    * 连接SSE
    */
-  const connect = useCallback(() => {
-    if (!requirement || requirement.trim().length < 10) {
+  const connect = useCallback((overrideRequirement?: string) => {
+    const effectiveRequirement = overrideRequirement || requirement;
+    if (!effectiveRequirement || effectiveRequirement.trim().length < 10) {
       updateState({
         error: '需求描述至少需要10个字符'
       });

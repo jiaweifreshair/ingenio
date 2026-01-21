@@ -590,7 +590,7 @@ public class OpenLovableService {
             // 构建请求体
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("prompt", prompt);
-            requestBody.put("model", "gemini-3-pro-preview");  // 默认优先 Gemini 3 Pro，避免空代码导致预览不可用
+            requestBody.put("model", "gemini-3-pro-preview");  // 默认使用 Gemini 3 Pro
             requestBody.put("isEdit", false);
 
             Map<String, Object> context = new HashMap<>();

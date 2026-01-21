@@ -6,10 +6,19 @@ import com.ingenio.backend.agent.g3.ICoderAgent;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
+import com.ingenio.backend.entity.g3.G3SessionMemory;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
+import com.ingenio.backend.entity.GenerationVersionEntity;
+import com.ingenio.backend.mapper.AppSpecMapper;
+import com.ingenio.backend.mapper.GenerationTaskMapper;
+import com.ingenio.backend.mapper.GenerationVersionMapper;
+import com.ingenio.backend.mapper.IndustryTemplateMapper;
 import com.ingenio.backend.mapper.g3.G3ArtifactMapper;
 import com.ingenio.backend.mapper.g3.G3JobMapper;
 import com.ingenio.backend.mapper.g3.G3ValidationResultMapper;
+import com.ingenio.backend.service.VersionSnapshotService;
+import com.ingenio.backend.service.blueprint.BlueprintValidator;
+import com.ingenio.backend.websocket.G3WebSocketBroadcaster;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,6 +57,75 @@ class G3OrchestratorServiceTest {
     @Mock
     private G3ValidationResultMapper validationResultMapper;
 
+    /**
+     * 新增依赖Mock：用于覆盖G3归档/快照/上下文同步，避免单测NPE
+     */
+    @Mock
+    private AppSpecMapper appSpecMapper;
+
+    @Mock
+    private IndustryTemplateMapper industryTemplateMapper;
+
+    @Mock
+    private GenerationTaskMapper generationTaskMapper;
+
+    @Mock
+    private GenerationVersionMapper generationVersionMapper;
+
+    @Mock
+    private VersionSnapshotService snapshotService;
+
+    @Mock
+    private G3CodeArchiveService codeArchiveService;
+
+    /**
+     * BlueprintValidator Mock：用于跳过真实合规校验流程，避免单测受规则影响。
+     */
+    @Mock
+    private BlueprintValidator blueprintValidator;
+
+    /**
+     * 依赖分析器 Mock：用于避免真实 SQL 解析影响单测。
+     */
+    @Mock
+    private G3DependencyAnalyzer dependencyAnalyzer;
+
+    /**
+     * 阶段验证器 Mock：用于复用沙箱结果构造统一验证响应。
+     */
+    @Mock
+    private G3PhaseValidator phaseValidator;
+
+    /**
+     * G3 知识库 Mock：避免单测触发向量索引流程。
+     */
+    @Mock
+    private G3KnowledgeStore knowledgeStore;
+
+    /**
+     * 仓库索引 Mock：避免单测触发索引构建。
+     */
+    @Mock
+    private G3RepoIndexService repoIndexService;
+
+    /**
+     * 规划文件服务 Mock：用于拦截任务计划写入。
+     */
+    @Mock
+    private G3PlanningFileService planningFileService;
+
+    /**
+     * WebSocket广播 Mock：避免单测触发真实推送。
+     */
+    @Mock
+    private G3WebSocketBroadcaster g3WebSocketBroadcaster;
+
+    /**
+     * SessionMemory 持久化 Mock：避免单测依赖 Redis。
+     */
+    @Mock
+    private G3MemoryPersistenceService memoryPersistenceService;
+
     @Mock
     private IArchitectAgent architectAgent;
 
@@ -83,6 +161,8 @@ class G3OrchestratorServiceTest {
 
         // 单元测试环境没有 Spring 代理注入 self，这里手动补齐，避免 submitJob 触发 NPE
         ReflectionTestUtils.setField(orchestratorService, "self", orchestratorService);
+
+        // 仅在 runJob 流程测试中才需要的 Mock 放到专用方法中，避免未使用的 stubbing 报错
     }
 
     /**
@@ -166,6 +246,7 @@ class G3OrchestratorServiceTest {
     void runJob_architectPhase_shouldGenerateAndLockContract() {
         // GIVEN
         when(jobMapper.selectById(testJobId)).thenReturn(testJob);
+        prepareRunJobStubs();
         when(architectAgent.design(any(), any())).thenReturn(
                 new IArchitectAgent.ArchitectResult(
                         "openapi: 3.0.0\ninfo:\n  title: User API",
@@ -203,6 +284,7 @@ class G3OrchestratorServiceTest {
     void runJob_codingPhase_shouldGenerateArtifacts() {
         // GIVEN
         when(jobMapper.selectById(testJobId)).thenReturn(testJob);
+        prepareRunJobStubs();
 
         // Mock架构设计阶段
         when(architectAgent.design(any(), any())).thenReturn(
@@ -236,6 +318,7 @@ class G3OrchestratorServiceTest {
     void runJob_compilationFails_shouldTriggerCoachRepair() {
         // GIVEN
         when(jobMapper.selectById(testJobId)).thenReturn(testJob);
+        prepareRunJobStubs();
 
         // Mock架构设计阶段
         when(architectAgent.design(any(), any())).thenReturn(
@@ -262,7 +345,7 @@ class G3OrchestratorServiceTest {
                 })
                 .thenReturn(createSuccessValidationResult()); // 第二次成功
 
-        when(coachAgent.fix(any(), any(), any(), any())).thenReturn(
+        when(coachAgent.fix(any(), any(), any(), any(), any())).thenReturn(
                 new ICoachAgent.CoachResult(
                         List.of(createFixedArtifact()),
                         true,
@@ -275,7 +358,7 @@ class G3OrchestratorServiceTest {
         orchestratorService.runJob(testJobId);
 
         // THEN
-        verify(coachAgent).fix(eq(testJob), any(), any(), any());
+        verify(coachAgent).fix(eq(testJob), any(), any(), any(), any());
         verify(validationResultMapper, atLeast(2)).insert((G3ValidationResultEntity) any());
         verify(jobMapper, atLeastOnce()).updateById(argThat((G3JobEntity job) ->
                 job.getCurrentRound() >= 1
@@ -290,6 +373,7 @@ class G3OrchestratorServiceTest {
     void runJob_maxRoundsExceeded_shouldFailJob() {
         // GIVEN
         when(jobMapper.selectById(testJobId)).thenReturn(testJob);
+        prepareRunJobStubs();
 
         // Mock架构设计阶段
         when(architectAgent.design(any(), any())).thenReturn(
@@ -313,7 +397,7 @@ class G3OrchestratorServiceTest {
             return createFailedValidationResult();
         });
 
-        when(coachAgent.fix(any(), any(), any(), any())).thenReturn(
+        when(coachAgent.fix(any(), any(), any(), any(), any())).thenReturn(
                 new ICoachAgent.CoachResult(
                         List.of(createFixedArtifact()),
                         true,
@@ -368,6 +452,37 @@ class G3OrchestratorServiceTest {
                 )
         );
         return coder;
+    }
+
+    /**
+     * 仅用于 runJob 流程的统一 Mock 准备。
+     *
+     * 是什么：收拢 runJob 所需的依赖桩。
+     * 做什么：避免 setUp 中的未使用 stubbing 触发严格模式报错。
+     * 为什么：保证测试稳定且仅在需要时启用 Mock。
+     */
+    private void prepareRunJobStubs() {
+        // SessionMemory 默认 Mock：避免 runJob 入口空指针
+        when(memoryPersistenceService.getOrCreate(any()))
+                .thenAnswer(invocation -> new G3SessionMemory(invocation.getArgument(0)));
+
+        // 依赖分析默认返回空图，避免任务分解影响测试
+        when(dependencyAnalyzer.analyzeFromSchema(anyString()))
+                .thenReturn(new G3TaskDependencyGraph());
+
+        // PhaseValidator 统一走 sandboxService 的验证结果，便于复用现有测试桩
+        lenient().when(phaseValidator.validateAll(any(), any(), any()))
+                .thenAnswer(invocation -> {
+                    G3ValidationResultEntity result = sandboxService.validate(
+                            invocation.getArgument(0),
+                            invocation.getArgument(1),
+                            invocation.getArgument(2));
+                    if (result == null) {
+                        result = createSuccessValidationResult();
+                    }
+                    boolean passed = Boolean.TRUE.equals(result.getPassed());
+                    return new G3PhaseValidator.ValidationResult(passed, result, null, List.of());
+                });
     }
 
     private G3ArtifactEntity createArtifact(String fileName, int version) {

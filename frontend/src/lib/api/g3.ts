@@ -24,6 +24,7 @@ import type {
   SubmitG3JobResponse,
   G3HealthStatus,
 } from '@/types/g3';
+import type { G3PlanningFileEntity } from '@/types/g3-planning';
 
 /**
  * G3任务状态响应（与后端JobStatusResponse对齐）
@@ -138,6 +139,46 @@ export async function getG3Contract(
  */
 export async function checkG3Health(): Promise<APIResponse<G3HealthStatus>> {
   return get<G3HealthStatus>('/v1/g3/health');
+}
+
+/**
+ * 获取任务的所有规划文件
+ *
+ * @param jobId - 任务ID
+ * @returns 规划文件列表
+ */
+export async function getG3PlanningFiles(
+  jobId: string
+): Promise<APIResponse<G3PlanningFileEntity[]>> {
+  return get<G3PlanningFileEntity[]>(`/v1/g3/jobs/${jobId}/planning`);
+}
+
+/**
+ * 获取单个规划文件
+ *
+ * @param jobId - 任务ID
+ * @param type - 文件类型 (task_plan/notes/context)
+ * @returns 规划文件
+ */
+export async function getG3PlanningFile(
+  jobId: string,
+  type: string
+): Promise<APIResponse<G3PlanningFileEntity>> {
+  return get<G3PlanningFileEntity>(`/v1/g3/jobs/${jobId}/planning/${type}`);
+}
+
+/**
+ * 获取规划文件内容（纯文本）
+ *
+ * @param jobId - 任务ID
+ * @param type - 文件类型
+ * @returns 文件内容
+ */
+export async function getG3PlanningFileContent(
+  jobId: string,
+  type: string
+): Promise<APIResponse<string>> {
+  return get<string>(`/v1/g3/jobs/${jobId}/planning/${type}/content`);
 }
 
 /**
@@ -445,13 +486,14 @@ export async function createAndMonitorG3Job(
     onSubmitted?: (jobId: string) => void;
     /** 任务提交失败回调 */
     onSubmitError?: (error: string) => void;
-  }
+  },
+  submitOverrides?: Omit<SubmitG3JobRequest, 'requirement'>
 ): Promise<{ jobId: string | null; cancel: () => void }> {
   let cancel: (() => void) | null = null;
 
   try {
     // 提交任务
-    const response = await submitG3Job({ requirement });
+    const response = await submitG3Job({ requirement, ...(submitOverrides || {}) });
 
     if (!response.success || !response.data?.jobId) {
       const errorMessage = response.error || response.message || '任务提交失败';

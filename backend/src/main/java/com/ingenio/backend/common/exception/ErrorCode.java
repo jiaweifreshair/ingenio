@@ -1,12 +1,9 @@
 package com.ingenio.backend.common.exception;
 
-import lombok.Getter;
-
 /**
  * 错误码枚举
  * 定义系统中所有的错误码
  */
-@Getter
 public enum ErrorCode {
 
     // 通用错误码（1000-1999）
@@ -79,5 +76,13 @@ public enum ErrorCode {
     ErrorCode(String code, String message) {
         this.code = code;
         this.message = message;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public String getMessage() {
+        return message;
     }
 }

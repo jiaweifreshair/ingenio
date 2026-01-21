@@ -13,6 +13,7 @@
  */
 
 import { setToken, clearToken, getToken } from '@/lib/auth/token';
+import { setTokenExpiry, clearTokenExpiry } from '@/lib/auth/token-refresh';
 import { get, post } from '@/lib/api/client';
 
 /**
@@ -186,9 +187,12 @@ export async function checkWechatScanStatus(
     throw new Error('检查扫码状态失败');
   }
 
-  // 如果已确认，存储Token
+  // 如果已确认，存储Token和过期时间
   if (response.data.status === 'confirmed' && response.data.token) {
     setToken(response.data.token);
+    if (response.data.userInfo) {
+      setTokenExpiry(604800); // 默认7天
+    }
   }
 
   return response.data;
@@ -231,8 +235,9 @@ export async function loginWithPhone(
     throw new Error('手机号登录失败');
   }
 
-  // 存储Token
+  // 存储Token和过期时间
   setToken(response.data.token);
+  setTokenExpiry(response.data.expiresIn);
 
   return response.data;
 }
@@ -302,8 +307,9 @@ export async function login(
     throw new Error(normalizeLoginErrorMessage(response.message, '登录失败：服务器未返回数据'));
   }
 
-  // 存储Token
+  // 存储Token和过期时间
   setToken(response.data.token);
+  setTokenExpiry(response.data.expiresIn);
 
   return response.data;
 }
@@ -320,8 +326,9 @@ export async function logout(): Promise<void> {
   } catch (e) {
     console.error('登出API失败:', e);
   } finally {
-    // 无论API是否成功，都清除本地Token
+    // 无论API是否成功，都清除本地Token和过期时间
     clearToken();
+    clearTokenExpiry();
   }
 }
 
@@ -378,8 +385,9 @@ export async function register(
     throw new Error('注册失败');
   }
 
-  // 存储Token
+  // 存储Token和过期时间
   setToken(response.data.token);
+  setTokenExpiry(response.data.expiresIn);
 
   return response.data;
 }
@@ -399,8 +407,9 @@ export async function loginWithGoogle(code: string): Promise<LoginResponse> {
     throw new Error('Google登录失败');
   }
 
-  // 存储Token
+  // 存储Token和过期时间
   setToken(response.data.token);
+  setTokenExpiry(response.data.expiresIn);
 
   return response.data;
 }
@@ -418,8 +427,9 @@ export async function loginWithGitHub(code: string): Promise<LoginResponse> {
     throw new Error('GitHub登录失败');
   }
 
-  // 存储Token
+  // 存储Token和过期时间
   setToken(response.data.token);
+  setTokenExpiry(response.data.expiresIn);
 
   return response.data;
 }
@@ -463,8 +473,9 @@ export async function refreshToken(): Promise<TokenRefreshResponse> {
     throw new Error('Token刷新失败');
   }
 
-  // 更新本地存储的Token
+  // 更新本地存储的Token和过期时间
   setToken(response.data.token);
+  setTokenExpiry(response.data.expiresIn);
 
   return response.data;
 }

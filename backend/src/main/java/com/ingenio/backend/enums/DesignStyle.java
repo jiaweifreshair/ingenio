@@ -1,7 +1,5 @@
 package com.ingenio.backend.enums;
 
-import lombok.Getter;
-
 /**
  * 设计风格枚举
  * 定义SuperDesign支持的7种设计风格
@@ -12,7 +10,6 @@ import lombok.Getter;
  * @version 2.0.0
  * @since 2025-11-14
  */
-@Getter
 public enum DesignStyle {
 
     /**
@@ -79,6 +76,22 @@ public enum DesignStyle {
         this.identifier = identifier;
         this.displayName = displayName;
         this.description = description;
+    }
+
+    public String getCode() {
+        return code;
+    }
+
+    public String getIdentifier() {
+        return identifier;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public String getDescription() {
+        return description;
     }
 
     /**

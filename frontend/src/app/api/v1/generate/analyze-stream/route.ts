@@ -114,6 +114,26 @@ async function handleLegacyMode(body: Record<string, unknown>): Promise<Response
 }
 
 /**
+ * 安全解析请求体 JSON
+ *
+ * 说明：
+ * - 避免空请求体触发 `request.json()` 的解析异常
+ * - 返回 null 表示请求体为空
+ */
+async function parseJsonBody(request: NextRequest): Promise<Record<string, unknown> | null> {
+  const raw = await request.text();
+  if (!raw.trim()) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    throw new Error('请求体不是有效的 JSON');
+  }
+}
+
+/**
  * SSE流式分析API路由
  * POST /api/v1/generate/analyze-stream
  *
@@ -127,16 +147,21 @@ export async function POST(request: NextRequest) {
   console.log('🌊 SSE Analyze API called');
 
   try {
-    const body = await request.json();
+    const body = await parseJsonBody(request);
+    if (!body) {
+      return new Response('请求体不能为空', { status: 400 });
+    }
 
     // Legacy 模式：代理到后端
     return handleLegacyMode(body);
 
   } catch (error) {
+    const message = error instanceof Error ? error.message : '分析失败';
+    const status = message.includes('JSON') ? 400 : 500;
     console.error('❌ SSE Analyze API error:', error);
     return new Response(
-      error instanceof Error ? error.message : '分析失败',
-      { status: 500 }
+      message,
+      { status }
     );
   }
 }

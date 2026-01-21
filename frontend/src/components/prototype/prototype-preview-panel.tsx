@@ -5,12 +5,13 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Eye, ArrowLeft, Check, Loader2, AlertCircle, Code2, Copy, CheckCircle, Sparkles, RefreshCw } from 'lucide-react';
+import { Eye, ArrowLeft, Check, Loader2, AlertCircle, Code2, Copy, CheckCircle, Sparkles, RefreshCw, Wrench } from 'lucide-react';
 import { DesignStyle, getStyleDisplayInfo } from '@/types/design-style';
 import type { IndustryTemplate } from '@/types/industry-template';
 import { CodeFileTree, type FileNode } from './code-file-tree';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 // Phase 2: Sandbox生命周期管理
 import { useSandboxHeartbeat } from '@/hooks/use-sandbox-heartbeat';
@@ -50,6 +51,8 @@ export interface PrototypePreviewPanelProps {
   onRefresh?: () => Promise<void> | void;
   /** 已用时间（秒） */
   elapsedTime?: number;
+  /** 自动修复回调 */
+  onAutoFix?: () => Promise<void> | void;
 }
 
 /**
@@ -115,7 +118,9 @@ export function PrototypePreviewPanel({
   thinking = '',
   onRefresh,
   elapsedTime = 0,
+  onAutoFix,
 }: PrototypePreviewPanelProps): React.ReactElement {
+  const { t } = useLanguage();
   // 获取选中风格的显示信息
   const selectedStyleInfo = selectedStyle ? getStyleDisplayInfo(selectedStyle) : null;
 
@@ -128,6 +133,9 @@ export function PrototypePreviewPanel({
   // 刷新状态
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
+
+  // 自动修复状态
+  const [isFixing, setIsFixing] = useState(false);
 
   // Phase 2: Sandbox心跳（60秒间隔）
   useSandboxHeartbeat({
@@ -171,6 +179,22 @@ export function PrototypePreviewPanel({
       console.error('刷新失败:', error);
     } finally {
       setIsRefreshing(false);
+    }
+  };
+
+  // 自动修复
+  const handleAutoFix = async () => {
+    if (isFixing || !onAutoFix) return;
+
+    setIsFixing(true);
+    try {
+      await onAutoFix();
+      // 修复后自动刷新预览
+      setIframeKey(prev => prev + 1);
+    } catch (error) {
+      console.error('自动修复失败:', error);
+    } finally {
+      setIsFixing(false);
     }
   };
 
@@ -225,12 +249,12 @@ export function PrototypePreviewPanel({
           <Eye className="h-6 w-6 text-blue-600 dark:text-blue-400" />
           <div>
             <h2 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-gray-100">
-              原型预览
+              {t('ui.prototype_preview')}
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               {loading
-                ? '正在生成原型预览...'
-                : '预览您的应用设计，确认后将生成完整代码'}
+                ? t('ui.generating_prototype_preview')
+                : t('ui.preview_design_confirm_hint')}
             </p>
           </div>
         </div>
@@ -242,7 +266,7 @@ export function PrototypePreviewPanel({
           className="w-full sm:w-auto"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
-          {loading ? '取消生成' : '重新选择风格'}
+          {loading ? t('ui.cancel_generation') : t('ui.reselect_style')}
         </Button>
       </div>
 
@@ -250,7 +274,7 @@ export function PrototypePreviewPanel({
       <Card className="p-4 mb-6 border-2 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/10 dark:to-purple-900/10 border-blue-200 dark:border-blue-800">
         <div className="flex flex-wrap items-center gap-3">
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            您的选择：
+            {t('ui.your_selection')}
           </span>
 
           {/* 模板徽章 */}
@@ -281,48 +305,57 @@ export function PrototypePreviewPanel({
         <Card className="h-full border-2 border-gray-200 dark:border-gray-700">
           {/* 加载状态 */}
           {loading && (
-            <div className="flex flex-col items-center justify-center h-full bg-gray-50 dark:bg-gray-900 p-8">
-              <Loader2 className="h-16 w-16 text-blue-600 dark:text-blue-400 animate-spin mb-4" />
-              <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                正在生成原型预览
-              </h3>
-              <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-md">
-                AI 正在根据您的选择生成可交互的应用原型，已用时 {elapsedTime} 秒...
-              </p>
-              <div className="mt-6 flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-blue-600 dark:bg-blue-400 animate-pulse"></div>
-                <div className="h-2 w-2 rounded-full bg-purple-600 dark:bg-purple-400 animate-pulse delay-75"></div>
-                <div className="h-2 w-2 rounded-full bg-green-600 dark:bg-green-400 animate-pulse delay-150"></div>
+            <div className="flex flex-col items-center h-full bg-gray-50 dark:bg-gray-900 overflow-y-auto">
+              <div className="w-full max-w-4xl flex flex-col items-center p-8 space-y-8 my-auto min-h-min">
+                <div className="flex flex-col items-center text-center">
+                  <Loader2 className="h-16 w-16 text-blue-600 dark:text-blue-400 animate-spin mb-6" />
+                  <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
+                    {t('ui.generating_prototype_preview')}
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-md">
+                    AI 正在根据您的选择生成可交互的应用原型，已用时 {elapsedTime} 秒...
+                  </p>
+                  <div className="mt-6 flex items-center gap-3">
+                    <div className="h-2.5 w-2.5 rounded-full bg-blue-600 dark:bg-blue-400 animate-pulse"></div>
+                    <div className="h-2.5 w-2.5 rounded-full bg-purple-600 dark:bg-purple-400 animate-pulse delay-75"></div>
+                    <div className="h-2.5 w-2.5 rounded-full bg-green-600 dark:bg-green-400 animate-pulse delay-150"></div>
+                  </div>
+                </div>
+
+                {/* AI思考过程 */}
+                {thinking && (
+                  <div className="w-full bg-gray-50 dark:bg-gray-800/50 rounded-lg p-6 text-left border border-gray-200 dark:border-gray-700 shadow-sm">
+                    <div className="flex items-center gap-2 mb-4 text-purple-600 dark:text-purple-400 border-b border-gray-100 dark:border-gray-700/50 pb-2">
+                      <Sparkles className="w-4 h-4" />
+                      <span className="text-sm font-semibold">AI 深度思考中...</span>
+                    </div>
+                    <div
+                      ref={thinkingRef}
+                      className="text-xs text-gray-600 dark:text-gray-300 font-mono whitespace-pre-wrap leading-relaxed max-h-[500px] overflow-y-auto scroll-smooth pr-2"
+                    >
+                      {thinking}
+                      <span className="inline-block w-1.5 h-3 bg-purple-600/50 dark:bg-purple-400/50 ml-1 animate-pulse" />
+                    </div>
+                  </div>
+                )}
+
+                {/* 流式代码预览 */}
+                {streamedCode && (
+                  <div className="w-full">
+                    <div className="bg-gray-900 rounded-lg p-6 text-left shadow-lg border border-gray-700">
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-xs text-gray-400">{t('ui.generating_code')}</p>
+                        <Badge variant="outline" className="text-[10px] border-gray-700 text-gray-400">
+                          Live Stream
+                        </Badge>
+                      </div>
+                      <pre className="text-xs text-green-400 font-mono overflow-x-auto max-h-60 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-transparent">
+                        {streamedCode.slice(-1000)}
+                      </pre>
+                    </div>
+                  </div>
+                )}
               </div>
-
-              {/* AI思考过程 */}
-              {thinking && (
-                <div className="mt-6 w-full max-w-2xl bg-gray-50 dark:bg-gray-800/50 rounded-lg p-4 text-left border border-gray-200 dark:border-gray-700">
-                  <div className="flex items-center gap-2 mb-2 text-purple-600 dark:text-purple-400">
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span className="text-xs font-semibold">AI 深度思考中...</span>
-                  </div>
-                  <div
-                    ref={thinkingRef}
-                    className="text-xs text-gray-600 dark:text-gray-300 font-mono whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto scroll-smooth"
-                  >
-                    {thinking}
-                    <span className="inline-block w-1.5 h-3 bg-purple-600/50 dark:bg-purple-400/50 ml-1 animate-pulse" />
-                  </div>
-                </div>
-              )}
-
-              {/* 流式代码预览 */}
-              {streamedCode && (
-                <div className="mt-6 w-full max-w-2xl">
-                  <div className="bg-gray-800 rounded-lg p-4 text-left">
-                    <p className="text-xs text-gray-400 mb-2">正在生成代码...</p>
-                    <pre className="text-xs text-green-400 font-mono overflow-x-auto max-h-40">
-                      {streamedCode.slice(-500)}
-                    </pre>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -350,7 +383,7 @@ export function PrototypePreviewPanel({
                     className="h-8 text-xs flex items-center gap-2"
                   >
                     <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                    {isRefreshing ? '刷新中...' : '刷新预览'}
+                    {isRefreshing ? t('ui.refreshing') : t('ui.refresh_preview')}
                   </Button>
                 )}
               </div>
@@ -362,7 +395,7 @@ export function PrototypePreviewPanel({
                   {isRefreshing && (
                     <div className="absolute inset-0 z-10 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm flex flex-col items-center justify-center">
                       <Loader2 className="h-8 w-8 text-blue-600 animate-spin mb-2" />
-                      <p className="text-sm font-medium">正在刷新...</p>
+                      <p className="text-sm font-medium">{t('ui.refreshing')}</p>
                     </div>
                   )}
                   {/* 代码生成中遮罩 - 当有沙箱URL但代码还在生成时显示 */}
@@ -371,10 +404,10 @@ export function PrototypePreviewPanel({
                       <div className="flex flex-col items-center max-w-md text-center p-6">
                         <Loader2 className="h-12 w-12 text-blue-600 animate-spin mb-4" />
                         <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                          代码正在生成中...
+                          {t('ui.code_generating')}
                         </h3>
                         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                          AI 正在生成应用代码并部署到沙箱，完成后将自动显示预览
+                          {t('ui.code_generating_desc')}
                         </p>
                         {/* 进度动画 */}
                         <div className="flex items-center gap-2">
@@ -385,7 +418,7 @@ export function PrototypePreviewPanel({
                         {/* 流式代码预览提示 */}
                         {streamedCode && (
                           <div className="mt-4 w-full bg-gray-800 rounded-lg p-3 text-left">
-                            <p className="text-xs text-gray-400 mb-1">正在生成代码...</p>
+                            <p className="text-xs text-gray-400 mb-1">{t('ui.generating_code')}</p>
                             <pre className="text-xs text-green-400 font-mono overflow-x-auto max-h-20">
                               {streamedCode.slice(-200)}
                             </pre>
@@ -398,7 +431,7 @@ export function PrototypePreviewPanel({
                     key={iframeKey}
                     src={iframeKey > 0 ? `${sandboxUrl}?t=${Date.now()}` : sandboxUrl}
                     className="w-full h-full min-h-[500px] border-0"
-                    title="原型预览"
+                    title={t('ui.prototype_preview')}
                     sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups allow-downloads"
                   />
                 </div>
@@ -408,7 +441,7 @@ export function PrototypePreviewPanel({
               <TabsContent value="code" className="flex-1 overflow-hidden m-4 mt-2">
                 <div className="flex h-full gap-4">
                   {/* 左侧：文件树 */}
-                  <div className="w-64 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto">
+                  <div className="w-72 flex-shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto">
                     <CodeFileTree
                       files={files}
                       selectedPath={selectedFile?.path}
@@ -481,13 +514,34 @@ export function PrototypePreviewPanel({
             <div className="flex flex-col items-center justify-center h-full bg-gray-50 dark:bg-gray-900 p-8">
               <AlertCircle className="h-16 w-16 text-yellow-600 dark:text-yellow-400 mb-4" />
               <h3 className="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2">
-                原型生成失败
+                {t('ui.prototype_generation_failed')}
               </h3>
               <p className="text-sm text-gray-600 dark:text-gray-400 text-center max-w-md mb-6">
-                {errorMessage || '无法生成原型预览，请稍后重试或返回重新选择风格。'}
+                {errorMessage || t('ui.cannot_generate_prototype')}
               </p>
               {/* 操作按钮 */}
               <div className="flex gap-3">
+                {onAutoFix && (
+                  <Button
+                    onClick={handleAutoFix}
+                    disabled={isFixing}
+                    variant="default"
+                    size="lg"
+                    className="bg-orange-600 hover:bg-orange-700 text-white"
+                  >
+                    {isFixing ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        修复中...
+                      </>
+                    ) : (
+                      <>
+                        <Wrench className="mr-2 h-4 w-4" />
+                        自动修复代码
+                      </>
+                    )}
+                  </Button>
+                )}
                 {onRetry && (
                   <Button
                     onClick={onRetry}
@@ -505,11 +559,11 @@ export function PrototypePreviewPanel({
                   size="lg"
                 >
                   <ArrowLeft className="mr-2 h-4 w-4" />
-                  返回重新选择
+                  {t('ui.go_back_reselect')}
                 </Button>
               </div>
               <p className="text-xs text-gray-500 dark:text-gray-500 mt-6 text-center max-w-md">
-                如长期无法生成，请确认 OpenLovable 服务已启动（默认端口3001）
+                {t('ui.service_not_started_hint')}
               </p>
             </div>
           )}
@@ -523,11 +577,11 @@ export function PrototypePreviewPanel({
             <AlertCircle className="h-5 w-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
             <div className="flex-1">
               <h4 className="text-sm font-semibold text-green-900 dark:text-green-100 mb-1">
-                确认前请仔细预览
+                {t('ui.check_before_confirm')}
               </h4>
               <p className="text-sm text-green-800 dark:text-green-200 leading-relaxed">
-                点击&ldquo;确认设计&rdquo;后，系统将生成完整的全栈代码（前端+后端+数据库），
-                生成过程需要3-5分钟。请确保当前设计符合您的预期，否则请返回重新选择风格。
+                {t('ui.confirm_design_hint')}
+                {t('ui.generation_time_hint')}
               </p>
             </div>
           </div>

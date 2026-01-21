@@ -1,47 +1,68 @@
 package com.ingenio.backend.common;
 
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
-
 /**
  * 统一响应结果
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class Result<T> {
 
-    /**
-     * 状态码（200=成功，其他=失败）
-     */
     private Integer code;
-
-    /**
-     * 是否成功
-     */
     private Boolean success;
-
-    /**
-     * 响应消息
-     */
     private String message;
-
-    /**
-     * 响应数据
-     */
     private T data;
-
-    /**
-     * 时间戳
-     */
     private Long timestamp;
 
-    /**
-     * 成功响应
-     */
+    public Result() {
+    }
+
+    public Result(Integer code, Boolean success, String message, T data, Long timestamp) {
+        this.code = code;
+        this.success = success;
+        this.message = message;
+        this.data = data;
+        this.timestamp = timestamp;
+    }
+
+    public static <T> ResultBuilder<T> builder() {
+        return new ResultBuilder<T>();
+    }
+
+    public static class ResultBuilder<T> {
+        private Integer code;
+        private Boolean success;
+        private String message;
+        private T data;
+        private Long timestamp;
+
+        public ResultBuilder<T> code(Integer code) {
+            this.code = code;
+            return this;
+        }
+
+        public ResultBuilder<T> success(Boolean success) {
+            this.success = success;
+            return this;
+        }
+
+        public ResultBuilder<T> message(String message) {
+            this.message = message;
+            return this;
+        }
+
+        public ResultBuilder<T> data(T data) {
+            this.data = data;
+            return this;
+        }
+
+        public ResultBuilder<T> timestamp(Long timestamp) {
+            this.timestamp = timestamp;
+            return this;
+        }
+
+        public Result<T> build() {
+            return new Result<T>(code, success, message, data, timestamp);
+        }
+    }
+
     public static <T> Result<T> success(T data) {
         return Result.<T>builder()
                 .code(200)
@@ -52,9 +73,6 @@ public class Result<T> {
                 .build();
     }
 
-    /**
-     * 成功响应（带自定义消息）
-     */
     public static <T> Result<T> success(T data, String message) {
         return Result.<T>builder()
                 .code(200)
@@ -65,16 +83,10 @@ public class Result<T> {
                 .build();
     }
 
-    /**
-     * 成功响应（无数据）
-     */
     public static <T> Result<T> success() {
         return success(null);
     }
 
-    /**
-     * 成功响应（仅消息）
-     */
     public static Result<Void> successMessage(String message) {
         return Result.<Void>builder()
                 .code(200)
@@ -85,9 +97,6 @@ public class Result<T> {
                 .build();
     }
 
-    /**
-     * 失败响应
-     */
     public static <T> Result<T> error(Integer code, String message) {
         return Result.<T>builder()
                 .code(code)
@@ -98,10 +107,48 @@ public class Result<T> {
                 .build();
     }
 
-    /**
-     * 失败响应（默认500）
-     */
     public static <T> Result<T> error(String message) {
         return error(500, message);
+    }
+
+    // Getters and Setters
+    public Integer getCode() {
+        return code;
+    }
+
+    public void setCode(Integer code) {
+        this.code = code;
+    }
+
+    public Boolean getSuccess() {
+        return success;
+    }
+
+    public void setSuccess(Boolean success) {
+        this.success = success;
+    }
+
+    public String getMessage() {
+        return message;
+    }
+
+    public void setMessage(String message) {
+        this.message = message;
+    }
+
+    public T getData() {
+        return data;
+    }
+
+    public void setData(T data) {
+        this.data = data;
+    }
+
+    public Long getTimestamp() {
+        return timestamp;
+    }
+
+    public void setTimestamp(Long timestamp) {
+        this.timestamp = timestamp;
     }
 }

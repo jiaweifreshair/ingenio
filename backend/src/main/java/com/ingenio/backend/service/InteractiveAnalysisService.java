@@ -1,0 +1,228 @@
+package com.ingenio.backend.service;
+
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.ingenio.backend.dto.response.AnalysisProgressMessage;
+import com.ingenio.backend.entity.InteractiveAnalysisSessionEntity;
+import com.ingenio.backend.mapper.InteractiveAnalysisSessionMapper;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+import java.util.function.Consumer;
+
+/**
+ * 交互式分析服务
+ *
+ * 实现AI深度思考的交互式分析流程:
+ * - 每个步骤完成后等待人工确认
+ * - 用户可以提出修改建议后重新执行当前步骤
+ * - 完整的会话状态跟踪
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class InteractiveAnalysisService {
+
+    private final InteractiveAnalysisSessionMapper sessionMapper;
+    private final NLRequirementAnalyzer requirementAnalyzer;
+
+    /**
+     * 启动交互式分析会话
+     *
+     * @param userId 用户ID
+     * @param requirement 需求描述
+     * @return 会话ID
+     */
+    @Transactional
+    public String startSession(Long userId, String requirement) {
+        log.info("启动交互式分析会话: userId={}, requirement={}", userId, requirement);
+
+        InteractiveAnalysisSessionEntity session = new InteractiveAnalysisSessionEntity();
+        session.setSessionId(UUID.randomUUID().toString());
+        session.setUserId(userId);
+        session.setRequirement(requirement);
+        session.setCurrentStep(1);
+        session.setStatus("RUNNING");
+        session.setStepResults(new HashMap<>());
+        session.setStepFeedback(new HashMap<>());
+        session.setStepRetries(new HashMap<>());
+        session.setCreatedAt(LocalDateTime.now());
+        session.setUpdatedAt(LocalDateTime.now());
+
+        sessionMapper.insert(session);
+
+        log.info("交互式分析会话已创建: sessionId={}", session.getSessionId());
+        return session.getSessionId();
+    }
+
+    /**
+     * 执行当前步骤的分析
+     *
+     * @param sessionId 会话ID
+     * @param progressCallback 进度回调
+     * @return 步骤执行结果
+     */
+    @Transactional
+    public Object executeCurrentStep(String sessionId, Consumer<AnalysisProgressMessage> progressCallback) {
+        InteractiveAnalysisSessionEntity session = getSession(sessionId);
+
+        if (!"RUNNING".equals(session.getStatus())) {
+            throw new IllegalStateException("会话状态不是RUNNING,无法执行步骤: " + session.getStatus());
+        }
+
+        int currentStep = session.getCurrentStep();
+        log.info("执行步骤 {}: sessionId={}", currentStep, sessionId);
+
+        try {
+            // 获取当前步骤的用户反馈(如果有)
+            String currentFeedback = session.getStepFeedback().get(currentStep);
+
+            // 执行单步分析,传递完整上下文
+            Object stepResult = requirementAnalyzer.analyzeSingleStep(
+                    session.getRequirement(),
+                    currentStep,
+                    session.getStepResults(),      // 传递历史结果
+                    session.getStepFeedback(),     // 传递历史反馈
+                    currentFeedback,               // 传递当前反馈
+                    progressCallback
+            );
+
+            // 保存步骤结果
+            session.getStepResults().put(currentStep, stepResult);
+            session.setStatus("WAITING_CONFIRMATION");
+            session.setUpdatedAt(LocalDateTime.now());
+            sessionMapper.updateById(session);
+
+            log.info("步骤 {} 执行完成,等待用户确认: sessionId={}", currentStep, sessionId);
+            return stepResult;
+
+        } catch (Exception e) {
+            log.error("步骤 {} 执行失败: sessionId={}", currentStep, sessionId, e);
+            session.setStatus("FAILED");
+            session.setErrorMessage(e.getMessage());
+            session.setUpdatedAt(LocalDateTime.now());
+            sessionMapper.updateById(session);
+            throw new RuntimeException("步骤执行失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 确认当前步骤,进入下一步
+     *
+     * @param sessionId 会话ID
+     * @param step 确认的步骤编号
+     */
+    @Transactional
+    public void confirmStep(String sessionId, int step) {
+        InteractiveAnalysisSessionEntity session = getSession(sessionId);
+
+        if (!"WAITING_CONFIRMATION".equals(session.getStatus())) {
+            throw new IllegalStateException("会话状态不是WAITING_CONFIRMATION,无法确认步骤: " + session.getStatus());
+        }
+
+        if (session.getCurrentStep() != step) {
+            throw new IllegalArgumentException("步骤编号不匹配: expected=" + session.getCurrentStep() + ", actual=" + step);
+        }
+
+        log.info("用户确认步骤 {}: sessionId={}", step, sessionId);
+
+        // 如果是最后一步,标记为完成
+        if (step == 6) {
+            session.setStatus("COMPLETED");
+            session.setCompletedAt(LocalDateTime.now());
+            // 保存最终结果
+            session.setFinalResult(session.getStepResults().get(6));
+            log.info("所有步骤完成: sessionId={}", sessionId);
+        } else {
+            // 进入下一步
+            session.setCurrentStep(step + 1);
+            session.setStatus("RUNNING");
+            log.info("进入步骤 {}: sessionId={}", step + 1, sessionId);
+        }
+
+        session.setUpdatedAt(LocalDateTime.now());
+        sessionMapper.updateById(session);
+    }
+
+    /**
+     * 提出修改建议,重新执行当前步骤
+     *
+     * @param sessionId 会话ID
+     * @param step 步骤编号
+     * @param feedback 用户反馈
+     */
+    @Transactional
+    public void modifyStep(String sessionId, int step, String feedback) {
+        InteractiveAnalysisSessionEntity session = getSession(sessionId);
+
+        if (!"WAITING_CONFIRMATION".equals(session.getStatus())) {
+            throw new IllegalStateException("会话状态不是WAITING_CONFIRMATION,无法修改步骤: " + session.getStatus());
+        }
+
+        if (session.getCurrentStep() != step) {
+            throw new IllegalArgumentException("步骤编号不匹配: expected=" + session.getCurrentStep() + ", actual=" + step);
+        }
+
+        log.info("用户提出修改建议,重新执行步骤 {}: sessionId={}, feedback={}", step, sessionId, feedback);
+
+        // 保存用户反馈
+        session.getStepFeedback().put(step, feedback);
+
+        // 增加重试次数
+        Map<Integer, Integer> retries = session.getStepRetries();
+        retries.put(step, retries.getOrDefault(step, 0) + 1);
+
+        // 标记为重新运行
+        session.setStatus("RUNNING");
+        session.setUpdatedAt(LocalDateTime.now());
+        sessionMapper.updateById(session);
+    }
+
+    /**
+     * 取消会话
+     *
+     * @param sessionId 会话ID
+     */
+    @Transactional
+    public void cancelSession(String sessionId) {
+        InteractiveAnalysisSessionEntity session = getSession(sessionId);
+
+        log.info("取消会话: sessionId={}", sessionId);
+
+        session.setStatus("CANCELLED");
+        session.setUpdatedAt(LocalDateTime.now());
+        sessionMapper.updateById(session);
+    }
+
+    /**
+     * 获取会话信息
+     *
+     * @param sessionId 会话ID
+     * @return 会话实体
+     */
+    public InteractiveAnalysisSessionEntity getSession(String sessionId) {
+        InteractiveAnalysisSessionEntity session = sessionMapper.selectById(sessionId);
+        if (session == null) {
+            throw new IllegalArgumentException("会话不存在: " + sessionId);
+        }
+        return session;
+    }
+
+    /**
+     * 获取用户的所有会话
+     *
+     * @param userId 用户ID
+     * @return 会话列表
+     */
+    public java.util.List<InteractiveAnalysisSessionEntity> getUserSessions(Long userId) {
+        LambdaQueryWrapper<InteractiveAnalysisSessionEntity> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(InteractiveAnalysisSessionEntity::getUserId, userId)
+                .orderByDesc(InteractiveAnalysisSessionEntity::getCreatedAt);
+        return sessionMapper.selectList(wrapper);
+    }
+}

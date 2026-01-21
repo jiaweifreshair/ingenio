@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Card, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Terminal, ShieldAlert, Cpu, Loader2, Play } from 'lucide-react';
 import type { G3LogEntry } from '@/types/g3';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { createAndMonitorG3Job } from '@/lib/api/g3';
 
 interface G3LogViewerProps {
   /** 需求描述（必填） */
@@ -15,12 +17,32 @@ interface G3LogViewerProps {
   templateId?: string;
   /** 是否禁用启动按钮 */
   disabled?: boolean;
+  /**
+   * 当前任务ID回调（可选）
+   *
+   * 用途：
+   * - 供 /lab 工具面板调用 Toolset / Shell
+   */
+  onJobIdChange?: (jobId: string | null) => void;
 }
 
-export function G3LogViewer({ requirement, templateId, disabled = false }: G3LogViewerProps) {
+export function G3LogViewer({ requirement, templateId, disabled = false, onJobIdChange }: G3LogViewerProps) {
   const [logs, setLogs] = useState<G3LogEntry[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [logFilter, setLogFilter] = useState('');
+  // SSE 取消句柄（用于重启任务或卸载时关闭连接）
+  const cancelRef = useRef<(() => void) | null>(null);
+
+  const filteredLogs = useMemo(() => {
+    const keyword = logFilter.trim().toLowerCase();
+    if (!keyword) return logs;
+    return logs.filter((log) => (
+      log.message.toLowerCase().includes(keyword) ||
+      log.role.toLowerCase().includes(keyword) ||
+      log.level.toLowerCase().includes(keyword)
+    ));
+  }, [logs, logFilter]);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -32,60 +54,67 @@ export function G3LogViewer({ requirement, templateId, disabled = false }: G3Log
     }
   }, [logs]);
 
+  useEffect(() => {
+    return () => {
+      cancelRef.current?.();
+      cancelRef.current = null;
+    };
+  }, []);
+
   const startGeneration = async () => {
+    if (!requirement || requirement.trim().length < 10) return;
     setIsRunning(true);
-    setLogs([]);
+    onJobIdChange?.(null);
+    cancelRef.current?.();
+    cancelRef.current = null;
+    setLogs([{
+      timestamp: new Date().toISOString(),
+      role: 'SYSTEM',
+      level: 'info',
+      message: 'G3引擎启动，正在建立连接并准备生成任务...'
+    }]);
 
     try {
-      const response = await fetch('/api/lab/g3-poc', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          requirement,
-          // 如果提供了 templateId，后端会从模板加载 Blueprint
-          ...(templateId && { templateId }),
-        }),
-      });
-
-      if (!response.body) throw new Error('No response body');
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const events = buffer.split('\n\n');
-        buffer = events.pop() || '';
-
-        for (const eventText of events) {
-          if (!eventText.trim()) continue;
-
-          // 解析后端 SSE：Spring WebFlux 在 Flux<Pojo> 情况下默认只输出 data: 行
-          const dataLines = eventText
-            .split('\n')
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trim());
-
-          const dataStr = dataLines.join('\n').trim();
-          if (!dataStr) continue;
-
-          try {
-            const logEntry = JSON.parse(dataStr) as G3LogEntry;
-            // 过滤掉心跳消息，不在 UI 中显示
-            if (logEntry.level === 'heartbeat') {
-              console.debug('[G3LogViewer] 收到心跳消息，保持连接活跃');
-              continue;
-            }
-            setLogs((prev) => [...prev, logEntry]);
-          } catch (e) {
-            console.warn('[G3LogViewer] 解析日志失败:', e, dataStr);
-          }
-        }
-      }
+      const { cancel } = await createAndMonitorG3Job(
+        requirement,
+        {
+          onSubmitted: (id) => {
+            onJobIdChange?.(id);
+            setLogs(prev => ([...prev, {
+              timestamp: new Date().toISOString(),
+              role: 'SYSTEM',
+              level: 'info',
+              message: `任务已创建，jobId=${id}`,
+            }]));
+          },
+          onSubmitError: (error) => {
+            setLogs(prev => ([...prev, {
+              timestamp: new Date().toISOString(),
+              role: 'EXECUTOR',
+              level: 'error',
+              message: `任务创建失败: ${error}`,
+            }]));
+            setIsRunning(false);
+          },
+          onLog: (entry) => {
+            if (entry.level === 'heartbeat') return;
+            setLogs(prev => ([...prev, entry]));
+          },
+          onError: (error) => {
+            setLogs(prev => ([...prev, {
+              timestamp: new Date().toISOString(),
+              role: 'EXECUTOR',
+              level: 'warn',
+              message: `日志流异常: ${error}`,
+            }]));
+          },
+          onComplete: () => {
+            setIsRunning(false);
+          },
+        },
+        templateId ? { templateId } : undefined
+      );
+      cancelRef.current = cancel;
     } catch (error) {
       console.error('Stream error:', error);
       setLogs(prev => [...prev, {
@@ -94,7 +123,6 @@ export function G3LogViewer({ requirement, templateId, disabled = false }: G3Log
         level: 'error',
         message: `Connection failed: ${error}`
       }]);
-    } finally {
       setIsRunning(false);
     }
   };
@@ -137,7 +165,13 @@ export function G3LogViewer({ requirement, templateId, disabled = false }: G3Log
               </CardDescription>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            <Input
+              value={logFilter}
+              onChange={(e) => setLogFilter(e.target.value)}
+              placeholder="过滤日志..."
+              className="h-8 w-40 text-xs bg-slate-900 border-slate-700 text-slate-100 placeholder:text-slate-500"
+            />
             <Button
               size="sm"
               variant={isRunning ? 'secondary' : 'default'}
@@ -165,7 +199,7 @@ export function G3LogViewer({ requirement, templateId, disabled = false }: G3Log
         )}
 
         <div className="space-y-3">
-          {logs.map((log, i) => (
+          {filteredLogs.map((log, i) => (
             <div key={i} className="flex gap-3 animate-in fade-in slide-in-from-left-2 duration-300">
               <div className="mt-0.5 opacity-70">{getRoleIcon(log.role)}</div>
               <div className="flex-1 space-y-1">

@@ -116,4 +116,178 @@ public class CoverageResult {
          */
         private java.util.List<Integer> uncoveredLines;
     }
+
+    // Manual Boilerplate for Lombok Failure
+    public CoverageResult(String projectType, String tool, Double overallCoverage, Double lineCoverage,
+            Double branchCoverage, Double functionCoverage, Double statementCoverage, Boolean meetsQualityGate,
+            String reportPath, Map<String, FileCoverage> filesCoverage) {
+        this.projectType = projectType;
+        this.tool = tool;
+        this.overallCoverage = overallCoverage;
+        this.lineCoverage = lineCoverage;
+        this.branchCoverage = branchCoverage;
+        this.functionCoverage = functionCoverage;
+        this.statementCoverage = statementCoverage;
+        this.meetsQualityGate = meetsQualityGate;
+        this.reportPath = reportPath;
+        this.filesCoverage = filesCoverage;
+    }
+
+    public CoverageResult() {
+    }
+
+    public static CoverageResultBuilder builder() {
+        return new CoverageResultBuilder();
+    }
+
+    public String getProjectType() {
+        return projectType;
+    }
+
+    public String getTool() {
+        return tool;
+    }
+
+    public Double getOverallCoverage() {
+        return overallCoverage;
+    }
+
+    public Double getLineCoverage() {
+        return lineCoverage;
+    }
+
+    public Double getBranchCoverage() {
+        return branchCoverage;
+    }
+
+    public Double getFunctionCoverage() {
+        return functionCoverage;
+    }
+
+    public Double getStatementCoverage() {
+        return statementCoverage;
+    }
+
+    public Boolean getMeetsQualityGate() {
+        return meetsQualityGate;
+    }
+
+    public String getReportPath() {
+        return reportPath;
+    }
+
+    public Map<String, FileCoverage> getFilesCoverage() {
+        return filesCoverage;
+    }
+
+    public void setProjectType(String projectType) {
+        this.projectType = projectType;
+    }
+
+    public void setTool(String tool) {
+        this.tool = tool;
+    }
+
+    public void setOverallCoverage(Double overallCoverage) {
+        this.overallCoverage = overallCoverage;
+    }
+
+    public void setLineCoverage(Double lineCoverage) {
+        this.lineCoverage = lineCoverage;
+    }
+
+    public void setBranchCoverage(Double branchCoverage) {
+        this.branchCoverage = branchCoverage;
+    }
+
+    public void setFunctionCoverage(Double functionCoverage) {
+        this.functionCoverage = functionCoverage;
+    }
+
+    public void setStatementCoverage(Double statementCoverage) {
+        this.statementCoverage = statementCoverage;
+    }
+
+    public void setMeetsQualityGate(Boolean meetsQualityGate) {
+        this.meetsQualityGate = meetsQualityGate;
+    }
+
+    public void setReportPath(String reportPath) {
+        this.reportPath = reportPath;
+    }
+
+    public void setFilesCoverage(Map<String, FileCoverage> filesCoverage) {
+        this.filesCoverage = filesCoverage;
+    }
+
+    public static class CoverageResultBuilder {
+        private String projectType;
+        private String tool;
+        private Double overallCoverage;
+        private Double lineCoverage;
+        private Double branchCoverage;
+        private Double functionCoverage;
+        private Double statementCoverage;
+        private Boolean meetsQualityGate;
+        private String reportPath;
+        private Map<String, FileCoverage> filesCoverage;
+
+        CoverageResultBuilder() {}
+
+        public CoverageResultBuilder projectType(String projectType) {
+            this.projectType = projectType;
+            return this;
+        }
+
+        public CoverageResultBuilder tool(String tool) {
+            this.tool = tool;
+            return this;
+        }
+
+        public CoverageResultBuilder overallCoverage(Double overallCoverage) {
+            this.overallCoverage = overallCoverage;
+            return this;
+        }
+
+        public CoverageResultBuilder lineCoverage(Double lineCoverage) {
+            this.lineCoverage = lineCoverage;
+            return this;
+        }
+
+        public CoverageResultBuilder branchCoverage(Double branchCoverage) {
+            this.branchCoverage = branchCoverage;
+            return this;
+        }
+
+        public CoverageResultBuilder functionCoverage(Double functionCoverage) {
+            this.functionCoverage = functionCoverage;
+            return this;
+        }
+
+        public CoverageResultBuilder statementCoverage(Double statementCoverage) {
+            this.statementCoverage = statementCoverage;
+            return this;
+        }
+
+        public CoverageResultBuilder meetsQualityGate(Boolean meetsQualityGate) {
+            this.meetsQualityGate = meetsQualityGate;
+            return this;
+        }
+
+        public CoverageResultBuilder reportPath(String reportPath) {
+            this.reportPath = reportPath;
+            return this;
+        }
+
+        public CoverageResultBuilder filesCoverage(Map<String, FileCoverage> filesCoverage) {
+            this.filesCoverage = filesCoverage;
+            return this;
+        }
+
+        public CoverageResult build() {
+            return new CoverageResult(projectType, tool, overallCoverage, lineCoverage, branchCoverage,
+                    functionCoverage, statementCoverage, meetsQualityGate, reportPath, filesCoverage);
+        }
+    }
+
 }

@@ -21,7 +21,7 @@ spring:
     # 解决: operator does not exist: uuid = character varying 错误
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:ingenio}?stringtype=unspecified
     username: ${DB_USER:postgres}
-    password: ${DB_PASSWORD:postgres}
+    password: ${DB_PASSWORD:ingenio_20251122}
     driver-class-name: org.postgresql.Driver
     # HikariCP连接池配置
     # 优化：增加连接池大小，添加连接验证，防止连接池耗尽导致500错误
@@ -63,12 +63,12 @@ spring:
         options:
           # 七牛云AI可用模型：
           # - Qwen: qwen3-max-preview, qwen3-plus-preview, qwen-max, qwen-plus
-          # - DeepSeek: deepseek/deepseek-v3.2-251201
+          # - DeepSeek: deepseek/deepseek-r1-0528
           model: qwen3-max-preview
           temperature: 0.3
           max-tokens: 4096
       embedding:
-        enabled: false
+        enabled: true
 
   # Redis配置
   redis:
@@ -224,6 +224,8 @@ server:
   http2:
     enabled: true
 
+# G3 RAG / Toolset 配置（已合并到 ingenio 根配置）
+
 # 日志配置
 logging:
   level:
@@ -239,6 +241,12 @@ logging:
     name: logs/ingenio-backend.log
     max-size: 100MB
     max-history: 30
+
+# JeecgBoot 支付配置
+jeecg:
+  pay:
+    base-url: ${JEECG_PAY_BASE_URL:http://localhost:18080}
+    notify-url: ${JEECG_PAY_NOTIFY_URL:http://localhost:8080/api/v1/billing/notify/alipay}
 
 # 应用自定义配置
 ingenio:
@@ -289,6 +297,18 @@ ingenio:
   # AI调用速率限制配置
   # 防止触发七牛云API的RPM（Requests Per Minute）限制
   ai:
+    # UniAix AI服务配置（统一AI服务提供商）
+    uniaix:
+      # UniAix API基础URL（可包含或不包含 /v1）
+      base-url: ${UNIAIX_BASE_URL:https://www.uniaix.com}
+      # UniAix API密钥
+      api-key: ${UNIAIX_API_KEY:}
+      # 默认模型（支持Claude、GPT、Gemini等多种模型）
+      default-model: ${UNIAIX_DEFAULT_MODEL:claude-3-5-sonnet-20241022}
+      # Embedding模型
+      embedding-model: ${UNIAIX_EMBEDDING_MODEL:text-embedding-3-large}
+      # 请求超时时间（毫秒）
+      timeout: ${UNIAIX_TIMEOUT:180000}
     rate-limit:
       # 每分钟最大请求数（RPM）
       # 设置为30，留有足够余量（七牛云通常限制60 RPM）
@@ -299,11 +319,198 @@ ingenio:
       # 两次调用之间的最小间隔（毫秒）
       # 默认2秒，避免请求过于密集
       min-interval-ms: ${AI_RATE_LIMIT_MIN_INTERVAL_MS:2000}
+    # 按职责覆写模型（可选）
+    # 说明：
+    # - 为空时保持 `spring.ai.openai.chat.options.model` 的全局默认配置；
+    # - 用于快速做“意图识别/编程生成/测试验证”分阶段模型对照测试。
+    models:
+      # 意图识别：deepseek/deepseek-r1-0528
+      intent: ${INGENIO_AI_MODELS_INTENT:}
+      # 编程生成：claude-opus-4-5-thinking
+      execute: ${INGENIO_AI_MODELS_EXECUTE:claude-opus-4-5-thinking}
+      # 测试验证：z-ai/glm-4.7
+      validate: ${INGENIO_AI_MODELS_VALIDATE:}
+
+    # AI Primary Configuration (Custom/Local Proxy)
+    primary:
+      # 默认使用 moonshotai/kimi-k2-thinking (via OneAPI/Local Proxy)
+      base-url: ${INGENIO_AI_PRIMARY_BASE_URL:http://127.0.0.1:8045/v1}
+      api-key: ${INGENIO_AI_PRIMARY_API_KEY:sk-418de7bda2824845967ff0c8b97bfbc9}
+      model: ${INGENIO_AI_PRIMARY_MODEL:moonshotai/kimi-k2-thinking}
+      enabled: ${INGENIO_AI_PRIMARY_ENABLED:true}
+  # 提示词配置（外置到 resources/prompts，避免在 Agent 类中硬编码）
+  prompts:
+    architect:
+      contract: classpath:prompts/architect/contract.txt
+      schema: classpath:prompts/architect/schema.txt
+    coder:
+      standards: classpath:prompts/coder/code-standards.txt
+      entity: classpath:prompts/coder/entity.txt
+      mapper: classpath:prompts/coder/mapper.txt
+      dto: classpath:prompts/coder/dto.txt
+      service: classpath:prompts/coder/service.txt
+      controller: classpath:prompts/coder/controller.txt
+    coach:
+      analysis: classpath:prompts/coach/analysis.txt
+      plan: classpath:prompts/coach/plan.txt
+      fix: classpath:prompts/coach/fix.txt
+      fix-pom-xml: classpath:prompts/coach/fix-pom-xml.txt
+  # LangChain4j 配置（OpenAI 兼容接口）
+  langchain4j:
+    routing:
+      # 代码生成优先使用 Claude/Gemini，最后降级 DeepSeek
+      codegen:
+        - claude
+        - gemini
+        - deepseek
+      repair:
+        - claude
+        - gemini
+        - deepseek
+      analysis:
+        - claude
+        - gemini
+        - deepseek
+    providers:
+      claude:
+        base-url: ${INGENIO_LC4J_CLAUDE_BASE_URL:http://127.0.0.1:8045/v1}
+        api-key: ${INGENIO_LC4J_CLAUDE_API_KEY:}
+        model: ${INGENIO_LC4J_CLAUDE_MODEL:claude-opus-4-5-thinking}
+        temperature: 0.2
+        max-tokens: ${INGENIO_LC4J_CLAUDE_MAX_TOKENS:12000}
+        timeout-seconds: 90
+        max-retries: 2
+      gemini:
+        base-url: ${INGENIO_LC4J_GEMINI_BASE_URL:http://127.0.0.1:8045/v1}
+        api-key: ${INGENIO_LC4J_GEMINI_API_KEY:}
+        model: ${INGENIO_LC4J_GEMINI_MODEL:gemini-3-pro-high}
+        temperature: 0.2
+        max-tokens: 6000
+        timeout-seconds: 90
+        max-retries: 2
+      deepseek:
+        base-url: ${INGENIO_LC4J_DEEPSEEK_BASE_URL:https://api.qnaigc.com/v1}
+        api-key: ${INGENIO_LC4J_DEEPSEEK_API_KEY:}
+        model: ${INGENIO_LC4J_DEEPSEEK_MODEL:deepseek-r1-0528}
+        temperature: 0.2
+        max-tokens: 6000
+        timeout-seconds: 90
+        max-retries: 2
+      uniaix:
+        # Uniaix OpenAI 兼容网关（支持自动补齐 /v1）
+        base-url: ${UNIAIX_BASE_URL:https://www.uniaix.com}
+        api-key: ${UNIAIX_API_KEY:}
+        embedding-model: ${UNIAIX_EMBEDDING_MODEL:text-embedding-3-large}
+        # 兜底模型需支持 2048 维（text-embedding-3-large 可配置降维至 2048）
+        embedding-fallback-model: ${UNIAIX_EMBEDDING_FALLBACK_MODEL:text-embedding-3-large}
+        embedding-fallback-dimension: ${UNIAIX_EMBEDDING_FALLBACK_DIMENSION:${INGENIO_G3_RAG_EMBEDDING_DIMENSION:2048}}
+        embedding-dimension: ${UNIAIX_EMBEDDING_DIMENSION:${INGENIO_G3_RAG_EMBEDDING_DIMENSION:2048}}
   # G3引擎配置（Generate-Check-Fix自修复引擎）
   g3:
     engine-url: ${G3_ENGINE_URL:http://localhost:8000}
+    agent:
+      # 可选值：legacy / lc4j
+      engine: ${INGENIO_G3_AGENT_ENGINE:legacy}
+    rag:
+      # 可选值：spring-ai / lc4j
+      engine: ${INGENIO_G3_RAG_ENGINE:spring-ai}
+      embedding-provider: ${INGENIO_G3_RAG_EMBEDDING_PROVIDER:uniaix}
+      embedding-store: ${INGENIO_G3_RAG_EMBEDDING_STORE:redis}
+      embedding-index-name: ${INGENIO_G3_RAG_EMBEDDING_INDEX:g3_embeddings}
+      embedding-prefix: ${INGENIO_G3_RAG_EMBEDDING_PREFIX:g3:}
+      embedding-dimension: ${INGENIO_G3_RAG_EMBEDDING_DIMENSION:${UNIAIX_EMBEDDING_DIMENSION:2048}}
+      embedding-min-score: ${INGENIO_G3_RAG_EMBEDDING_MIN_SCORE:0.1}
+      chunk-size: ${INGENIO_G3_RAG_CHUNK_SIZE:800}
+      chunk-overlap: ${INGENIO_G3_RAG_CHUNK_OVERLAP:120}
+      repo-index-enabled: true
+      auto-index-on-job: true
+      repo-root: ${G3_RAG_REPO_ROOT:}
+      max-files: 4000
+      max-file-bytes: 200000
+      include-extensions:
+        - java
+        - xml
+        - yml
+        - yaml
+        - properties
+        - md
+        - sql
+      exclude-dirs:
+        - .git
+        - node_modules
+        - target
+        - dist
+        - .next
+        - build
+        - out
+        - logs
+        - .pnpm-store
+        - .idea
+        - .vscode
+    tools:
+      enabled: true
+      workspace-root: ${G3_TOOLSET_WORKSPACE_ROOT:}
+      allow-commands:
+        - ls
+        - pwd
+        - cat
+        - tail
+        - head
+        - rg
+        - find
+        - sed
+        - wc
+        - stat
+      deny-commands:
+        - rm
+        - mv
+        - cp
+        - chmod
+        - chown
+        - kill
+        - pkill
+        - shutdown
+        - reboot
+      allow-file-extensions:
+        - .java
+        - .xml
+        - .yml
+        - .yaml
+        - .properties
+        - .md
+        - .sql
+        - .ts
+        - .tsx
+        - .js
+        - .json
+      exclude-path-contains:
+        - /node_modules/
+        - /.git/
+        - /target/
+        - /dist/
+        - /build/
+        - /.next/
+        - /.idea/
+        - /.gradle/
+      max-file-size-bytes: 524288
+      max-search-file-size-bytes: 262144
+      max-search-files: 5000
+      max-batch-files: 20
+      max-output-lines: 200
+      max-output-chars: 20000
+      default-timeout-seconds: 15
+    hooks:
+      enabled: true
+      audit-log-enabled: true
+      emit-job-log: true
+      max-payload-chars: 400
     sandbox:
+      # 可选值：e2b（默认，OpenLovable/E2B 远程沙箱） / local（本地 Maven） / goose（外部执行器，本地落盘）
       provider: e2b
       e2b-api-key: ${E2B_API_KEY:}
       compile-timeout: 300
-      max-rounds: 3
+      max-rounds: 20
+      goose:
+        # 仅在 provider=goose 时生效；为空会自动回退到本地 Maven 编译
+        # 示例：goose run -- mvn -e -B -DskipTests compile
+        compile-command: ${INGENIO_G3_GOOSE_COMPILE_COMMAND:}

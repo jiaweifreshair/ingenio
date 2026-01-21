@@ -20,13 +20,13 @@ import {
 
   Sparkles,
 
-  Type,
+  // TODO: 后续添加功能时取消注释
+  // Type,
 
-  Image as ImageIcon,
-
-  Mic,
-
-  FileText,
+  // TODO: 后续添加功能时取消注释以下导入
+  // Image as ImageIcon,
+  // Mic,
+  // FileText,
 
   Link as LinkIcon,
 
@@ -64,7 +64,9 @@ import {
 
 import { cn } from "@/lib/utils";
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+// TODO: 后续添加输入模式切换功能时取消注释
+// import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 // Removed unused Select imports
 
@@ -91,10 +93,11 @@ import {
 /**
 
  * 输入模式枚举
+ * TODO: 后续添加功能时取消注释
 
  */
 
-type InputMode = 'TEXT' | 'IMAGE' | 'AUDIO' | 'DOC' | 'LINK';
+// type InputMode = 'TEXT' | 'IMAGE' | 'AUDIO' | 'DOC' | 'LINK';
 
 
 
@@ -175,19 +178,45 @@ export function HeroBanner({
 
     onRemoveTag?: (type: 'INDUSTRY' | 'MODE' | 'CAPABILITY', id?: string) => void;
 
-    onLaunchWizard?: (prompt: string, context: { industry: IndustryType | null, mode: AppComplexityMode | null, capabilities: AICapabilityType[] }) => void;
+        onLaunchWizard?: (prompt: string, context: { industry: IndustryType | null, mode: AppComplexityMode | null, capabilities: AICapabilityType[] }) => void;
 
-  } = {}): React.ReactElement {
+    
 
-    const router = useRouter();
+      } = {}): React.ReactElement {
 
-    const { toast } = useToast();
+    
 
-  
+        const router = useRouter();
 
-    // --- State: Generation Mode ---
+        const { t } = useLanguage();
 
-    const [generationMode, setGenerationMode] = useState<GenerationMode>('NEW_IDEA');
+    
+
+        const { toast } = useToast();
+
+      
+
+        // --- State: Generation Mode ---
+
+    
+
+        const [generationMode, setGenerationMode] = useState<GenerationMode>('NEW_IDEA');
+
+    
+
+        // Define INPUT_MODES inside component to use translations
+
+        // TODO: 后续添加输入模式切换功能时取消注释
+        // 暂时只保留文本输入模式，其他模式（图片、语音、文档、链接）后续再加
+        // const inputModes: { mode: InputMode; label: string; icon: React.ReactNode }[] = [
+        //   { mode: 'TEXT', label: t('hero.input_mode_text'), icon: <Type className="w-4 h-4" /> },
+        //   { mode: 'IMAGE', label: t('hero.input_mode_image'), icon: <ImageIcon className="w-4 h-4" /> },
+        //   { mode: 'AUDIO', label: t('hero.input_mode_audio'), icon: <Mic className="w-4 h-4" /> },
+        //   { mode: 'DOC', label: t('hero.input_mode_doc'), icon: <FileText className="w-4 h-4" /> },
+        //   { mode: 'LINK', label: t('hero.input_mode_link'), icon: <LinkIcon className="w-4 h-4" /> },
+        // ];
+
+    
 
   
 
@@ -235,7 +264,8 @@ export function HeroBanner({
 
     
 
-    const [inputMode, setInputMode] = useState<InputMode>('TEXT');
+    // TODO: 后续添加输入模式切换功能时取消注释
+    // const [inputMode, setInputMode] = useState<InputMode>('TEXT');
 
   
 
@@ -389,7 +419,7 @@ export function HeroBanner({
 
         if (!url) {
 
-          toast({ title: "请输入网址", description: "请先输入目标网址", variant: "destructive" });
+          toast({ title: t('hero.toast_input_url'), description: t('hero.toast_input_url_desc'), variant: "destructive" });
 
           return;
 
@@ -399,13 +429,14 @@ export function HeroBanner({
 
         if (!currentPrompt.trim()) {
 
-          toast({ title: "请输入需求", description: "请描述应用或选择标签", variant: "destructive" });
+          toast({ title: t('hero.toast_input_req'), description: t('hero.toast_input_req_desc'), variant: "destructive" });
 
           return;
 
         }
 
       }
+
 
 
 
@@ -466,20 +497,21 @@ export function HeroBanner({
    */
 
   const toggleLocalCapability = (capId: AICapabilityType) => {
-
     setLocalCapabilities(prev => {
-
       const exists = prev.includes(capId);
-
-      const next = exists ? prev.filter(c => c !== capId) : [...prev, capId];
-
-      onCapabilitiesChange?.(next);
-
-      return next;
-
+      return exists ? prev.filter(c => c !== capId) : [...prev, capId];
     });
-
   };
+
+  // 使用 useEffect 同步 capabilities 变化到父组件，避免渲染期间 setState
+  // 只有当本地状态与外部状态不同时才同步，避免无限循环
+  useEffect(() => {
+    const externalStr = JSON.stringify(externalSelectedCapabilities || []);
+    const localStr = JSON.stringify(localCapabilities);
+    if (localStr !== externalStr) {
+      onCapabilitiesChange?.(localCapabilities);
+    }
+  }, [localCapabilities, externalSelectedCapabilities, onCapabilitiesChange]);
 
 
 
@@ -527,7 +559,7 @@ export function HeroBanner({
                 <Layout className="w-3 h-3" />
               </div>
               <span className="text-sm font-medium whitespace-nowrap">
-                {selectedModeConfig ? selectedModeConfig.title : "技术选型"}
+                {selectedModeConfig ? t(`const.mode.${selectedModeConfig.id}.title`) : t('hero.selector_tech')}
               </span>
 
               {localMode ? (
@@ -559,19 +591,21 @@ export function HeroBanner({
             </div>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            <DropdownMenuLabel>技术栈偏好</DropdownMenuLabel>
+            <DropdownMenuLabel>{t('hero.selector_tech')}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             {APP_MODES.map(mode => (
               <DropdownMenuCheckboxItem
                 key={mode.id}
                 checked={localMode === mode.id}
+                disabled={mode.disabled}
                 onCheckedChange={() => {
+                  if (mode.disabled) return;
                   const next = mode.id;
                   setLocalMode(next);
                   onModeChange?.(next);
                 }}
               >
-                {mode.title} · {mode.techStack}
+                {t(`const.mode.${mode.id}.title`)} · {mode.techStack}
               </DropdownMenuCheckboxItem>
             ))}
           </DropdownMenuContent>
@@ -599,7 +633,7 @@ export function HeroBanner({
                 <Briefcase className="w-3 h-3" />
               </div>
               <span className="text-sm font-medium whitespace-nowrap">
-                {selectedIndustryConfig ? (selectedIndustryConfig.label || "更多场景") : "应用场景"}
+                {selectedIndustryConfig ? (t(`const.industry.${selectedIndustryConfig.id}.label`) || t('hero.more_scenarios')) : t('hero.selector_scenario')}
               </span>
 
               {localIndustry ? (
@@ -631,7 +665,7 @@ export function HeroBanner({
             </div>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="h-64 overflow-y-auto">
-            <DropdownMenuLabel>应用场景</DropdownMenuLabel>
+            <DropdownMenuLabel>{t('hero.selector_scenario')}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             {INDUSTRIES.map(industry => (
               <DropdownMenuCheckboxItem
@@ -643,7 +677,7 @@ export function HeroBanner({
                   onIndustryChange?.(next);
                 }}
               >
-                {industry.label || "更多场景"}
+                {t(`const.industry.${industry.id}.label`)}
               </DropdownMenuCheckboxItem>
             ))}
           </DropdownMenuContent>
@@ -651,14 +685,14 @@ export function HeroBanner({
 
         {/* 3. AI 能力 (多选) - 展示为标签列表 */}
         {localCapabilities.map((capId) => {
-            const cap = AI_CAPABILITIES.find(c => c.id === capId);
+            // const cap = AI_CAPABILITIES.find(c => c.id === capId);
             return (
                 <Badge 
                     key={capId} 
                     variant="secondary"
                     className="h-9 px-3 py-1.5 flex items-center gap-1.5 whitespace-nowrap bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800 rounded-full text-sm font-medium"
                 >
-                    {cap?.label}
+                    {t(`const.ai.${capId}.label`)}
                     <div 
                         role="button"
                         onClick={(e) => {
@@ -693,14 +727,14 @@ export function HeroBanner({
                     <div className="p-1.5 rounded-full text-white shrink-0 bg-slate-300">
                         <Zap className="w-3 h-3" />
                     </div>
-                    <span className="text-sm font-medium whitespace-nowrap">AI 能力</span>
+                    <span className="text-sm font-medium whitespace-nowrap">{t('hero.selector_ai')}</span>
                     <ChevronDown className="w-3.5 h-3.5 opacity-60" />
                 </>
               )}
             </div>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start" className="w-64">
-            <DropdownMenuLabel>AI 能力</DropdownMenuLabel>
+            <DropdownMenuLabel>{t('hero.selector_ai')}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             {AI_CAPABILITIES.map(cap => (
               <DropdownMenuCheckboxItem
@@ -708,7 +742,7 @@ export function HeroBanner({
                 checked={localCapabilities.includes(cap.id)}
                 onCheckedChange={() => toggleLocalCapability(cap.id)}
               >
-                {cap.label}
+                {t(`const.ai.${cap.id}.label`)}
               </DropdownMenuCheckboxItem>
             ))}
           </DropdownMenuContent>
@@ -736,9 +770,9 @@ export function HeroBanner({
 
         {/* Main Title */}
         <h1 className="text-3xl md:text-5xl font-bold text-center tracking-tight text-slate-900 dark:text-slate-50 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-600 dark:from-white dark:to-slate-400">
-          你的创意，AI 实现 <br />
+          {t('hero.title_part1')}{t('hero.title_part2')}
           <span className="text-xl md:text-3xl font-normal text-slate-500 dark:text-slate-400 mt-4 block">
-            自然语言 · 精准构建 · 增长助力
+            {t('hero.subtitle')}
           </span>
         </h1>
 
@@ -756,7 +790,7 @@ export function HeroBanner({
                   : "text-muted-foreground hover:text-foreground hover:bg-white/50 dark:hover:bg-white/10"
               )}
             >
-              <Sparkles className="w-4 h-4 text-amber-500" /> 创造模式
+              <Sparkles className="w-4 h-4 text-amber-500" /> {t('hero.mode_create')}
             </button>
             <button
               onClick={() => setGenerationMode('REDESIGN_SITE')}
@@ -767,7 +801,7 @@ export function HeroBanner({
                   : "text-muted-foreground hover:text-foreground hover:bg-white/50 dark:hover:bg-white/10"
               )}
             >
-              <Wand2 className="w-4 h-4 text-purple-500" /> 重构旧站
+              <Wand2 className="w-4 h-4 text-purple-500" /> {t('hero.mode_redesign')}
             </button>
           </div>
 
@@ -794,7 +828,7 @@ export function HeroBanner({
                       <input
                         ref={cloneUrlInputRef}
                         type="url"
-                        placeholder="请输入旧网站链接 (https://...)"
+                        placeholder={t('hero.placeholder_redesign')}
                         className="w-full pl-9 pr-4 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-text font-mono text-sm"
                       />
                     </div>
@@ -807,19 +841,21 @@ export function HeroBanner({
                     setRequirement(e.target.value);
                     onRequirementChange?.(e.target.value);
                   }}
+                  data-testid="hero-requirement-input"
                   placeholder={
                     generationMode === 'REDESIGN_SITE' 
-                      ? "请输入重构需求（例如：保留原有布局，但改为暗黑风格，使用 React + Tailwind 重写...）"
-                      : "在这里输入你想做什么小程序/APP/H5网页..."
+                      ? t('hero.placeholder_redesign')
+                      : t('hero.placeholder_create')
                   }
                   className="flex-1 w-full resize-none border-none bg-transparent text-sm placeholder:text-slate-300 dark:placeholder:text-slate-600 focus-visible:ring-0 p-0 leading-relaxed font-light min-h-[120px]"
                 />
 
-                {/* Input Tools */}
-                <div className="flex items-center justify-between mt-4 md:mt-0 pt-4 border-t border-slate-100 dark:border-slate-800/50">
+                {/* Input Tools - 暂时隐藏输入模式切换按钮，只显示字符计数 */}
+                <div className="flex items-center justify-end mt-4 md:mt-0 pt-4 border-t border-slate-100 dark:border-slate-800/50">
+                  {/* TODO: 后续添加上传图片、语音输入、链接、上传文档功能按钮
                   <div className="flex items-center gap-1 text-slate-400">
                     <TooltipProvider>
-                      {INPUT_MODES.map((modeConfig) => (
+                      {inputModes.map((modeConfig) => (
                         <Tooltip key={modeConfig.mode}>
                           <TooltipTrigger asChild>
                             <Button
@@ -841,6 +877,7 @@ export function HeroBanner({
                       ))}
                     </TooltipProvider>
                   </div>
+                  */}
 
                   <span className="text-xs text-slate-300 dark:text-slate-600 font-mono">
                     {requirement.length}/500
@@ -853,10 +890,11 @@ export function HeroBanner({
                 <Button
                   onClick={handleSubmitRequirement}
                   size="lg"
+                  data-testid="hero-generate-button"
                   className="bg-[#0f172a] hover:bg-[#1e293b] text-white dark:bg-white dark:text-black dark:hover:bg-slate-200 rounded-xl px-6 py-2.5 h-auto text-sm font-medium shadow-lg hover:shadow-xl transition-all hover:scale-105"
                 >
                   <Sparkles className="w-4 h-4 mr-2" />
-                  生成
+                  {t('hero.btn_generate')}
                 </Button>
               </div>
 
@@ -871,10 +909,4 @@ export function HeroBanner({
 }
 
 // Keep existing configs
-const INPUT_MODES: { mode: InputMode; label: string; icon: React.ReactNode }[] = [
-  { mode: 'TEXT', label: '创意描述', icon: <Type className="w-4 h-4" /> },
-  { mode: 'IMAGE', label: '设计图', icon: <ImageIcon className="w-4 h-4" /> },
-  { mode: 'AUDIO', label: '语音描述', icon: <Mic className="w-4 h-4" /> },
-  { mode: 'DOC', label: 'PRD文档', icon: <FileText className="w-4 h-4" /> },
-  { mode: 'LINK', label: '参考链接', icon: <LinkIcon className="w-4 h-4" /> },
-];
+// INPUT_MODES removed as it is now defined inside the component to support i18n

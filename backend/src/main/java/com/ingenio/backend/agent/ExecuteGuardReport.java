@@ -90,11 +90,11 @@ public class ExecuteGuardReport {
         if (!frontendPrototypeExists) {
             return "前端原型正在生成中，请稍候...";
         }
-        if (!prototypeUrlAccessible) {
-            return "原型预览服务暂时不可用，请稍后重试";
-        }
         if (!designConfirmed) {
             return "请查看原型预览并确认设计方案";
+        }
+        if (!prototypeUrlAccessible) {
+            return "原型预览服务暂时不可用，请稍后重试";
         }
         return null;
     }

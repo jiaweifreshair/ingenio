@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "@/styles/globals.css";
 import { cn } from "@/lib/utils";
 import { Toaster } from "@/components/ui/toaster";
+import { LanguageProvider } from "@/contexts/LanguageContext";
 
 /**
  * 秒构AI根布局
@@ -25,7 +26,7 @@ export const metadata: Metadata = {
   authors: [{ name: "Ingenio Team" }],
   creator: "Ingenio Team",
   icons: {
-    icon: "/logo.png",
+    icon: "/favicon.png",
   },
 };
 
@@ -49,9 +50,41 @@ export default function RootLayout({
 }>): React.ReactElement {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
+      <head>
+        {/* 国内双核浏览器优化：优先使用 webkit 内核渲染 */}
+        <meta name="renderer" content="webkit" />
+        <meta name="force-rendering" content="webkit" />
+        <meta httpEquiv="X-UA-Compatible" content="IE=edge,chrome=1" />
+        
+        {/* GEO 结构化数据：供国内大模型爬虫提取产品定义 */}
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "SoftwareApplication",
+              "name": "Ingenio 妙构",
+              "operatingSystem": "Web",
+              "applicationCategory": "DeveloperApplication",
+              "description": "企业级 AI 原生应用孵化器，通过 G3 红蓝博弈引擎构建高质量 Java 全栈应用。",
+              "offers": {
+                "@type": "Offer",
+                "price": "0",
+                "priceCurrency": "CNY"
+              },
+              "author": {
+                "@type": "Organization",
+                "name": "Ingenio Team"
+              }
+            })
+          }}
+        />
+      </head>
       <body className={cn("min-h-screen font-sans antialiased")}>
-        {children}
-        <Toaster />
+        <LanguageProvider>
+          {children}
+          <Toaster />
+        </LanguageProvider>
       </body>
     </html>
   );

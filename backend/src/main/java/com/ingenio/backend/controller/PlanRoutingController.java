@@ -1,300 +1,265 @@
 package com.ingenio.backend.controller;
 
 import cn.dev33.satoken.stp.StpUtil;
+import com.ingenio.backend.agent.dto.RequirementIntent;
 import com.ingenio.backend.common.response.Result;
 import com.ingenio.backend.dto.request.PlanRoutingRequest;
-import com.ingenio.backend.service.PlanRoutingResult;
-import com.ingenio.backend.service.PlanRoutingService;
-import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.Parameter;
-import io.swagger.v3.oas.annotations.tags.Tag;
+import com.ingenio.backend.dto.request.OpenLovableGenerateRequest;
+import com.ingenio.backend.dto.response.OpenLovableGenerateResponse;
+import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.enums.DesignStyle;
+import com.ingenio.backend.service.AppSpecService;
+import com.ingenio.backend.service.BillingService;
+import com.ingenio.backend.service.OpenLovableService;
+import jakarta.validation.Valid;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.validation.annotation.Validated;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
-import com.ingenio.backend.dto.response.DesignConfirmResponse;
-import com.ingenio.backend.dto.response.CodeGenerationResponse;
+import java.util.regex.Pattern;
 
 /**
- * Plan阶段路由控制器
+ * Plan Routing（V2）控制器
  *
- * V2.0核心API：
- * 1. 意图识别与路由决策
- * 2. 风格选择与原型生成
- * 3. 设计确认（触发Execute阶段的关键点）
+ * 目标：
+ * - 修复前端“深度分析/生成流程”在调用 `/v2/plan-routing/route` 时返回 500 的问题。
  *
- * 业务流程：
- * routeRequirement → selectStyle → confirmDesign → Execute阶段
+ * 背景：
+ * - 前端 `frontend/src/lib/api/plan-routing.ts:1` 会调用 `/v2/plan-routing/route` 获取 appSpecId + 路由分支。
+ * - 之前 Spring Boot 侧缺失该接口，导致 NoHandler 异常被全局异常处理器包装为“系统错误(1000)”，前端显示 HTTP 500。
+ *
+ * 说明：
+ * - 当前实现优先保证“可用性与一致性”：返回结构遵循 `shared/types/plan-routing.types.ts:1`。
+ * - 后续可在此基础上接入真实的 IntentClassifier / 模板匹配 / Blueprint 绑定等能力。
  */
+@Slf4j
 @RestController
 @RequestMapping("/v2/plan-routing")
 @RequiredArgsConstructor
-@Slf4j
-@Tag(name = "Plan路由", description = "V2.0 Plan阶段智能路由API")
-@Validated
 public class PlanRoutingController {
 
-    private final PlanRoutingService planRoutingService;
+    /**
+     * 默认租户ID（与 AppSpecController 保持一致）
+     * 用于本地未登录/Session缺失时的兜底，避免写入空租户导致数据库约束失败。
+     */
+    private static final UUID DEFAULT_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+
+    private static final Pattern URL_PATTERN = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
+    private static final Pattern DOMAIN_PATTERN = Pattern.compile("\\b([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})(?:/[^\\s]*)?\\b");
+
+    private final AppSpecService appSpecService;
+    private final BillingService billingService;
+    private final OpenLovableService openLovableService;
 
     /**
-     * 路由用户需求
-     * 执行意图识别、模板匹配、路由决策
+     * 路由用户需求（意图识别 + 分支决策 + 生成 AppSpec）
      *
-     * @param request 路由请求
-     * @return 路由结果，包含匹配的模板、风格选项等
+     * @param request 路由请求（用户需求 + 可选租户/用户）
+     * @return 路由结果（包含 appSpecId 与下一步指引）
      */
     @PostMapping("/route")
-    @Operation(summary = "路由用户需求", description = "分析用户需求，识别意图，匹配模板，生成风格选项")
-    public Result<PlanRoutingResult> routeRequirement(
-            @RequestBody @Validated PlanRoutingRequest request
-    ) {
-        log.info("收到路由请求 - userRequirement: {}", request.getUserRequirement());
+    public Result<PlanRoutingResult> routeRequirement(@Valid @RequestBody PlanRoutingRequest request) {
+        String requirement = request.getUserRequirement().trim();
 
-        // 获取userId：优先使用请求中的值，否则从Sa-Token会话获取
-        UUID userId = request.getUserId();
-        if (userId == null) {
-            // V2.0修复：使用getLoginIdDefaultNull()安全获取登录ID，避免未登录时抛出异常
-            Object loginIdObj = StpUtil.getLoginIdDefaultNull();
-            String loginId = loginIdObj != null ? loginIdObj.toString() : null;
-            if (loginId != null && !loginId.isEmpty()) {
-                userId = UUID.fromString(loginId);
+        UUID userId = coerceUuid(request.getUserId());
+        UUID tenantId = coerceUuid(request.getTenantId());
+
+        // 若传入 appSpecId，则优先复用已有 AppSpec，避免“修改一次就新建一条记录”导致上下文断裂
+        AppSpecEntity appSpec = null;
+        if (request.getAppSpecId() != null) {
+            appSpec = appSpecService.getById(request.getAppSpecId());
+            if (appSpec == null) {
+                log.warn("传入的 appSpecId 不存在，将回退到新建: {}", request.getAppSpecId());
             } else {
-                // 默认用户ID（用于未登录场景的测试）
-                userId = UUID.fromString("00000000-0000-0000-0000-000000000001");
-            }
-        }
-
-        // 获取tenantId：优先使用请求中的值，否则使用默认租户
-        UUID tenantId = request.getTenantId();
-        if (tenantId == null) {
-            // V2.0修复：使用getSession(false)安全获取session，避免未登录时抛出异常
-            // getSession(false)：如果用户未登录，返回null而不是抛出NotLoginException
-            var session = StpUtil.getSession(false);
-            Object sessionTenantId = session != null ? session.get("tenantId") : null;
-            if (sessionTenantId != null) {
-                tenantId = UUID.fromString(sessionTenantId.toString());
-            } else {
-                // 默认租户ID（用于未登录场景）
-                tenantId = UUID.fromString("00000000-0000-0000-0000-000000000001");
-            }
-        }
-
-        // V2.0增强：传递用户预选的复杂度和技术栈提示
-        PlanRoutingResult result = planRoutingService.route(
-                request.getUserRequirement(),
-                tenantId,
-                userId,
-                request.getComplexityHint(),
-                request.getTechStackHint()
-        );
-
-        log.info("路由完成 - appSpecId: {}, branch: {}, nextAction: {}, complexityHint: {}, techStackHint: {}",
-                result.getAppSpecId(), result.getBranch(), result.getNextAction(),
-                request.getComplexityHint(), request.getTechStackHint());
-
-        return Result.success(result);
-    }
-
-    /**
-     * 选择设计风格并生成原型
-     * 仅设计分支有效，生成完整的前端原型代码
-     *
-     * @param appSpecId 应用规格ID
-     * @param styleId 选择的风格ID
-     * @return 更新后的路由结果，包含原型URL
-     */
-    @PostMapping("/{appSpecId}/select-style")
-    @Operation(summary = "选择设计风格", description = "选择风格并生成前端原型")
-    public Result<PlanRoutingResult> selectStyleAndGeneratePrototype(
-            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId,
-            @Parameter(description = "风格ID") @RequestParam String styleId
-    ) {
-        log.info("收到风格选择请求 - appSpecId: {}, styleId: {}", appSpecId, styleId);
-
-        PlanRoutingResult result = planRoutingService.selectStyleAndGeneratePrototype(appSpecId, styleId);
-
-        log.info("风格选择完成 - prototypeUrl: {}", result.getPrototypeUrl());
-
-        return Result.success(result);
-    }
-
-    /**
-     * 确认设计方案
-     * V2.0关键API：用户确认设计后，才能进入Execute阶段
-     * 更新AppSpec的designConfirmed标志
-     *
-     * @param appSpecId 应用规格ID
-     * @return 确认结果，包含是否可进入Execute阶段的标志
-     */
-    @PostMapping("/{appSpecId}/confirm-design")
-    @Operation(summary = "确认设计方案", description = "用户确认设计，标记为可执行状态")
-    public Result<DesignConfirmResponse> confirmDesign(
-            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId
-    ) {
-        log.info("收到设计确认请求 - appSpecId: {}", appSpecId);
-
-        planRoutingService.confirmDesign(appSpecId);
-
-        Instant confirmedAt = Instant.now();
-        log.info("设计确认完成 - appSpecId: {}, designConfirmed: true, confirmedAt: {}", appSpecId, confirmedAt);
-
-        DesignConfirmResponse response = DesignConfirmResponse.builder()
-                .success(true)
-                .appSpecId(appSpecId)
-                .canProceedToExecute(true)
-                .designConfirmedAt(confirmedAt)
-                .message("设计确认成功")
-                .nextAction("调用 /execute-code-generation 开始生成代码")
-                .build();
-
-        return Result.success(response);
-    }
-
-    /**
-     * 执行代码生成
-     * Phase 2.2.4: 用户确认设计后触发代码生成
-     *
-     * V2.0完整流程：
-     * 1. 从AppSpec.metadata提取designSpec
-     * 2. 构建PlanResult并填充designSpec
-     * 3. (新增) 接收前端回传的analysisContext（来自SSE分析结果）并注入PlanResult
-     * 4. 调用ExecuteAgent生成完整的全栈代码
-     *
-     * @param appSpecId 应用规格ID
-     * @param analysisContext 前端回传的SSE分析上下文（可选）
-     * @return 代码生成结果，包含任务ID和预计完成时间
-     */
-    @PostMapping("/{appSpecId}/execute-code-generation")
-    @Operation(summary = "执行代码生成", description = "用户确认设计后，触发ExecuteAgent生成完整代码")
-    public Result<CodeGenerationResponse> executeCodeGeneration(
-            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId,
-            @RequestBody(required = false) java.util.Map<String, Object> analysisContext
-    ) {
-        log.info("收到代码生成请求 - appSpecId: {}, hasContext: {}", appSpecId, analysisContext != null);
-
-        Instant startedAt = Instant.now();
-        java.util.Map<String, Object> codeResult = planRoutingService.executeCodeGeneration(appSpecId, analysisContext);
-
-        // 从结果中提取关键信息
-        boolean success = codeResult.getOrDefault("success", false).equals(true);
-        UUID projectId = codeResult.get("projectId") != null
-                ? UUID.fromString(codeResult.get("projectId").toString()) : null;
-        UUID generationTaskId = codeResult.get("generationTaskId") != null
-                ? UUID.fromString(codeResult.get("generationTaskId").toString()) : UUID.randomUUID();
-        String status = codeResult.getOrDefault("status", "GENERATING").toString();
-        
-        // 提取previewUrl（支持从顶层或嵌套结构中提取）
-        String previewUrl = null;
-        if (codeResult.get("previewUrl") != null) {
-            previewUrl = codeResult.get("previewUrl").toString();
-        } else if (codeResult.get("frontend") instanceof java.util.Map) {
-            @SuppressWarnings("unchecked")
-            java.util.Map<String, Object> frontend = (java.util.Map<String, Object>) codeResult.get("frontend");
-            if (frontend.get("web") instanceof java.util.Map) {
-                @SuppressWarnings("unchecked")
-                java.util.Map<String, Object> web = (java.util.Map<String, Object>) frontend.get("web");
-                if (web.get("previewUrl") != null) {
-                    previewUrl = web.get("previewUrl").toString();
+                // 复用 AppSpec 的租户/用户，保持一致性
+                if (appSpec.getTenantId() != null) {
+                    tenantId = appSpec.getTenantId();
+                }
+                if (appSpec.getCreatedByUserId() != null) {
+                    userId = appSpec.getCreatedByUserId();
                 }
             }
         }
 
-        String errorMessage = codeResult.get("errorMessage") != null
-                ? codeResult.get("errorMessage").toString() : null;
+        // 优先从登录态/Session 中补齐（即使 /v2/** 在拦截器中被 exclude，StpUtil 仍可能读取到 token）
+        if (userId == null) {
+            userId = getLoginUserIdOrNull();
+        }
+        if (tenantId == null) {
+            tenantId = getSessionTenantIdOrNull();
+        }
+        if (tenantId == null) {
+            tenantId = DEFAULT_TENANT_ID;
+        }
+        if (userId == null) {
+            userId = tenantId;
+        }
 
-        log.info("代码生成完成 - appSpecId: {}, success: {}, status: {}", appSpecId, success, status);
+        RoutingDecision decision = decideRouting(requirement);
 
-        CodeGenerationResponse response = CodeGenerationResponse.builder()
-                .success(success)
-                .appSpecId(appSpecId)
-                .projectId(projectId)
-                .generationTaskId(generationTaskId)
-                .estimatedCompletionTime(120) // 预计120秒
-                .status(status)
-                .message(success ? "代码生成已启动" : "代码生成失败")
-                .progress(success ? 10 : 0)
-                .startedAt(startedAt)
-                .previewUrl(previewUrl)
-                .errorMessage(errorMessage)
+        // 1) 创建/更新 AppSpec（最小 specContent，后续由 Execute 阶段继续填充）
+        if (appSpec == null) {
+            Map<String, Object> specContent = new HashMap<>();
+            specContent.put("userRequirement", requirement);
+            specContent.put("stage", "planning");
+            appSpec = appSpecService.createAppSpec(tenantId, userId, specContent);
+        } else {
+            Map<String, Object> nextSpecContent = appSpec.getSpecContent() != null
+                    ? new HashMap<>(appSpec.getSpecContent())
+                    : new HashMap<>();
+            nextSpecContent.put("userRequirement", requirement);
+            nextSpecContent.putIfAbsent("stage", "planning");
+            appSpec.setSpecContent(nextSpecContent);
+        }
+
+        // 2) 写入 V2 关键元数据（便于后续流程读取）
+        appSpec.setIntentType(decision.intent.name());
+        appSpec.setConfidenceScore(BigDecimal.valueOf(decision.confidence));
+        Map<String, Object> metadata = appSpec.getMetadata() != null ? new HashMap<>(appSpec.getMetadata()) : new HashMap<>();
+        metadata.put("intent", decision.intent.name());
+        metadata.put("branch", decision.branch.name());
+        metadata.put("confidence", decision.confidence);
+        metadata.putIfAbsent("createdAt", Instant.now().toString());
+        metadata.put("updatedAt", Instant.now().toString());
+        metadata.put("requirementUpdatedAt", Instant.now().toString());
+        appSpec.setMetadata(metadata);
+
+        // DESIGN 分支默认选择风格（避免前端 selectedStyleId 为空导致流程阻塞）
+        String selectedStyleId = appSpec.getSelectedStyle();
+        if (decision.branch == RoutingBranch.DESIGN && !StringUtils.hasText(selectedStyleId)) {
+            selectedStyleId = DesignStyle.MODERN_MINIMAL.getCode();
+            appSpec.setSelectedStyle(selectedStyleId);
+        }
+
+        appSpecService.updateById(appSpec);
+
+        // 2.5) CLONE/HYBRID 分支尝试快速生成原型（OpenLovable）
+        if (decision.branch != RoutingBranch.DESIGN) {
+            boolean hasPrototype = StringUtils.hasText(appSpec.getFrontendPrototypeUrl())
+                    || appSpec.getPrototypeGeneratedAt() != null;
+            if (!hasPrototype) {
+                try {
+                    List<String> referenceUrls = extractReferenceUrls(requirement);
+                    OpenLovableGenerateRequest openLovableRequest = OpenLovableGenerateRequest.builder()
+                            .userRequirement(requirement)
+                            .referenceUrls(referenceUrls)
+                            .needsCrawling(!referenceUrls.isEmpty())
+                            .streaming(false)
+                            .build();
+                    OpenLovableGenerateResponse preview = openLovableService.generatePrototype(openLovableRequest);
+                    if (preview != null && preview.isSuccessful()) {
+                        applyPrototypeToAppSpec(appSpec, preview);
+                        appSpecService.updateById(appSpec);
+                    } else {
+                        log.warn("OpenLovable 原型生成未成功: appSpecId={}, message={}",
+                                appSpec.getId(), preview != null ? preview.getErrorMessage() : "unknown");
+                    }
+                } catch (Exception e) {
+                    log.warn("OpenLovable 原型生成异常: appSpecId={}", appSpec.getId(), e);
+                }
+            }
+        }
+
+        // 3) 构建返回结果
+        List<StyleVariant> styleVariants = decision.branch == RoutingBranch.DESIGN
+                ? buildAllStyleVariants()
+                : List.of();
+
+        boolean prototypeGenerated = StringUtils.hasText(appSpec.getFrontendPrototypeUrl())
+                || appSpec.getPrototypeGeneratedAt() != null;
+
+        PlanRoutingResult result = PlanRoutingResult.builder()
+                .appSpecId(appSpec.getId().toString())
+                .intent(decision.intent)
+                .confidence(decision.confidence)
+                .branch(decision.branch)
+                .matchedTemplateResults(List.of())
+                .styleVariants(styleVariants)
+                .prototypeGenerated(prototypeGenerated)
+                .prototypeUrl(appSpec.getFrontendPrototypeUrl())
+                .selectedStyleId(StringUtils.hasText(appSpec.getSelectedStyle()) ? appSpec.getSelectedStyle() : selectedStyleId)
+                .nextAction(decision.branch == RoutingBranch.DESIGN ? "请选择您喜欢的设计风格" : "请提供参考网站或选择模板")
+                .requiresUserConfirmation(true)
+                .metadata(Map.of(
+                        "tenantId", tenantId.toString(),
+                        "userId", userId.toString()
+                ))
                 .build();
 
-        return Result.success(response);
-    }
-
-    /**
-     * 获取路由状态
-     * 查询当前AppSpec的路由状态和进度
-     *
-     * @param appSpecId 应用规格ID
-     * @return 当前路由状态
-     */
-    @GetMapping("/{appSpecId}/status")
-    @Operation(summary = "获取路由状态", description = "查询AppSpec的当前路由状态")
-    public Result<PlanRoutingResult> getRoutingStatus(
-            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId
-    ) {
-        log.info("查询路由状态 - appSpecId: {}", appSpecId);
-
-        // TODO: 实现状态查询逻辑
-        throw new UnsupportedOperationException("状态查询功能尚未实现");
-    }
-
-    /**
-     * 更新原型状态
-     * V2.0新增：前端使用OpenLovable生成预览后，调用此API更新AppSpec的原型信息
-     *
-     * 解决问题：前端通过SSE流式生成预览后，需要同步更新后端AppSpec的frontendPrototype字段，
-     * 否则confirmDesign会检查失败
-     *
-     * @param appSpecId 应用规格ID
-     * @param prototypeInfo 原型信息（包含sandboxId、previewUrl等）
-     * @return 更新结果
-     */
-    @PostMapping("/{appSpecId}/update-prototype")
-    @Operation(summary = "更新原型状态", description = "前端生成预览后，同步更新AppSpec的原型信息")
-    public Result<java.util.Map<String, Object>> updatePrototypeStatus(
-            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId,
-            @RequestBody java.util.Map<String, Object> prototypeInfo
-    ) {
-        log.info("收到原型状态更新请求 - appSpecId: {}, prototypeInfo: {}", appSpecId, prototypeInfo);
-
-        planRoutingService.updatePrototypeStatus(appSpecId, prototypeInfo);
-
-        log.info("原型状态更新完成 - appSpecId: {}", appSpecId);
-
-        java.util.Map<String, Object> response = new java.util.HashMap<>();
-        response.put("success", true);
-        response.put("appSpecId", appSpecId);
-        response.put("message", "原型状态更新成功");
-        response.put("updatedAt", Instant.now().toString());
-
-        return Result.success(response);
-    }
-
-    /**
-     * 选择行业模板（Blueprint Mode入口）
-     *
-     * 说明：
-     * - 前端在用户选择模板后调用此接口
-     * - 后端会加载 IndustryTemplate.blueprintSpec 并写入 AppSpec
-     *
-     * @param appSpecId AppSpec ID
-     * @param request 选择模板请求
-     * @return 更新后的路由结果（metadata中包含 blueprintModeEnabled 等信息）
-     */
-    @PostMapping("/{appSpecId}/select-template")
-    @Operation(summary = "选择行业模板", description = "选择模板并加载 Blueprint 规范（Blueprint Mode）")
-    public Result<PlanRoutingResult> selectTemplate(
-            @Parameter(description = "AppSpec ID") @PathVariable UUID appSpecId,
-            @RequestBody @Validated SelectTemplateRequest request
-    ) {
-        log.info("收到模板选择请求 - appSpecId: {}, templateId: {}", appSpecId, request.getTemplateId());
-        PlanRoutingResult result = planRoutingService.selectTemplate(appSpecId, request.getTemplateId());
         return Result.success(result);
+    }
+
+    /**
+     * 更新 AppSpec 的需求描述（原型确认前的 Chat 持续修改）
+     *
+     * 设计意图：
+     * - 该接口只更新 AppSpec.specContent.userRequirement，不改变路由分支/风格选择/原型状态；
+     * - 用于“原型确认前”用户通过 Chat 反复修改需求时，确保后续 G3 能读取到最新需求。
+     */
+    @PostMapping("/{appSpecId}/update-requirement")
+    public Result<Map<String, Object>> updateRequirement(
+            @PathVariable String appSpecId,
+            @Valid @RequestBody UpdateRequirementRequest request) {
+        try {
+            UUID id = UUID.fromString(appSpecId);
+            AppSpecEntity appSpec = appSpecService.getById(id);
+            if (appSpec == null) {
+                return Result.error("404", "AppSpec不存在");
+            }
+
+            String requirement = request.getUserRequirement().trim();
+            Map<String, Object> nextSpecContent = appSpec.getSpecContent() != null
+                    ? new HashMap<>(appSpec.getSpecContent())
+                    : new HashMap<>();
+            nextSpecContent.put("userRequirement", requirement);
+            nextSpecContent.putIfAbsent("stage", "planning");
+            appSpec.setSpecContent(nextSpecContent);
+
+            Map<String, Object> metadata = appSpec.getMetadata() != null
+                    ? new HashMap<>(appSpec.getMetadata())
+                    : new HashMap<>();
+            metadata.put("requirementUpdatedAt", Instant.now().toString());
+            appSpec.setMetadata(metadata);
+            appSpecService.updateById(appSpec);
+
+            return Result.success(Map.of(
+                    "success", true,
+                    "message", "需求已更新",
+                    "appSpecId", appSpecId,
+                    "updatedAt", Instant.now().toString()
+            ));
+        } catch (IllegalArgumentException e) {
+            return Result.error("400", "无效的AppSpec ID");
+        } catch (Exception e) {
+            log.error("更新需求失败: appSpecId={}", appSpecId, e);
+            return Result.error("500", "更新需求失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 更新需求请求体
+     */
+    @Data
+    public static class UpdateRequirementRequest {
+        @jakarta.validation.constraints.NotBlank(message = "用户需求不能为空")
+        private String userRequirement;
     }
 
     /**
@@ -302,9 +267,543 @@ public class PlanRoutingController {
      */
     @Data
     public static class SelectTemplateRequest {
-        /**
-         * 行业模板ID
-         */
-        private UUID templateId;
+        @jakarta.validation.constraints.NotBlank(message = "模板ID不能为空")
+        private String templateId;
+    }
+
+    /**
+     * 选择行业模板（Blueprint 模式）
+     *
+     * 说明：
+     * - 当前为最小可用实现：写入 selectedTemplateId + metadata.blueprintModeEnabled
+     * - 返回结构与 PlanRoutingResult 对齐，确保前端可继续走 Blueprint 流程
+     */
+    @PostMapping("/{appSpecId}/select-template")
+    public Result<PlanRoutingResult> selectTemplate(
+            @PathVariable String appSpecId,
+            @Valid @RequestBody SelectTemplateRequest request) {
+        try {
+            UUID id = UUID.fromString(appSpecId);
+            AppSpecEntity appSpec = appSpecService.getById(id);
+            if (appSpec == null) {
+                return Result.error("404", "AppSpec不存在");
+            }
+
+            UUID templateId = UUID.fromString(request.getTemplateId());
+            appSpec.setSelectedTemplateId(templateId);
+
+            Map<String, Object> metadata = appSpec.getMetadata() != null
+                    ? new HashMap<>(appSpec.getMetadata())
+                    : new HashMap<>();
+            metadata.put("blueprintModeEnabled", true);
+            metadata.put("selectedTemplateId", templateId.toString());
+            metadata.put("blueprintSelectedAt", Instant.now().toString());
+            appSpec.setMetadata(metadata);
+
+            RoutingBranch branch = resolveBranch(appSpec.getIntentType());
+
+            if (branch == RoutingBranch.DESIGN && !StringUtils.hasText(appSpec.getSelectedStyle())) {
+                appSpec.setSelectedStyle(DesignStyle.MODERN_MINIMAL.getCode());
+            }
+
+            appSpecService.updateById(appSpec);
+
+            List<StyleVariant> styleVariants = branch == RoutingBranch.DESIGN
+                    ? buildAllStyleVariants()
+                    : List.of();
+            boolean prototypeGenerated = StringUtils.hasText(appSpec.getFrontendPrototypeUrl())
+                    || appSpec.getPrototypeGeneratedAt() != null;
+
+            PlanRoutingResult result = PlanRoutingResult.builder()
+                    .appSpecId(appSpec.getId().toString())
+                    .intent(resolveIntent(appSpec.getIntentType()))
+                    .confidence(appSpec.getConfidenceScore() != null ? appSpec.getConfidenceScore().doubleValue() : 0.0)
+                    .branch(branch)
+                    .matchedTemplateResults(List.of())
+                    .styleVariants(styleVariants)
+                    .prototypeGenerated(prototypeGenerated)
+                    .prototypeUrl(appSpec.getFrontendPrototypeUrl())
+                    .selectedStyleId(appSpec.getSelectedStyle())
+                    .nextAction("Blueprint 模式已启用，请继续确认设计")
+                    .requiresUserConfirmation(true)
+                    .metadata(metadata)
+                    .build();
+
+            return Result.success(result);
+        } catch (IllegalArgumentException e) {
+            return Result.error("400", "无效的模板ID");
+        } catch (Exception e) {
+            log.error("选择模板失败: appSpecId={}", appSpecId, e);
+            return Result.error("500", "选择模板失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 选择设计风格（更新 AppSpec 的选中风格）。
+     *
+     * 说明：
+     * - 作为 /v2/plan-routing/{appSpecId}/select-style 的最小可用实现；
+     * - 写入 selectedStyle 与 metadata，返回 PlanRoutingResult；
+     * - 若 AppSpec 不存在则返回 404，确保前端可识别错误类型。
+     *
+     * @param appSpecId AppSpec ID
+     * @param styleId 风格标识（code 或 identifier）
+     * @return 更新后的路由结果
+     */
+    @PostMapping("/{appSpecId}/select-style")
+    public Result<PlanRoutingResult> selectStyle(
+            @PathVariable String appSpecId,
+            @RequestParam("styleId") String styleId) {
+        if (!StringUtils.hasText(styleId)) {
+            return Result.error("400", "styleId不能为空");
+        }
+
+        try {
+            UUID id = UUID.fromString(appSpecId);
+            AppSpecEntity appSpec = appSpecService.getById(id);
+            if (appSpec == null) {
+                return Result.error("404", "AppSpec不存在");
+            }
+
+            DesignStyle style = DesignStyle.fromCode(styleId);
+            if (style == null) {
+                style = DesignStyle.fromIdentifier(styleId);
+            }
+            if (style == null) {
+                return Result.error("400", "无效的styleId");
+            }
+
+            appSpec.setSelectedStyle(style.getCode());
+
+            Map<String, Object> metadata = appSpec.getMetadata() != null
+                    ? new HashMap<>(appSpec.getMetadata())
+                    : new HashMap<>();
+            metadata.put("selectedStyleId", style.getCode());
+            metadata.put("selectedStyleIdentifier", style.getIdentifier());
+            metadata.put("styleSelectedAt", Instant.now().toString());
+            appSpec.setMetadata(metadata);
+
+            RoutingBranch branch = resolveBranch(appSpec.getIntentType());
+            appSpecService.updateById(appSpec);
+
+            List<StyleVariant> styleVariants = branch == RoutingBranch.DESIGN
+                    ? buildAllStyleVariants()
+                    : List.of();
+            boolean prototypeGenerated = StringUtils.hasText(appSpec.getFrontendPrototypeUrl())
+                    || appSpec.getPrototypeGeneratedAt() != null;
+
+            PlanRoutingResult result = PlanRoutingResult.builder()
+                    .appSpecId(appSpec.getId().toString())
+                    .intent(resolveIntent(appSpec.getIntentType()))
+                    .confidence(appSpec.getConfidenceScore() != null ? appSpec.getConfidenceScore().doubleValue() : 0.0)
+                    .branch(branch)
+                    .matchedTemplateResults(List.of())
+                    .styleVariants(styleVariants)
+                    .prototypeGenerated(prototypeGenerated)
+                    .prototypeUrl(appSpec.getFrontendPrototypeUrl())
+                    .selectedStyleId(appSpec.getSelectedStyle())
+                    .nextAction("设计风格已选择，请继续确认设计")
+                    .requiresUserConfirmation(true)
+                    .metadata(metadata)
+                    .build();
+
+            return Result.success(result);
+        } catch (IllegalArgumentException e) {
+            return Result.error("400", "无效的AppSpec ID");
+        } catch (Exception e) {
+            log.error("选择风格失败: appSpecId={}", appSpecId, e);
+            return Result.error("500", "选择风格失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 确认设计（用户确认原型后，进入代码生成阶段）
+     * 此接口会检查用户余额并扣费
+     *
+     * @param appSpecId AppSpec ID
+     * @return 确认结果
+     */
+    @PostMapping("/{appSpecId}/confirm-design")
+    public Result<DesignConfirmResult> confirmDesign(@PathVariable String appSpecId) {
+        log.info("确认设计: appSpecId={}", appSpecId);
+
+        // 获取当前用户ID
+        UUID userId = getLoginUserIdOrNull();
+        if (userId == null) {
+            return Result.error("401", "请先登录");
+        }
+
+        // 检查余额
+        if (!billingService.hasCredits(userId, 1)) {
+            log.warn("用户 {} 余额不足，无法确认设计", userId);
+            return Result.error("402", "生成次数不足，请先购买套餐");
+        }
+
+        // 扣除余额
+        boolean consumed = billingService.consumeCredits(
+                userId,
+                1,
+                appSpecId,
+                "确认设计 - " + appSpecId
+        );
+
+        if (!consumed) {
+            return Result.error("402", "扣费失败，请重试");
+        }
+
+        // 更新 AppSpec 设计确认状态
+        try {
+            UUID appSpecUuid = UUID.fromString(appSpecId);
+            AppSpecEntity appSpec = appSpecService.getById(appSpecUuid);
+            if (appSpec != null) {
+                appSpec.setDesignConfirmed(true);
+                appSpec.setDesignConfirmedAt(Instant.now());
+                appSpecService.updateById(appSpec);
+            }
+        } catch (Exception e) {
+            log.warn("更新设计确认状态失败: appSpecId={}", appSpecId, e);
+        }
+
+        log.info("用户 {} 确认设计成功，已扣除1次生成次数", userId);
+
+        DesignConfirmResult result = DesignConfirmResult.builder()
+                .success(true)
+                .message("设计确认成功")
+                .appSpecId(appSpecId)
+                .canProceedToExecute(true)
+                .build();
+
+        return Result.success(result);
+    }
+
+    /**
+     * 执行代码生成（确认设计后进入 Execute 阶段）
+     *
+     * 说明：
+     * - 若设计未确认，返回 1001 错误码（与前端/测试约定一致）
+     * - 当前仅提供状态校验与占位响应，后续可对接真实 G3 执行
+     */
+    @PostMapping("/{appSpecId}/execute-code-generation")
+    public Result<Map<String, Object>> executeCodeGeneration(@PathVariable String appSpecId) {
+        try {
+            UUID id = UUID.fromString(appSpecId);
+            AppSpecEntity appSpec = appSpecService.getById(id);
+            if (appSpec == null) {
+                return Result.error("404", "AppSpec不存在");
+            }
+
+            Boolean confirmed = appSpec.getDesignConfirmed();
+            if (confirmed == null || !confirmed) {
+                return Result.error("1001", "设计未确认");
+            }
+
+            return Result.success(Map.of(
+                    "success", true,
+                    "message", "已进入代码生成阶段",
+                    "appSpecId", appSpecId
+            ));
+        } catch (IllegalArgumentException e) {
+            return Result.error("400", "无效的AppSpec ID");
+        } catch (Exception e) {
+            log.error("执行代码生成失败: appSpecId={}", appSpecId, e);
+            return Result.error("500", "执行代码生成失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 设计确认结果
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DesignConfirmResult {
+        private boolean success;
+        private String message;
+        private String appSpecId;
+        private boolean canProceedToExecute;
+    }
+
+    /**
+     * 更新原型状态请求
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class UpdatePrototypeRequest {
+        private String sandboxId;
+        private String previewUrl;
+        private String provider;
+    }
+
+    /**
+     * 更新原型状态（前端生成预览后同步到后端）
+     *
+     * @param appSpecId AppSpec ID
+     * @param request 原型信息
+     * @return 更新结果
+     */
+    @PostMapping("/{appSpecId}/update-prototype")
+    public Result<Map<String, Object>> updatePrototype(
+            @PathVariable String appSpecId,
+            @RequestBody UpdatePrototypeRequest request) {
+        log.info("更新原型状态: appSpecId={}, sandboxId={}, previewUrl={}",
+                appSpecId, request.getSandboxId(), request.getPreviewUrl());
+
+        try {
+            UUID id = UUID.fromString(appSpecId);
+            AppSpecEntity appSpec = appSpecService.getById(id);
+
+            if (appSpec == null) {
+                return Result.error("404", "AppSpec不存在");
+            }
+
+            // 更新原型相关字段
+            appSpec.setFrontendPrototypeUrl(request.getPreviewUrl());
+            appSpec.setPrototypeGeneratedAt(Instant.now());
+
+            // 更新metadata
+            Map<String, Object> metadata = appSpec.getMetadata() != null
+                    ? new HashMap<>(appSpec.getMetadata())
+                    : new HashMap<>();
+            metadata.put("sandboxId", request.getSandboxId());
+            metadata.put("sandboxProvider", request.getProvider() != null ? request.getProvider() : "e2b");
+            metadata.put("prototypeUpdatedAt", Instant.now().toString());
+            appSpec.setMetadata(metadata);
+
+            appSpecService.updateById(appSpec);
+
+            log.info("原型状态更新成功: appSpecId={}", appSpecId);
+
+            return Result.success(Map.of(
+                    "success", true,
+                    "message", "原型状态更新成功",
+                    "updatedAt", Instant.now().toString()
+            ));
+        } catch (IllegalArgumentException e) {
+            log.error("无效的AppSpec ID: {}", appSpecId, e);
+            return Result.error("400", "无效的AppSpec ID");
+        } catch (Exception e) {
+            log.error("更新原型状态失败: appSpecId={}", appSpecId, e);
+            return Result.error("500", "更新原型状态失败: " + e.getMessage());
+        }
+    }
+
+    private static UUID coerceUuid(UUID value) {
+        return value;
+    }
+
+    private UUID getLoginUserIdOrNull() {
+        try {
+            String id = StpUtil.getLoginIdAsString();
+            return id != null ? UUID.fromString(id) : null;
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    private UUID getSessionTenantIdOrNull() {
+        try {
+            var session = StpUtil.getSession(false);
+            Object tenantId = session != null ? session.get("tenantId") : null;
+            return tenantId != null ? UUID.fromString(tenantId.toString()) : null;
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    /**
+     * 最小可用的路由决策（规则 + 兜底）
+     *
+     * 规则：
+     * - 含 URL 或明确“参考/仿照/克隆”等关键词 → CLONE / HYBRID
+     * - 同时出现“但/但是/修改/定制/增加”等 → HYBRID
+     * - 否则 → DESIGN
+     */
+    private RoutingDecision decideRouting(String requirement) {
+        String lower = requirement.toLowerCase();
+        boolean hasUrl = URL_PATTERN.matcher(requirement).find();
+        boolean hasCloneKeyword = hasUrl ||
+                lower.contains("clone") ||
+                lower.contains("copy") ||
+                requirement.contains("仿") ||
+                requirement.contains("参考") ||
+                requirement.contains("类似") ||
+                requirement.contains("克隆") ||
+                requirement.contains("爬取");
+        boolean hasCustomizeKeyword =
+                requirement.contains("但") ||
+                requirement.contains("但是") ||
+                requirement.contains("修改") ||
+                requirement.contains("定制") ||
+                requirement.contains("增加") ||
+                requirement.contains("在") && requirement.contains("基础上");
+
+        if (hasCloneKeyword && hasCustomizeKeyword) {
+            return new RoutingDecision(RequirementIntent.HYBRID_CLONE_AND_CUSTOMIZE, RoutingBranch.HYBRID, 0.85);
+        }
+        if (hasCloneKeyword) {
+            return new RoutingDecision(RequirementIntent.CLONE_EXISTING_WEBSITE, RoutingBranch.CLONE, hasUrl ? 0.92 : 0.80);
+        }
+        return new RoutingDecision(RequirementIntent.DESIGN_FROM_SCRATCH, RoutingBranch.DESIGN, 0.80);
+    }
+
+    private List<StyleVariant> buildAllStyleVariants() {
+        return Arrays.stream(DesignStyle.values())
+                .map(style -> StyleVariant.builder()
+                        .styleId(style.getIdentifier())
+                        .styleName(style.getDisplayName())
+                        .styleCode(style.getCode())
+                        .build())
+                .toList();
+    }
+
+    /**
+     * 根据 intentType 字符串推导路由分支
+     *
+     * 说明：
+     * - 若 intentType 为空，默认 DESIGN
+     * - 与 RequirementIntent 枚举保持一致
+     */
+    private RoutingBranch resolveBranch(String intentType) {
+        if ("CLONE_EXISTING_WEBSITE".equals(intentType)) {
+            return RoutingBranch.CLONE;
+        }
+        if ("HYBRID_CLONE_AND_CUSTOMIZE".equals(intentType)) {
+            return RoutingBranch.HYBRID;
+        }
+        return RoutingBranch.DESIGN;
+    }
+
+    /**
+     * 根据 intentType 字符串恢复 RequirementIntent
+     *
+     * 说明：
+     * - 解析失败时默认 DESIGN_FROM_SCRATCH，避免空值影响前端流程
+     */
+    private RequirementIntent resolveIntent(String intentType) {
+        if ("CLONE_EXISTING_WEBSITE".equals(intentType)) {
+            return RequirementIntent.CLONE_EXISTING_WEBSITE;
+        }
+        if ("HYBRID_CLONE_AND_CUSTOMIZE".equals(intentType)) {
+            return RequirementIntent.HYBRID_CLONE_AND_CUSTOMIZE;
+        }
+        return RequirementIntent.DESIGN_FROM_SCRATCH;
+    }
+
+    /**
+     * 从用户需求中提取参考链接（支持含协议 URL 与裸域名）
+     *
+     * 设计意图：
+     * - CLONE/HYBRID 场景需要尽快拿到参考站点，触发 OpenLovable 快速原型
+     * - 兼容“airbnb.com”这种无协议写法，自动补全 https://
+     */
+    private List<String> extractReferenceUrls(String requirement) {
+        if (!StringUtils.hasText(requirement)) {
+            return List.of();
+        }
+
+        String content = requirement.trim();
+        java.util.LinkedHashSet<String> urls = new java.util.LinkedHashSet<>();
+
+        var urlMatcher = URL_PATTERN.matcher(content);
+        while (urlMatcher.find()) {
+            String candidate = urlMatcher.group();
+            while (!candidate.isEmpty() && ".,;!?))]".indexOf(candidate.charAt(candidate.length() - 1)) >= 0) {
+                candidate = candidate.substring(0, candidate.length() - 1);
+            }
+            if (!candidate.isEmpty()) {
+                urls.add(candidate);
+            }
+        }
+
+        var domainMatcher = DOMAIN_PATTERN.matcher(content);
+        while (domainMatcher.find()) {
+            String domain = domainMatcher.group(1);
+            if (!StringUtils.hasText(domain)) {
+                continue;
+            }
+            boolean exists = urls.stream().anyMatch(url -> url.contains(domain));
+            if (!exists) {
+                urls.add("https://" + domain);
+            }
+        }
+
+        return new java.util.ArrayList<>(urls);
+    }
+
+    /**
+     * 将 OpenLovable 原型信息写回 AppSpec
+     *
+     * 说明：
+     * - 统一补齐 prototypeUrl + 生成时间 + sandbox 元数据
+     * - 便于后续 UI 直接展示原型并允许确认设计
+     */
+    private void applyPrototypeToAppSpec(AppSpecEntity appSpec, OpenLovableGenerateResponse preview) {
+        appSpec.setFrontendPrototypeUrl(preview.getPreviewUrl());
+        appSpec.setPrototypeGeneratedAt(Instant.now());
+
+        Map<String, Object> metadata = appSpec.getMetadata() != null
+                ? new HashMap<>(appSpec.getMetadata())
+                : new HashMap<>();
+        metadata.put("sandboxId", preview.getSandboxId());
+        metadata.put("sandboxProvider", preview.getProvider() != null ? preview.getProvider() : "e2b");
+        metadata.put("prototypeUpdatedAt", Instant.now().toString());
+        appSpec.setMetadata(metadata);
+    }
+
+    /**
+     * 路由分支枚举（与 shared/types/plan-routing.types.ts 保持一致）
+     */
+    public enum RoutingBranch {
+        CLONE,
+        DESIGN,
+        HYBRID
+    }
+
+    @Data
+    @AllArgsConstructor
+    private static class RoutingDecision {
+        private RequirementIntent intent;
+        private RoutingBranch branch;
+        private double confidence;
+    }
+
+    /**
+     * 路由结果（与 shared/types/plan-routing.types.ts:1 对齐）
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class PlanRoutingResult {
+        private String appSpecId;
+        private RequirementIntent intent;
+        private double confidence;
+        private RoutingBranch branch;
+        private List<Object> matchedTemplateResults;
+        private List<StyleVariant> styleVariants;
+        private boolean prototypeGenerated;
+        private String prototypeUrl;
+        private String selectedStyleId;
+        private String nextAction;
+        private boolean requiresUserConfirmation;
+        private Map<String, Object> metadata;
+    }
+
+    /**
+     * 风格变体（PlanRoutingResult 的子结构）
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class StyleVariant {
+        private String styleId;
+        private String styleName;
+        private String styleCode;
+        private String previewHtml;
+        private String thumbnailUrl;
+        private String colorTheme;
     }
 }

@@ -2,10 +2,6 @@ package com.ingenio.backend.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
 import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.time.Instant;
 import java.util.Map;
@@ -29,10 +25,6 @@ import java.util.UUID;
  * @author Ingenio Team
  * @since 2.0.0 Phase 4
  */
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
 @TableName(value = "repair_records")
 public class RepairRecordEntity {
 
@@ -225,6 +217,455 @@ public class RepairRecordEntity {
      */
     @TableField(value = "updated_at", fill = FieldFill.INSERT_UPDATE)
     private Instant updatedAt;
+
+    public RepairRecordEntity() {
+    }
+
+    public RepairRecordEntity(UUID id, UUID tenantId, UUID appSpecId, UUID validationResultId, String failureType,
+            String status, Integer currentIteration, Integer maxIterations, String repairStrategy,
+            Map<String, Object> errorDetails, java.util.List<Map<String, Object>> repairSuggestions,
+            Integer selectedSuggestionIndex, Map<String, Object> codeChanges, java.util.List<String> affectedFiles,
+            UUID repairValidationResultId, Boolean isSuccess, String failureReason, Boolean isEscalated,
+            Instant escalatedAt, Boolean notificationSent, Map<String, Object> aiReasoning,
+            Map<String, Object> tokenUsage, Instant startedAt, Instant completedAt, Long durationMs,
+            Map<String, Object> metadata, Instant createdAt, Instant updatedAt) {
+        this.id = id;
+        this.tenantId = tenantId;
+        this.appSpecId = appSpecId;
+        this.validationResultId = validationResultId;
+        this.failureType = failureType;
+        this.status = status;
+        this.currentIteration = currentIteration;
+        this.maxIterations = maxIterations;
+        this.repairStrategy = repairStrategy;
+        this.errorDetails = errorDetails;
+        this.repairSuggestions = repairSuggestions;
+        this.selectedSuggestionIndex = selectedSuggestionIndex;
+        this.codeChanges = codeChanges;
+        this.affectedFiles = affectedFiles;
+        this.repairValidationResultId = repairValidationResultId;
+        this.isSuccess = isSuccess;
+        this.failureReason = failureReason;
+        this.isEscalated = isEscalated;
+        this.escalatedAt = escalatedAt;
+        this.notificationSent = notificationSent;
+        this.aiReasoning = aiReasoning;
+        this.tokenUsage = tokenUsage;
+        this.startedAt = startedAt;
+        this.completedAt = completedAt;
+        this.durationMs = durationMs;
+        this.metadata = metadata;
+        this.createdAt = createdAt;
+        this.updatedAt = updatedAt;
+    }
+
+    public static RepairRecordEntityBuilder builder() {
+        return new RepairRecordEntityBuilder();
+    }
+
+    public static class RepairRecordEntityBuilder {
+        private UUID id;
+        private UUID tenantId;
+        private UUID appSpecId;
+        private UUID validationResultId;
+        private String failureType;
+        private String status;
+        private Integer currentIteration;
+        private Integer maxIterations;
+        private String repairStrategy;
+        private Map<String, Object> errorDetails;
+        private java.util.List<Map<String, Object>> repairSuggestions;
+        private Integer selectedSuggestionIndex;
+        private Map<String, Object> codeChanges;
+        private java.util.List<String> affectedFiles;
+        private UUID repairValidationResultId;
+        private Boolean isSuccess;
+        private String failureReason;
+        private Boolean isEscalated;
+        private Instant escalatedAt;
+        private Boolean notificationSent;
+        private Map<String, Object> aiReasoning;
+        private Map<String, Object> tokenUsage;
+        private Instant startedAt;
+        private Instant completedAt;
+        private Long durationMs;
+        private Map<String, Object> metadata;
+        private Instant createdAt;
+        private Instant updatedAt;
+
+        public RepairRecordEntityBuilder id(UUID id) {
+            this.id = id;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder tenantId(UUID tenantId) {
+            this.tenantId = tenantId;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder appSpecId(UUID appSpecId) {
+            this.appSpecId = appSpecId;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder validationResultId(UUID validationResultId) {
+            this.validationResultId = validationResultId;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder failureType(String failureType) {
+            this.failureType = failureType;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder status(String status) {
+            this.status = status;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder currentIteration(Integer currentIteration) {
+            this.currentIteration = currentIteration;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder maxIterations(Integer maxIterations) {
+            this.maxIterations = maxIterations;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder repairStrategy(String repairStrategy) {
+            this.repairStrategy = repairStrategy;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder errorDetails(Map<String, Object> errorDetails) {
+            this.errorDetails = errorDetails;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder repairSuggestions(java.util.List<Map<String, Object>> repairSuggestions) {
+            this.repairSuggestions = repairSuggestions;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder selectedSuggestionIndex(Integer selectedSuggestionIndex) {
+            this.selectedSuggestionIndex = selectedSuggestionIndex;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder codeChanges(Map<String, Object> codeChanges) {
+            this.codeChanges = codeChanges;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder affectedFiles(java.util.List<String> affectedFiles) {
+            this.affectedFiles = affectedFiles;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder repairValidationResultId(UUID repairValidationResultId) {
+            this.repairValidationResultId = repairValidationResultId;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder isSuccess(Boolean isSuccess) {
+            this.isSuccess = isSuccess;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder failureReason(String failureReason) {
+            this.failureReason = failureReason;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder isEscalated(Boolean isEscalated) {
+            this.isEscalated = isEscalated;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder escalatedAt(Instant escalatedAt) {
+            this.escalatedAt = escalatedAt;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder notificationSent(Boolean notificationSent) {
+            this.notificationSent = notificationSent;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder aiReasoning(Map<String, Object> aiReasoning) {
+            this.aiReasoning = aiReasoning;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder tokenUsage(Map<String, Object> tokenUsage) {
+            this.tokenUsage = tokenUsage;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder startedAt(Instant startedAt) {
+            this.startedAt = startedAt;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder completedAt(Instant completedAt) {
+            this.completedAt = completedAt;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder durationMs(Long durationMs) {
+            this.durationMs = durationMs;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder metadata(Map<String, Object> metadata) {
+            this.metadata = metadata;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder createdAt(Instant createdAt) {
+            this.createdAt = createdAt;
+            return this;
+        }
+
+        public RepairRecordEntityBuilder updatedAt(Instant updatedAt) {
+            this.updatedAt = updatedAt;
+            return this;
+        }
+
+        public RepairRecordEntity build() {
+            return new RepairRecordEntity(id, tenantId, appSpecId, validationResultId, failureType, status,
+                    currentIteration, maxIterations, repairStrategy, errorDetails, repairSuggestions,
+                    selectedSuggestionIndex, codeChanges, affectedFiles, repairValidationResultId, isSuccess,
+                    failureReason, isEscalated, escalatedAt, notificationSent, aiReasoning, tokenUsage, startedAt,
+                    completedAt, durationMs, metadata, createdAt, updatedAt);
+        }
+    }
+
+    // Getters and Setters
+    public UUID getId() {
+        return id;
+    }
+
+    public void setId(UUID id) {
+        this.id = id;
+    }
+
+    public UUID getTenantId() {
+        return tenantId;
+    }
+
+    public void setTenantId(UUID tenantId) {
+        this.tenantId = tenantId;
+    }
+
+    public UUID getAppSpecId() {
+        return appSpecId;
+    }
+
+    public void setAppSpecId(UUID appSpecId) {
+        this.appSpecId = appSpecId;
+    }
+
+    public UUID getValidationResultId() {
+        return validationResultId;
+    }
+
+    public void setValidationResultId(UUID validationResultId) {
+        this.validationResultId = validationResultId;
+    }
+
+    public String getFailureType() {
+        return failureType;
+    }
+
+    public void setFailureType(String failureType) {
+        this.failureType = failureType;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
+    }
+
+    public Integer getCurrentIteration() {
+        return currentIteration;
+    }
+
+    public void setCurrentIteration(Integer currentIteration) {
+        this.currentIteration = currentIteration;
+    }
+
+    public Integer getMaxIterations() {
+        return maxIterations;
+    }
+
+    public void setMaxIterations(Integer maxIterations) {
+        this.maxIterations = maxIterations;
+    }
+
+    public String getRepairStrategy() {
+        return repairStrategy;
+    }
+
+    public void setRepairStrategy(String repairStrategy) {
+        this.repairStrategy = repairStrategy;
+    }
+
+    public Map<String, Object> getErrorDetails() {
+        return errorDetails;
+    }
+
+    public void setErrorDetails(Map<String, Object> errorDetails) {
+        this.errorDetails = errorDetails;
+    }
+
+    public java.util.List<Map<String, Object>> getRepairSuggestions() {
+        return repairSuggestions;
+    }
+
+    public void setRepairSuggestions(java.util.List<Map<String, Object>> repairSuggestions) {
+        this.repairSuggestions = repairSuggestions;
+    }
+
+    public Integer getSelectedSuggestionIndex() {
+        return selectedSuggestionIndex;
+    }
+
+    public void setSelectedSuggestionIndex(Integer selectedSuggestionIndex) {
+        this.selectedSuggestionIndex = selectedSuggestionIndex;
+    }
+
+    public Map<String, Object> getCodeChanges() {
+        return codeChanges;
+    }
+
+    public void setCodeChanges(Map<String, Object> codeChanges) {
+        this.codeChanges = codeChanges;
+    }
+
+    public java.util.List<String> getAffectedFiles() {
+        return affectedFiles;
+    }
+
+    public void setAffectedFiles(java.util.List<String> affectedFiles) {
+        this.affectedFiles = affectedFiles;
+    }
+
+    public UUID getRepairValidationResultId() {
+        return repairValidationResultId;
+    }
+
+    public void setRepairValidationResultId(UUID repairValidationResultId) {
+        this.repairValidationResultId = repairValidationResultId;
+    }
+
+    public Boolean getIsSuccess() {
+        return isSuccess;
+    }
+
+    public void setIsSuccess(Boolean isSuccess) {
+        this.isSuccess = isSuccess;
+    }
+
+    public String getFailureReason() {
+        return failureReason;
+    }
+
+    public void setFailureReason(String failureReason) {
+        this.failureReason = failureReason;
+    }
+
+    public Boolean getIsEscalated() {
+        return isEscalated;
+    }
+
+    public void setIsEscalated(Boolean isEscalated) {
+        this.isEscalated = isEscalated;
+    }
+
+    public Instant getEscalatedAt() {
+        return escalatedAt;
+    }
+
+    public void setEscalatedAt(Instant escalatedAt) {
+        this.escalatedAt = escalatedAt;
+    }
+
+    public Boolean getNotificationSent() {
+        return notificationSent;
+    }
+
+    public void setNotificationSent(Boolean notificationSent) {
+        this.notificationSent = notificationSent;
+    }
+
+    public Map<String, Object> getAiReasoning() {
+        return aiReasoning;
+    }
+
+    public void setAiReasoning(Map<String, Object> aiReasoning) {
+        this.aiReasoning = aiReasoning;
+    }
+
+    public Map<String, Object> getTokenUsage() {
+        return tokenUsage;
+    }
+
+    public void setTokenUsage(Map<String, Object> tokenUsage) {
+        this.tokenUsage = tokenUsage;
+    }
+
+    public Instant getStartedAt() {
+        return startedAt;
+    }
+
+    public void setStartedAt(Instant startedAt) {
+        this.startedAt = startedAt;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
+    }
+
+    public void setCompletedAt(Instant completedAt) {
+        this.completedAt = completedAt;
+    }
+
+    public Long getDurationMs() {
+        return durationMs;
+    }
+
+    public void setDurationMs(Long durationMs) {
+        this.durationMs = durationMs;
+    }
+
+    public Map<String, Object> getMetadata() {
+        return metadata;
+    }
+
+    public void setMetadata(Map<String, Object> metadata) {
+        this.metadata = metadata;
+    }
+
+    public Instant getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(Instant createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public Instant getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(Instant updatedAt) {
+        this.updatedAt = updatedAt;
+    }
 
     /**
      * 失败类型枚举

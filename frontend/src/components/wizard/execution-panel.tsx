@@ -242,7 +242,7 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState('timeline');
   const [selectedAgent, setSelectedAgent] = useState<AgentExecutionStatus>();
-  const [viewMode, setViewMode] = useState<'standard' | 'g3'>('standard');
+  const [viewMode, setViewMode] = useState<'standard' | 'g3'>('g3');
 
   // G3 Logic Mapping
   const activeRole = useMemo(() => {
@@ -387,7 +387,7 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
       )}
 
       {/* 5阶段可视化 - 码上飞风格 */}
-      <div className="border-b bg-background/50 p-6">
+      <div className="border-b bg-background/50 px-4 py-3">
         <GenerationStages
           currentStageId={getCurrentStageId(currentStep)}
           overallProgress={progress}
@@ -396,15 +396,15 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
       </div>
 
       {/* 角色任务卡片 - 码上飞风格 */}
-      <div className="border-b bg-background/50 p-6">
+      <div className="border-b bg-background/50 px-4 py-3">
         <RoleTaskCards
           tasks={roleTasks}
           vertical={false}
         />
       </div>
 
-      {/* 内容区域 */}
-      <div className="flex-1">
+      {/* 内容区域 - 确保日志有足够展示空间 */}
+      <div className="flex-1 min-h-[400px] overflow-hidden">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
           {/* 标签页导航 */}
           <div className="border-b bg-background px-4 py-2">
@@ -424,8 +424,8 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
             </TabsList>
           </div>
 
-          {/* 标签页内容 */}
-          <div className="flex-1">
+          {/* 标签页内容 - 增加高度确保内容可见 */}
+          <div className="flex-1 overflow-hidden min-h-[300px]">
             <TabsContent value="timeline" className="h-full m-0">
               <ScrollArea className="h-full">
                 <div className="p-4">

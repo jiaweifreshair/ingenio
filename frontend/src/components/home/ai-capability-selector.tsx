@@ -3,6 +3,7 @@
 import { AI_CAPABILITIES, AICapabilityType } from "@/types/smart-builder";
 import { cn } from "@/lib/utils";
 import { ArrowRight, Check, Plus } from "lucide-react";
+import { useLanguage } from "@/contexts/LanguageContext";
 
 interface AICapabilitySelectorProps {
     selectedCapabilities: AICapabilityType[];
@@ -10,12 +11,14 @@ interface AICapabilitySelectorProps {
 }
 
 export function AICapabilitySelector({ selectedCapabilities, onToggle }: AICapabilitySelectorProps) {
+    const { t } = useLanguage();
+
     return (
         <section className="py-12 px-6">
             <div className="max-w-6xl mx-auto">
                 <div className="text-center mb-10">
-                    <h2 className="text-2xl font-bold text-foreground mb-3">AI 能力矩阵</h2>
-                    <p className="text-muted-foreground">只能推荐 19+ 种 AI 能力组合，支持图像识别、语音合成等</p>
+                    <h2 className="text-2xl font-bold text-foreground mb-3">{t('features.card_ai_title')}</h2>
+                    <p className="text-muted-foreground">{t('features.card_ai_desc')}</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -27,7 +30,7 @@ export function AICapabilitySelector({ selectedCapabilities, onToggle }: AICapab
                                 <div className="w-40 h-40 bg-purple-200 dark:bg-purple-800/40 rounded-full blur-3xl animate-pulse" />
                                 <div className="relative z-10 text-center">
                                     <h3 className="text-3xl font-bold text-purple-600 dark:text-purple-300 mb-2">AI Native</h3>
-                                    <p className="text-purple-500/80">赋能您的应用</p>
+                                    <p className="text-purple-500/80">{t('features.ai_empower')}</p>
                                 </div>
                             </div>
 
@@ -63,8 +66,8 @@ export function AICapabilitySelector({ selectedCapabilities, onToggle }: AICapab
                                     </div>
 
                                     <div className="flex-1">
-                                        <h3 className="font-bold text-foreground">{cap.label}</h3>
-                                        <p className="text-sm text-muted-foreground">{cap.description}</p>
+                                        <h3 className="font-bold text-foreground">{t(`const.ai.${cap.id}.label`)}</h3>
+                                        <p className="text-sm text-muted-foreground">{t(`const.ai.${cap.id}.desc`)}</p>
                                     </div>
 
                                     <div className={cn(
@@ -81,7 +84,7 @@ export function AICapabilitySelector({ selectedCapabilities, onToggle }: AICapab
 
                         <div className="mt-4 flex justify-end">
                             <button className="flex items-center text-purple-600 hover:text-purple-700 font-medium text-sm transition-colors">
-                                探索更多能力 <ArrowRight className="w-4 h-4 ml-1" />
+                                {t('features.card_ai_btn')} <ArrowRight className="w-4 h-4 ml-1" />
                             </button>
                         </div>
                     </div>

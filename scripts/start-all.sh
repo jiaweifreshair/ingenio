@@ -17,6 +17,16 @@ if [ -f .env ]; then
     set +a
 fi
 
+# 0.1 清除代理环境变量，避免本机 localhost 请求被代理拦截（常见于 Clash/Surge 等）
+unset ALL_PROXY
+unset all_proxy
+unset HTTP_PROXY
+unset HTTPS_PROXY
+unset http_proxy
+unset https_proxy
+export NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1,.local}
+export no_proxy=${no_proxy:-localhost,127.0.0.1,::1,.local}
+
 # 1. 启动 Docker 服务
 echo "📦 启动 Docker 服务..."
 docker-compose up -d postgres redis minio
@@ -68,7 +78,7 @@ for i in {1..30}; do
         tail -50 ../logs/frontend.log || true
         exit 1
     fi
-    if curl -sf --max-time 2 "http://localhost:${PORT}/" > /dev/null 2>&1 || curl -sf --max-time 2 "http://127.0.0.1:${PORT}/" > /dev/null 2>&1; then
+    if curl -sf --noproxy '*' --max-time 2 "http://localhost:${PORT}/" > /dev/null 2>&1 || curl -sf --noproxy '*' --max-time 2 "http://127.0.0.1:${PORT}/" > /dev/null 2>&1; then
         echo "✓ 前端服务启动成功"
         break
     fi

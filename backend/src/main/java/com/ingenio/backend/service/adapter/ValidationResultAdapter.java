@@ -3,7 +3,8 @@ package com.ingenio.backend.service.adapter;
 import com.ingenio.backend.dto.CompilationResult;
 import com.ingenio.backend.dto.TestResult;
 import com.ingenio.backend.dto.response.validation.ValidationResponse;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -16,14 +17,16 @@ import java.util.stream.Collectors;
  * 将CompilationResult适配为ValidationResponse
  * 解决DTO不兼容问题：
  * - CompilationResult: success, compiler, errors, warnings, durationMs
- * - ValidationResponse: validationId, passed, status, qualityScore, errors, warnings
+ * - ValidationResponse: validationId, passed, status, qualityScore, errors,
+ * warnings
  *
  * @author Ingenio Team
  * @since 2.0.0 Phase 1
  */
-@Slf4j
 @Component
 public class ValidationResultAdapter {
+
+    private static final Logger log = LoggerFactory.getLogger(ValidationResultAdapter.class);
 
     /**
      * 将CompilationResult转换为ValidationResponse
@@ -37,13 +40,12 @@ public class ValidationResultAdapter {
      * 6. 构建详情Map（包含compiler、compilerVersion、outputDirectory等）
      *
      * @param compilationResult 编译结果
-     * @param appSpecId AppSpec ID（用于关联）
+     * @param appSpecId         AppSpec ID（用于关联）
      * @return 验证响应
      */
     public ValidationResponse toValidationResponse(
             CompilationResult compilationResult,
-            UUID appSpecId
-    ) {
+            UUID appSpecId) {
         log.info("开始适配CompilationResult → ValidationResponse: success={}, errors={}, warnings={}",
                 compilationResult.getSuccess(),
                 compilationResult.getErrorCount(),
@@ -60,8 +62,7 @@ public class ValidationResultAdapter {
         int qualityScore = calculateQualityScore(
                 compilationResult.getSuccess(),
                 compilationResult.getErrorCount(),
-                compilationResult.getWarningCount()
-        );
+                compilationResult.getWarningCount());
 
         // 4. 转换错误消息
         List<String> errors = convertErrors(compilationResult.getErrors());
@@ -102,8 +103,8 @@ public class ValidationResultAdapter {
      * - 最低分: 0分
      * - 编译失败但无错误: 50分（兜底）
      *
-     * @param success 是否成功
-     * @param errorCount 错误数量
+     * @param success      是否成功
+     * @param errorCount   错误数量
      * @param warningCount 警告数量
      * @return 质量评分（0-100）
      */
@@ -243,13 +244,12 @@ public class ValidationResultAdapter {
      * - fullOutput: 完整编译输出（可选，用于调试）
      *
      * @param compilationResult 编译结果
-     * @param appSpecId AppSpec ID
+     * @param appSpecId         AppSpec ID
      * @return 详情Map
      */
     private Map<String, Object> buildDetails(
             CompilationResult compilationResult,
-            UUID appSpecId
-    ) {
+            UUID appSpecId) {
         Map<String, Object> details = new HashMap<>();
 
         details.put("appSpecId", appSpecId.toString());
@@ -277,13 +277,12 @@ public class ValidationResultAdapter {
      * 批量转换编译结果（用于批量验证场景）
      *
      * @param compilationResults 编译结果列表
-     * @param appSpecId AppSpec ID
+     * @param appSpecId          AppSpec ID
      * @return 验证响应列表
      */
     public List<ValidationResponse> toValidationResponses(
             List<CompilationResult> compilationResults,
-            UUID appSpecId
-    ) {
+            UUID appSpecId) {
         log.info("批量适配CompilationResult → ValidationResponse: count={}",
                 compilationResults.size());
 
@@ -296,13 +295,12 @@ public class ValidationResultAdapter {
      * 汇总多个编译结果为单个验证响应（用于多文件编译场景）
      *
      * @param compilationResults 多个编译结果
-     * @param appSpecId AppSpec ID
+     * @param appSpecId          AppSpec ID
      * @return 汇总后的验证响应
      */
     public ValidationResponse aggregateResults(
             List<CompilationResult> compilationResults,
-            UUID appSpecId
-    ) {
+            UUID appSpecId) {
         log.info("汇总多个编译结果: count={}", compilationResults.size());
 
         // 1. 检查是否全部成功
@@ -331,7 +329,8 @@ public class ValidationResultAdapter {
         Map<String, Object> details = new HashMap<>();
         details.put("appSpecId", appSpecId.toString());
         details.put("totalCompilations", compilationResults.size());
-        details.put("successfulCompilations", compilationResults.stream().filter(CompilationResult::getSuccess).count());
+        details.put("successfulCompilations",
+                compilationResults.stream().filter(CompilationResult::getSuccess).count());
         details.put("totalErrors", allErrors.size());
         details.put("totalWarnings", allWarnings.size());
         details.put("totalDurationMs", totalDurationMs);
@@ -361,13 +360,12 @@ public class ValidationResultAdapter {
      * 5. 构建详情Map（包含framework、totalTests、passedTests等）
      *
      * @param testResult 测试结果
-     * @param appSpecId AppSpec ID（用于关联）
+     * @param appSpecId  AppSpec ID（用于关联）
      * @return 验证响应
      */
     public ValidationResponse toValidationResponseFromTestResult(
             TestResult testResult,
-            UUID appSpecId
-    ) {
+            UUID appSpecId) {
         log.info("开始适配TestResult → ValidationResponse: allPassed={}, totalTests={}, coverage={}",
                 testResult.getAllPassed(),
                 testResult.getTotalTests(),
@@ -384,8 +382,7 @@ public class ValidationResultAdapter {
         int qualityScore = calculateTestQualityScore(
                 testResult.getAllPassed(),
                 testResult.getPassRate(),
-                testResult.getCoverage()
-        );
+                testResult.getCoverage());
 
         // 4. 转换失败的测试用例为错误消息
         List<String> errors = convertTestFailures(testResult.getFailures());
@@ -430,8 +427,8 @@ public class ValidationResultAdapter {
      * - 有失败: 0-49分
      *
      * @param allPassed 是否全部通过
-     * @param passRate 通过率（0-1）
-     * @param coverage 覆盖率（0-1，可能为null）
+     * @param passRate  通过率（0-1）
+     * @param coverage  覆盖率（0-1，可能为null）
      * @return 质量评分（0-100）
      */
     private int calculateTestQualityScore(boolean allPassed, double passRate, Double coverage) {
@@ -526,7 +523,7 @@ public class ValidationResultAdapter {
      * - reportPath: 测试报告路径
      *
      * @param testResult 测试结果
-     * @param appSpecId AppSpec ID
+     * @param appSpecId  AppSpec ID
      * @return 详情Map
      */
     private Map<String, Object> buildTestDetails(TestResult testResult, UUID appSpecId) {
@@ -582,13 +579,12 @@ public class ValidationResultAdapter {
      * 4. 构建详情Map（包含lineCoverage、branchCoverage等）
      *
      * @param coverageResult 覆盖率结果
-     * @param appSpecId AppSpec ID（用于关联）
+     * @param appSpecId      AppSpec ID（用于关联）
      * @return 验证响应
      */
     public ValidationResponse toValidationResponseFromCoverageResult(
             com.ingenio.backend.dto.CoverageResult coverageResult,
-            UUID appSpecId
-    ) {
+            UUID appSpecId) {
         log.info("开始适配CoverageResult → ValidationResponse: tool={}, overallCoverage={}, meetsQualityGate={}",
                 coverageResult.getTool(),
                 coverageResult.getOverallCoverage(),
@@ -649,13 +645,12 @@ public class ValidationResultAdapter {
      * - reportPath: 覆盖率报告路径
      *
      * @param coverageResult 覆盖率结果
-     * @param appSpecId AppSpec ID
+     * @param appSpecId      AppSpec ID
      * @return 详情Map
      */
     private Map<String, Object> buildCoverageDetails(
             com.ingenio.backend.dto.CoverageResult coverageResult,
-            UUID appSpecId
-    ) {
+            UUID appSpecId) {
         Map<String, Object> details = new HashMap<>();
 
         details.put("appSpecId", appSpecId.toString());

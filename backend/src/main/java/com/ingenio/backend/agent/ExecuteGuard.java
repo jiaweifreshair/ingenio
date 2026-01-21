@@ -9,8 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
-import java.net.HttpURLConnection;
-import java.net.URL;
 import java.util.UUID;
 
 /**
@@ -37,9 +35,13 @@ public class ExecuteGuard {
     private final AppSpecMapper appSpecMapper;
 
     /**
-     * URL可访问性检查超时时间（毫秒）
+     * URL可访问性检查器。
+     *
+     * 是什么：用于检测原型预览URL可达性的组件。
+     * 做什么：统一封装可达性检测逻辑，供执行前置检查复用。
+     * 为什么：保留严格检测的同时，便于测试环境替换实现。
      */
-    private static final int URL_CHECK_TIMEOUT = 5000;
+    private final UrlAccessibilityChecker urlAccessibilityChecker;
 
     /**
      * 执行完整的前置条件检查
@@ -49,8 +51,8 @@ public class ExecuteGuard {
      * 2. 意图识别完成 - Plan阶段产出
      * 3. 设计风格选择 - 用户决策
      * 4. 前端原型代码 - OpenLovable产出
-     * 5. 原型预览URL - Sandbox部署
-     * 6. 用户设计确认 - 核心阻塞点
+     * 5. 用户设计确认 - 核心阻塞点
+     * 6. 原型预览URL - Sandbox部署
      *
      * @param appSpecId AppSpec的UUID
      * @throws BusinessException 如果任何前置条件不满足
@@ -70,11 +72,11 @@ public class ExecuteGuard {
         // Step 4: 检查前端原型代码是否存在
         checkFrontendPrototypeExists(appSpec);
 
-        // Step 5: 检查原型预览URL是否有效
-        checkPrototypeUrlAccessible(appSpec);
-
-        // Step 6: 核心检查 - 用户是否确认设计
+        // Step 5: 核心检查 - 用户是否确认设计
         checkDesignConfirmed(appSpec);
+
+        // Step 6: 检查原型预览URL是否有效
+        checkPrototypeUrlAccessible(appSpec);
 
         log.info("ExecuteGuard前置条件检查全部通过 - appSpecId: {}", appSpecId);
     }
@@ -221,28 +223,13 @@ public class ExecuteGuard {
     /**
      * 检查URL是否可访问
      *
-     * 实现简单的HTTP HEAD请求检查URL可达性
+     * 委托可达性检查器执行真实检测
      *
      * @param urlString URL字符串
      * @return true如果可访问，false如果不可访问
      */
     private boolean isUrlAccessible(String urlString) {
-        try {
-            URL url = new URL(urlString);
-            HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("HEAD");
-            connection.setConnectTimeout(URL_CHECK_TIMEOUT);
-            connection.setReadTimeout(URL_CHECK_TIMEOUT);
-
-            int responseCode = connection.getResponseCode();
-            connection.disconnect();
-
-            // 2xx 或 3xx 响应码表示可访问
-            return responseCode >= 200 && responseCode < 400;
-        } catch (Exception e) {
-            log.warn("URL可访问性检查失败 - url: {}, error: {}", urlString, e.getMessage());
-            return false;
-        }
+        return urlAccessibilityChecker.isAccessible(urlString);
     }
 
     /**

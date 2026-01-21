@@ -2,7 +2,7 @@
  * PrototypeConfirmation - V2.0原型预览确认组件（深度融合版 - 修复优化）
  *
  * 优化内容：
- * - 采用左右分栏布局（左侧交互/日志，右侧预览/代码）
+ * - 采用左右分栏布局（左侧预览/代码，右侧交互/历史）
  * - 集成 InteractionPanel 组件（聊天式交互）
  * - 集成 RealtimeCodeViewer 组件（代码查看）
  * - 集成 ResizablePanels 组件（可拖拽调整）
@@ -41,12 +41,14 @@ import { useOpenLovablePreview } from '@/hooks/use-openlovable-preview';
 import { cn } from '@/lib/utils';
 import { PrototypePreview } from './prototype-preview';
 import { ConfirmationDialog } from './confirmation-dialog';
-import { InteractionPanel } from './interaction-panel';
+import { InteractionPanel, type ChatHistoryItem } from './interaction-panel';
 import { RealtimeCodeViewer } from '@/components/code-generation/realtime-code-viewer';
 import { ResizablePanels } from '@/components/ui/resizable-panels';
 import { useToast } from '@/hooks/use-toast';
 import { useSandboxHeartbeat } from '@/hooks/use-sandbox-heartbeat';
 import { useSandboxCleanup } from '@/hooks/use-sandbox-cleanup';
+import { PaywallGuard } from '@/components/billing/paywall-guard';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 // ==================== 类型定义 ====================
 
@@ -59,9 +61,51 @@ export interface PrototypeConfirmationProps {
   loading?: boolean;
   error?: string | null;
   g3Logs?: G3LogEntry[];
+  /**
+   * 聊天历史记录（可选）
+   *
+   * 用途：
+   * - 与外层向导共享历史记录，保证跨页面一致性
+   */
+  chatHistory?: ChatHistoryItem[];
+  /**
+   * 聊天历史更新回调（可选）
+   *
+   * 用途：
+   * - 将原型阶段的修改写回到外层状态
+   */
+  onChatHistoryChange?: React.Dispatch<React.SetStateAction<ChatHistoryItem[]>>;
+  /**
+   * 当前正在处理的历史记录ID（可选）
+   *
+   * 用途：
+   * - 让外层统一展示“处理中”状态
+   */
+  activeHistoryId?: string | null;
+  /**
+   * 更新当前处理中的历史记录ID（可选）
+   *
+   * 用途：
+   * - 与外层状态保持同步
+   */
+  onActiveHistoryIdChange?: React.Dispatch<React.SetStateAction<string | null>>;
+  /**
+   * 原型确认阶段的 Chat 修改回调（可选）
+   *
+   * 用途：
+   * - 用户在原型确认前通过聊天不断补充/修正需求
+   * - 将修改同步到外层向导上下文与后端 AppSpec，保证后续 G3 生成读取到最新需求
+   */
+  onChatModify?: (message: string) => void | Promise<void>;
 }
 
 type ViewMode = 'preview' | 'code';
+
+/**
+ * 生成历史记录ID（避免与后端ID冲突，确保前端可追踪）
+ */
+const buildHistoryId = (prefix: 'requirement' | 'iteration') =>
+  `history-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 // ==================== 主组件 ====================
 
@@ -73,7 +117,13 @@ export function PrototypeConfirmation({
   loading = false,
   error: externalError = null,
   g3Logs = [],
+  chatHistory,
+  onChatHistoryChange,
+  activeHistoryId,
+  onActiveHistoryIdChange,
+  onChatModify,
 }: PrototypeConfirmationProps): React.ReactElement {
+  const { t } = useLanguage();
   const { toast } = useToast();
   
   // CLONE 分支兼容：后端可能直接返回 prototypeUrl，但前端仍需要 sandboxId 才能执行“刷新预览/心跳保活”等操作
@@ -125,6 +175,15 @@ export function PrototypeConfirmation({
   const [iframeKey, setIframeKey] = useState(0);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const hasStartedRef = React.useRef(false);
+  const historySeededRef = React.useRef(false);
+  const [internalChatHistory, setInternalChatHistory] = useState<ChatHistoryItem[]>([]);
+  const [internalActiveHistoryId, setInternalActiveHistoryId] = useState<string | null>(null);
+  const effectiveChatHistory = chatHistory ?? internalChatHistory;
+  const setChatHistory = onChatHistoryChange ?? setInternalChatHistory;
+  const effectiveActiveHistoryId = typeof activeHistoryId === 'undefined'
+    ? internalActiveHistoryId
+    : activeHistoryId;
+  const setActiveHistoryId = onActiveHistoryIdChange ?? setInternalActiveHistoryId;
 
   // 组合错误信息
   const error = externalError || openLovableError;
@@ -133,14 +192,63 @@ export function PrototypeConfirmation({
   const isGenerating = stage === 'sandbox' || stage === 'generating';
   const currentSandboxId = sandboxInfo?.sandboxId || null;
 
+  /**
+   * 自动自愈最小间隔（毫秒）
+   * 用途：避免心跳失败时重复触发刷新导致抖动与资源浪费
+   */
+  const AUTO_RECOVER_COOLDOWN_MS = 60_000;
+
+  /**
+   * 自动自愈节流器
+   * 作用：记录是否正在自愈与上次触发时间，防止并发重启
+   */
+  const autoRecoverRef = React.useRef({ inFlight: false, lastAt: 0 });
+
+  /**
+   * 心跳异常处理
+   * 目标：在沙箱被回收/失活时触发自愈刷新，减少人工干预
+   */
+  const handleHeartbeatError = React.useCallback(async (heartbeatError: Error) => {
+    console.warn('[PrototypeConfirmation] Sandbox心跳失败:', heartbeatError);
+
+    // 后端不可用时不触发自愈，避免无效重试
+    if (heartbeatError.message.includes('Failed to fetch')) {
+      return;
+    }
+
+    if (!currentSandboxId || isGenerating || isReloading) {
+      return;
+    }
+
+    const now = Date.now();
+    if (autoRecoverRef.current.inFlight || now - autoRecoverRef.current.lastAt < AUTO_RECOVER_COOLDOWN_MS) {
+      return;
+    }
+
+    autoRecoverRef.current.inFlight = true;
+    autoRecoverRef.current.lastAt = now;
+
+    toast({
+      title: '预览自愈中',
+      description: '检测到沙箱异常，正在尝试重启预览',
+    });
+
+    try {
+      await reloadPreview();
+      setTimeout(() => setIframeKey(prev => prev + 1), 3000);
+    } catch (refreshError) {
+      console.warn('[PrototypeConfirmation] 预览自愈失败:', refreshError);
+    } finally {
+      autoRecoverRef.current.inFlight = false;
+    }
+  }, [AUTO_RECOVER_COOLDOWN_MS, currentSandboxId, isGenerating, isReloading, reloadPreview, toast]);
+
   // Phase 2: Sandbox生命周期管理（保活 + 卸载清理）
   useSandboxHeartbeat({
     sandboxId: currentSandboxId,
     interval: 60000,
     enabled: !!currentSandboxId && !loading,
-    onHeartbeatError: (heartbeatError) => {
-      console.warn('[PrototypeConfirmation] Sandbox心跳失败:', heartbeatError);
-    },
+    onHeartbeatError: handleHeartbeatError,
   });
 
   useSandboxCleanup({
@@ -224,10 +332,47 @@ export function PrototypeConfirmation({
     }
   }, [isGenerating, effectivePreviewUrl, viewMode]);
 
+  // 初始化基础需求到历史记录（仅首次）
+  useEffect(() => {
+    if (historySeededRef.current) return;
+    const trimmedRequirement = userRequirement?.trim();
+    if (!trimmedRequirement) return;
+    setChatHistory((prev) => {
+      if (prev.length > 0) return prev;
+      return [{
+        id: buildHistoryId('requirement'),
+        content: trimmedRequirement,
+        timestamp: Date.now(),
+        kind: 'requirement',
+      }];
+    });
+    historySeededRef.current = true;
+  }, [userRequirement, setChatHistory]);
+
   // ========== 事件处理 ==========
 
   const handleSendIteration = async (message: string) => {
-    await sendIterationMessage(message);
+    const historyId = buildHistoryId('iteration');
+    setChatHistory(prev => [
+      ...prev,
+      {
+        id: historyId,
+        content: message,
+        timestamp: Date.now(),
+        kind: 'iteration',
+      },
+    ]);
+    setActiveHistoryId(historyId);
+    try {
+      await onChatModify?.(message);
+    } catch (e) {
+      console.warn('[PrototypeConfirmation] onChatModify 处理失败:', e);
+    }
+    try {
+      await sendIterationMessage(message);
+    } finally {
+      setActiveHistoryId(null);
+    }
     if (previewUrl) {
       setTimeout(() => setIframeKey(prev => prev + 1), 2000);
     }
@@ -255,7 +400,7 @@ export function PrototypeConfirmation({
 
   // ========== 渲染子组件 ==========
 
-  // 左侧面板：交互与日志
+  // 右侧面板：交互与历史
   const LeftPanel = (
     <div className="h-full flex flex-col">
       <div className="flex-none p-4 border-b bg-background flex items-center justify-between">
@@ -273,13 +418,14 @@ export function PrototypeConfirmation({
           logs={generationLog}
           onSendMessage={handleSendIteration}
           isGenerating={isGenerating}
-          initialRequirement={userRequirement}
+          historyItems={effectiveChatHistory}
+          activeHistoryId={effectiveActiveHistoryId}
         />
       </div>
     </div>
   );
 
-  // 右侧面板：预览与代码
+  // 左侧面板：预览与代码
   const RightPanel = (
     <div className="h-full flex flex-col bg-muted/10">
       {/* 工具栏 */}
@@ -323,7 +469,7 @@ export function PrototypeConfirmation({
             size="icon"
             onClick={handleRefresh}
             disabled={loading || isReloading || !effectivePreviewUrl}
-            title="刷新预览"
+            title={t('ui.refresh_preview')}
             data-testid="refresh-preview-button"
           >
             <RefreshCw className={cn('h-4 w-4', isReloading && 'animate-spin')} />
@@ -331,10 +477,10 @@ export function PrototypeConfirmation({
 
           {effectivePreviewUrl && (
             <>
-              <Button variant="ghost" size="icon" onClick={handleCopyLink} title="复制链接">
+              <Button variant="ghost" size="icon" onClick={handleCopyLink} title={t('ui.copy_link')}>
                 <Copy className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="icon" onClick={handleOpenPreview} title="新窗口打开">
+              <Button variant="ghost" size="icon" onClick={handleOpenPreview} title={t('ui.open_new_window')}>
                 <ExternalLink className="h-4 w-4" />
               </Button>
             </>
@@ -346,16 +492,18 @@ export function PrototypeConfirmation({
 
           <div className="w-px h-4 bg-border mx-1" />
 
-          <Button
-            onClick={() => setShowConfirmDialog(true)}
-            disabled={loading || !canConfirm}
-            className="bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-sm hover:opacity-90 transition-opacity"
-            size="sm"
-            data-testid="confirm-design-button"
-          >
-            {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-            确认设计
-          </Button>
+          <PaywallGuard requiredCredits={1}>
+            <Button
+              onClick={() => setShowConfirmDialog(true)}
+              disabled={loading || !canConfirm}
+              className="bg-gradient-to-r from-purple-600 to-blue-600 text-white shadow-sm hover:opacity-90 transition-opacity"
+              size="sm"
+              data-testid="confirm-design-button"
+            >
+              {loading ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
+              确认设计
+            </Button>
+          </PaywallGuard>
         </div>
       </div>
 
@@ -419,13 +567,14 @@ export function PrototypeConfirmation({
       />
 
       {/* 响应式布局：桌面端使用 ResizablePanels，移动端使用 Tabs */}
+      {/* 布局：左侧为界面预览&代码，右侧为设计助手 */}
       <div className="hidden lg:block h-full w-full">
         <ResizablePanels
-          defaultLeftWidth={30}
-          minLeftWidth={20}
-          maxLeftWidth={50}
-          leftPanel={LeftPanel}
-          rightPanel={RightPanel}
+          defaultLeftWidth={65}
+          minLeftWidth={50}
+          maxLeftWidth={80}
+          leftPanel={RightPanel}
+          rightPanel={LeftPanel}
           dividerClassName="w-1 hover:w-1 bg-border/50 hover:bg-purple-500/50 transition-all"
         />
       </div>
@@ -438,9 +587,11 @@ export function PrototypeConfirmation({
                <TabsTrigger value="chat">设计</TabsTrigger>
                <TabsTrigger value="preview">预览</TabsTrigger>
              </TabsList>
-             <Button size="sm" onClick={() => setShowConfirmDialog(true)} disabled={!canConfirm}>
-               确认
-             </Button>
+             <PaywallGuard requiredCredits={1}>
+               <Button size="sm" onClick={() => setShowConfirmDialog(true)} disabled={!canConfirm}>
+                 确认
+               </Button>
+             </PaywallGuard>
           </div>
           <div className="flex-1 overflow-hidden">
              <TabsContent value="chat" className="h-full m-0 data-[state=inactive]:hidden">

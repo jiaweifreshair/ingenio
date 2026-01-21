@@ -94,7 +94,7 @@ export default defineConfig({
 
   webServer: {
     // 绑定到 127.0.0.1，避免在受限环境下监听 0.0.0.0 导致 EPERM
-    command: "npm run dev -- --hostname 127.0.0.1 --port 3000",
+    command: "pnpm dev --hostname 127.0.0.1 --port 3000",
     // url 需与 hostname 保持一致，避免 Playwright 通过 localhost(IPv6) 探测时误判不可达
     url: "http://127.0.0.1:3000",
     reuseExistingServer: !process.env.CI,

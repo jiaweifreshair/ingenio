@@ -64,6 +64,20 @@ async function sendHeartbeat(
       throw new Error(data.error || '心跳请求失败');
     }
 
+    // 校验上游沙箱健康状态：明确未激活/不健康时主动抛错，触发自愈逻辑。
+    const upstream = data?.data;
+    if (typeof upstream === 'object' && upstream !== null) {
+      const upstreamRecord = upstream as Record<string, unknown>;
+      const active = upstreamRecord.active;
+      const healthy = upstreamRecord.healthy;
+      if (typeof active === 'boolean' && !active) {
+        throw new Error('Sandbox未激活');
+      }
+      if (typeof healthy === 'boolean' && !healthy) {
+        throw new Error('Sandbox不健康');
+      }
+    }
+
     console.log(`[Sandbox心跳] Sandbox ${sandboxId} 心跳成功`);
   } catch (error) {
     // 如果是请求被取消，不记录错误

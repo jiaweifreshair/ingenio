@@ -25,6 +25,12 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class MinioServiceImpl implements MinioService {
 
+    /**
+     * MinIO分片上传最小分片大小（5MB）
+     * 说明：MinIO要求分片上传最小5MB，这里统一兜底避免配置错误。
+     */
+    private static final long MIN_PART_SIZE_BYTES = 5L * 1024 * 1024;
+
     private final MinioClient minioClient;
     private final MinioConfig minioConfig;
 
@@ -129,6 +135,57 @@ public class MinioServiceImpl implements MinioService {
 
         } catch (Exception e) {
             log.error("❌ 上传文件失败: objectName={}, error={}", objectName, e.getMessage(), e);
+            throw new BusinessException(ErrorCode.STORAGE_UPLOAD_FAILED, "文件上传失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 流式上传文件（不需要提前知道文件总大小）
+     *
+     * @param objectName 对象名称（文件路径）
+     * @param inputStream 输入流
+     * @param contentType 内容类型
+     * @param partSize 分片大小（字节）
+     * @param metadata 自定义元数据
+     * @return 文件访问URL
+     * @throws BusinessException 当上传失败时抛出
+     */
+    @Override
+    public String uploadStream(String objectName, InputStream inputStream, String contentType, long partSize,
+            Map<String, String> metadata) {
+        if (objectName == null || objectName.isEmpty()) {
+            log.error("流式上传失败: objectName不能为空");
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "文件名不能为空");
+        }
+        if (inputStream == null) {
+            log.error("流式上传失败: inputStream不能为空");
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "文件内容不能为空");
+        }
+
+        long effectivePartSize = Math.max(partSize, MIN_PART_SIZE_BYTES);
+
+        try {
+            PutObjectArgs.Builder builder = PutObjectArgs.builder()
+                    .bucket(minioConfig.getBucketName())
+                    .object(objectName)
+                    .stream(inputStream, -1, effectivePartSize)
+                    .contentType(contentType);
+
+            if (metadata != null && !metadata.isEmpty()) {
+                builder.userMetadata(metadata);
+            }
+
+            minioClient.putObject(builder.build());
+
+            String fileUrl = String.format("%s/%s/%s",
+                    minioConfig.getEndpoint(),
+                    minioConfig.getBucketName(),
+                    objectName);
+
+            log.info("✅ 流式上传成功: objectName={}, partSize={}bytes", objectName, effectivePartSize);
+            return fileUrl;
+        } catch (Exception e) {
+            log.error("❌ 流式上传失败: objectName={}, error={}", objectName, e.getMessage(), e);
             throw new BusinessException(ErrorCode.STORAGE_UPLOAD_FAILED, "文件上传失败: " + e.getMessage());
         }
     }

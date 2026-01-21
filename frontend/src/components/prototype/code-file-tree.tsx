@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { ChevronRight, ChevronDown, File, Folder, FolderOpen, FileCode2, FileJson, Palette, Code2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useLanguage } from '@/contexts/LanguageContext';
 
 /**
  * 文件节点接口
@@ -148,30 +149,39 @@ function TreeNodeComponent({
 
   if (node.type === 'folder') {
     return (
-      <div>
+      <div className="relative">
         <button
           onClick={() => toggleFolder(node.path)}
           className={cn(
-            'w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors',
+            'w-full flex items-center gap-1.5 px-2 py-1 text-[13px] hover:bg-gray-100 dark:hover:bg-gray-800/50 rounded-sm transition-colors group',
             'text-left'
           )}
-          style={{ paddingLeft: `${level * 12 + 8}px` }}
+          style={{ paddingLeft: `${level * 12 + 4}px` }}
         >
-          {isExpanded ? (
-            <ChevronDown className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-          ) : (
-            <ChevronRight className="h-4 w-4 text-gray-600 dark:text-gray-400" />
-          )}
-          {isExpanded ? (
-            <FolderOpen className="h-4 w-4 text-blue-500" />
-          ) : (
-            <Folder className="h-4 w-4 text-blue-500" />
-          )}
-          <span className="font-medium text-gray-900 dark:text-gray-100">{node.name}</span>
+          <span className="flex-shrink-0">
+            {isExpanded ? (
+              <ChevronDown className="h-3.5 w-3.5 text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300" />
+            ) : (
+              <ChevronRight className="h-3.5 w-3.5 text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300" />
+            )}
+          </span>
+          <span className="flex-shrink-0">
+            {isExpanded ? (
+              <FolderOpen className="h-4 w-4 text-amber-400 dark:text-amber-500" />
+            ) : (
+              <Folder className="h-4 w-4 text-amber-400 dark:text-amber-500" />
+            )}
+          </span>
+          <span className="font-medium text-gray-700 dark:text-gray-300 truncate">{node.name}</span>
         </button>
 
         {isExpanded && node.children && (
-          <div>
+          <div className="relative">
+            {/* 缩进引导线 */}
+            <div 
+              className="absolute left-0 top-0 bottom-0 w-[1px] bg-gray-200 dark:bg-gray-800 ml-[11px]" 
+              style={{ left: `${level * 12 + 4}px` }}
+            />
             {node.children.map((child) => (
               <TreeNodeComponent
                 key={child.path}
@@ -194,24 +204,29 @@ function TreeNodeComponent({
     <button
       onClick={() => node.file && onFileSelect(node.file)}
       className={cn(
-        'w-full flex items-center gap-2 px-2 py-1.5 text-sm hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors',
-        'text-left',
-        isSelected && 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500'
+        'w-full flex items-center gap-1.5 px-2 py-1 text-[13px] hover:bg-gray-100 dark:hover:bg-gray-800/50 rounded-sm transition-colors group',
+        'text-left relative',
+        isSelected && 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400 font-medium'
       )}
-      style={{ paddingLeft: `${level * 12 + 28}px` }}
+      style={{ paddingLeft: `${level * 12 + 22}px` }}
     >
-      {node.file && getFileIcon(node.path, node.file.type)}
-      <span className={cn(
-        'text-gray-700 dark:text-gray-300',
-        isSelected && 'font-medium text-blue-600 dark:text-blue-400'
-      )}>
+      {/* 选中时的左侧指示线 */}
+      {isSelected && (
+        <div className="absolute left-0 top-0 bottom-0 w-[2px] bg-blue-500" />
+      )}
+      
+      <span className="flex-shrink-0">
+        {node.file && getFileIcon(node.path, node.file.type)}
+      </span>
+      <span className="truncate flex-1">
         {node.name}
       </span>
+      
       {node.file?.edited && (
-        <span className="ml-auto text-xs text-orange-500 dark:text-orange-400">●</span>
+        <span className="flex-shrink-0 ml-1 text-[10px] text-orange-500 dark:text-orange-400 opacity-80">●</span>
       )}
       {node.file && !node.file.completed && (
-        <span className="ml-auto text-xs text-gray-400 dark:text-gray-600">生成中...</span>
+        <span className="flex-shrink-0 ml-1 text-[10px] text-gray-400 dark:text-gray-500 italic">生成中...</span>
       )}
     </button>
   );
@@ -226,6 +241,7 @@ function TreeNodeComponent({
  * - 支持文件选择和高亮
  * - 显示文件类型图标
  * - 标记已编辑和未完成的文件
+ * - IDE 风格的缩进引导线和紧凑布局
  *
  * @param props - 组件属性
  * @returns React组件
@@ -236,7 +252,8 @@ export function CodeFileTree({
   onFileSelect,
   className,
 }: CodeFileTreeProps): React.ReactElement {
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['src']));
+  const { t } = useLanguage();
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['src', 'src/app', 'src/components']));
 
   const toggleFolder = (path: string) => {
     setExpandedFolders((prev) => {
@@ -255,11 +272,11 @@ export function CodeFileTree({
   if (files.length === 0) {
     return (
       <div className={cn(
-        'flex flex-col items-center justify-center h-full text-center p-6',
+        'flex flex-col items-center justify-center h-full text-center p-6 bg-gray-50/30 dark:bg-gray-900/10',
         className
       )}>
-        <FileCode2 className="h-12 w-12 text-gray-400 dark:text-gray-600 mb-4" />
-        <p className="text-sm text-gray-500 dark:text-gray-400">
+        <FileCode2 className="h-10 w-10 text-gray-300 dark:text-gray-700 mb-3" />
+        <p className="text-xs text-gray-400 dark:text-gray-500">
           暂无生成的文件
         </p>
       </div>
@@ -267,8 +284,11 @@ export function CodeFileTree({
   }
 
   return (
-    <div className={cn('w-full h-full overflow-y-auto', className)}>
-      <div className="p-2">
+    <div className={cn('w-full h-full overflow-y-auto bg-white dark:bg-[#0d1117]/50 select-none', className)}>
+      <div className="flex items-center px-4 py-2 border-b border-gray-100 dark:border-gray-800/50 mb-1">
+        <span className="text-[11px] font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wider">{t('ui.explorer')}</span>
+      </div>
+      <div className="px-1">
         {tree.map((node) => (
           <TreeNodeComponent
             key={node.path}
@@ -284,3 +304,4 @@ export function CodeFileTree({
     </div>
   );
 }
+

@@ -171,20 +171,22 @@ export function PlanDisplay({
               <MessageSquare className="w-4 h-4" />
               <span>Adjust the plan?</span>
             </div>
-            <div className="flex gap-2">
-              <Textarea 
-                placeholder="E.g., Change the database to MongoDB, or add a dark mode toggle..."
-                value={modification}
-                onChange={(e) => setModification(e.target.value)}
-                className="min-h-[60px] resize-none"
-              />
-              <Button 
-                variant="outline" 
-                size="icon" 
-                className="h-[60px] w-[60px]"
-                onClick={handleModifySubmit}
-                disabled={!modification.trim() || isGenerating}
-              >
+          <div className="flex gap-2">
+            <Textarea 
+              data-testid="plan-modify-textarea"
+              placeholder="E.g., Change the database to MongoDB, or add a dark mode toggle..."
+              value={modification}
+              onChange={(e) => setModification(e.target.value)}
+              className="min-h-[60px] resize-none"
+            />
+            <Button 
+              variant="outline" 
+              size="icon" 
+              className="h-[60px] w-[60px]"
+              data-testid="plan-modify-submit"
+              onClick={handleModifySubmit}
+              disabled={!modification.trim() || isGenerating}
+            >
                 {isModifying ? <Loader2 className="w-5 h-5 animate-spin" /> : <MessageSquare className="w-5 h-5" />}
               </Button>
             </div>

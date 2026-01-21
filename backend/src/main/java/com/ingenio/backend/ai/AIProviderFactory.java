@@ -1,6 +1,7 @@
 package com.ingenio.backend.ai;
 
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -35,9 +36,10 @@ import java.util.List;
  * @author Ingenio Team
  * @since 1.0.0
  */
-@Slf4j
 @Component
 public class AIProviderFactory {
+
+    private static final Logger log = LoggerFactory.getLogger(AIProviderFactory.class);
 
     /**
      * 配置的提供商名称（从环境变量AI_PROVIDER读取）

@@ -5,8 +5,8 @@ import com.ingenio.backend.dto.request.repair.*;
 import com.ingenio.backend.dto.response.repair.RepairResponse;
 import com.ingenio.backend.service.RepairService;
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -30,25 +30,29 @@ import java.util.UUID;
  * @author Ingenio Team
  * @since 2.0.0 Phase 4
  */
-@Slf4j
 @RestController
 @RequestMapping("/v2/repair")
-@RequiredArgsConstructor
 public class RepairController {
 
+    private static final Logger log = LoggerFactory.getLogger(RepairController.class);
+
     private final RepairService repairService;
+
+    public RepairController(RepairService repairService) {
+        this.repairService = repairService;
+    }
 
     /**
      * 触发AI修复流程
      *
      * 请求示例：
      * {
-     *   "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
-     *   "tenantId": "00000000-0000-0000-0000-000000000001",
-     *   "failureType": "compile",
-     *   "errorDetails": [
-     *     { "line": 5, "message": "Type string is not assignable to type number" }
-     *   ]
+     * "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
+     * "tenantId": "00000000-0000-0000-0000-000000000001",
+     * "failureType": "compile",
+     * "errorDetails": [
+     * { "line": 5, "message": "Type string is not assignable to type number" }
+     * ]
      * }
      *
      * @param request 触发修复请求
@@ -73,14 +77,14 @@ public class RepairController {
      *
      * 请求示例：
      * {
-     *   "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
-     *   "failedTests": [
-     *     {
-     *       "testName": "should return user by id",
-     *       "error": "Expected 200 but received 404",
-     *       "stackTrace": "at UserService.test.ts:25"
-     *     }
-     *   ]
+     * "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
+     * "failedTests": [
+     * {
+     * "testName": "should return user by id",
+     * "error": "Expected 200 but received 404",
+     * "stackTrace": "at UserService.test.ts:25"
+     * }
+     * ]
      * }
      *
      * @param request 包含appSpecId和failedTests的请求体
@@ -109,11 +113,11 @@ public class RepairController {
      *
      * 请求示例：
      * {
-     *   "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
-     *   "tenantId": "00000000-0000-0000-0000-000000000001",
-     *   "repairId": "660e8400-e29b-41d4-a716-446655440000",
-     *   "maxIterations": 3,
-     *   "autoEscalate": true
+     * "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
+     * "tenantId": "00000000-0000-0000-0000-000000000001",
+     * "repairId": "660e8400-e29b-41d4-a716-446655440000",
+     * "maxIterations": 3,
+     * "autoEscalate": true
      * }
      *
      * @param request 迭代修复请求
@@ -141,10 +145,10 @@ public class RepairController {
      *
      * 请求示例：
      * {
-     *   "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
-     *   "repairId": "660e8400-e29b-41d4-a716-446655440000",
-     *   "failedIterations": 3,
-     *   "lastError": "无法自动修复的复杂错误"
+     * "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
+     * "repairId": "660e8400-e29b-41d4-a716-446655440000",
+     * "failedIterations": 3,
+     * "lastError": "无法自动修复的复杂错误"
      * }
      *
      * @param request 包含repairId和lastError的请求体
@@ -171,13 +175,13 @@ public class RepairController {
      *
      * 请求示例：
      * {
-     *   "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
-     *   "errorCode": "TS2322",
-     *   "context": {
-     *     "expectedType": "number",
-     *     "actualType": "string",
-     *     "variableName": "count"
-     *   }
+     * "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
+     * "errorCode": "TS2322",
+     * "context": {
+     * "expectedType": "number",
+     * "actualType": "string",
+     * "variableName": "count"
+     * }
      * }
      *
      * @param request 包含appSpecId、errorCode和context的请求体
@@ -206,9 +210,9 @@ public class RepairController {
      *
      * 请求示例：
      * {
-     *   "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
-     *   "missingDependency": "lodash",
-     *   "importStatement": "import _ from 'lodash';"
+     * "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
+     * "missingDependency": "lodash",
+     * "importStatement": "import _ from 'lodash';"
      * }
      *
      * @param request 包含appSpecId和missingDependency的请求体
@@ -235,10 +239,10 @@ public class RepairController {
      *
      * 请求示例：
      * {
-     *   "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
-     *   "errorDescription": "购物车总价计算不包含折扣",
-     *   "expectedBehavior": "总价 = 商品价格 * 数量 - 折扣",
-     *   "actualBehavior": "总价 = 商品价格 * 数量"
+     * "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
+     * "errorDescription": "购物车总价计算不包含折扣",
+     * "expectedBehavior": "总价 = 商品价格 * 数量 - 折扣",
+     * "actualBehavior": "总价 = 商品价格 * 数量"
      * }
      *
      * @param request 包含appSpecId、errorDescription和expectedBehavior的请求体
@@ -266,11 +270,11 @@ public class RepairController {
      *
      * 请求示例：
      * {
-     *   "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
-     *   "tenantId": "00000000-0000-0000-0000-000000000001",
-     *   "maxIterations": 3,
-     *   "autoEscalate": true,
-     *   "autoDeploy": false
+     * "appSpecId": "550e8400-e29b-41d4-a716-446655440000",
+     * "tenantId": "00000000-0000-0000-0000-000000000001",
+     * "maxIterations": 3,
+     * "autoEscalate": true,
+     * "autoDeploy": false
      * }
      *
      * @param request 自动修复请求
@@ -307,8 +311,7 @@ public class RepairController {
             Map<String, Object> response = Map.of(
                     "appSpecId", uuid,
                     "total", history.size(),
-                    "history", history
-            );
+                    "history", history);
 
             return Result.success(response);
         } catch (Exception e) {

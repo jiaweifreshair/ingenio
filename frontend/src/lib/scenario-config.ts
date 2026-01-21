@@ -54,7 +54,7 @@ export const SCENARIO_CONFIGS: Record<string, ScenarioConfig> = {
     prompt: "开发一个垂直领域的社交社区应用，包含用户动态发布、圈子讨论、即时通讯(IM)和关注粉丝机制。",
     keywords: ["社交", "社区", "动态", "好友"],
     complexityHint: 'MEDIUM',
-    techStackHint: 'React+Supabase'
+    techStackHint: 'React + Supabase'
   },
   life: {
     id: "life",
@@ -87,7 +87,7 @@ export const SCENARIO_CONFIGS: Record<string, ScenarioConfig> = {
     prompt: "开发一个个人财务管理应用，具备收支记账、资产分析、理财规划和多账户同步功能。",
     keywords: ["金融", "记账", "理财", "资产"],
     complexityHint: 'MEDIUM',
-    techStackHint: 'React+Supabase'
+    techStackHint: 'React + Supabase'
   },
   media: {
     id: "media",
@@ -98,7 +98,7 @@ export const SCENARIO_CONFIGS: Record<string, ScenarioConfig> = {
     prompt: "构建一个多媒体内容分发平台，支持新闻资讯聚合、短视频流浏览、直播互动和内容创作者中心。",
     keywords: ["媒体", "视频", "直播", "资讯"],
     complexityHint: 'MEDIUM',
-    techStackHint: 'React+Supabase'
+    techStackHint: 'React + Supabase'
   }
 };
 

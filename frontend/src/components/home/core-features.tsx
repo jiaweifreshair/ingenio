@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Sparkles, Clock, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useLanguage } from "@/contexts/LanguageContext";
 
 /**
  * 核心功能展示组件（双卡片布局）
@@ -15,6 +16,7 @@ import { Button } from '@/components/ui/button';
  */
 export function CoreFeatures(): React.ReactElement {
   const router = useRouter();
+  const { t } = useLanguage();
 
   return (
     <section className="py-12 relative overflow-hidden">
@@ -25,10 +27,10 @@ export function CoreFeatures(): React.ReactElement {
         {/* 标题区域 */}
         <div className="text-center mb-10">
           <h2 className="text-4xl md:text-5xl font-bold text-foreground mb-6 tracking-tight">
-            全流程智能化支持
+            {t('features.title')}
           </h2>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto font-medium">
-            从灵感迸发到产品落地，每一步都有 AI 护航
+            {t('features.subtitle')}
           </p>
         </div>
 
@@ -46,9 +48,9 @@ export function CoreFeatures(): React.ReactElement {
               <div className="w-12 h-12 rounded-2xl bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mb-6 text-purple-600">
                 <Sparkles className="w-6 h-6" />
               </div>
-              <h3 className="text-2xl font-bold text-foreground mb-3">AI 能力矩阵</h3>
+              <h3 className="text-2xl font-bold text-foreground mb-3">{t('features.card_ai_title')}</h3>
               <p className="text-muted-foreground leading-relaxed mb-6">
-                智能推荐 19+ 种 AI 能力组合，支持图像识别、语音合成等。
+                {t('features.card_ai_desc')}
               </p>
             </div>
 
@@ -57,7 +59,7 @@ export function CoreFeatures(): React.ReactElement {
               onClick={() => router.push('/wizard/ai-capabilities')}
               className="mt-auto p-0 h-auto text-purple-600 hover:text-purple-700 hover:bg-transparent group-hover:translate-x-1 transition-transform font-medium"
             >
-              探索能力 <ArrowRight className="ml-1 w-3 h-3" />
+              {t('features.card_ai_btn')} <ArrowRight className="ml-1 w-3 h-3" />
             </Button>
           </div>
 
@@ -72,9 +74,9 @@ export function CoreFeatures(): React.ReactElement {
               <div className="w-12 h-12 rounded-2xl bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center mb-6 text-orange-600">
                 <Clock className="w-6 h-6" />
               </div>
-              <h3 className="text-2xl font-bold text-foreground mb-3">时光机回溯</h3>
+              <h3 className="text-2xl font-bold text-foreground mb-3">{t('features.card_time_title')}</h3>
               <p className="text-muted-foreground leading-relaxed mb-6">
-                完整记录版本快照，支持任意时刻回溯与对比，不再担心误操作。
+                {t('features.card_time_desc')}
               </p>
             </div>
 
@@ -83,7 +85,7 @@ export function CoreFeatures(): React.ReactElement {
               onClick={() => router.push('/dashboard')}
               className="mt-auto p-0 h-auto text-orange-600 hover:text-orange-700 hover:bg-transparent group-hover:translate-x-1 transition-transform font-medium"
             >
-              管理版本 <ArrowRight className="ml-1 w-3 h-3" />
+              {t('features.card_time_btn')} <ArrowRight className="ml-1 w-3 h-3" />
             </Button>
           </div>
         </div>

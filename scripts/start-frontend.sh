@@ -29,6 +29,15 @@ fi
 # 设置环境变量
 export NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080/api}
 export PORT=${PORT:-3000}
+# 清除代理环境变量，避免本机 localhost 请求被代理拦截（常见于 Clash/Surge 等）
+unset ALL_PROXY
+unset all_proxy
+unset HTTP_PROXY
+unset HTTPS_PROXY
+unset http_proxy
+unset https_proxy
+export NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,::1,.local}
+export no_proxy=${no_proxy:-localhost,127.0.0.1,::1,.local}
 # 说明：
 # - 若仅监听 IPv4（例如 0.0.0.0 / 127.0.0.1），在部分环境中 localhost 可能优先解析到 IPv6（::1），
 #   导致访问 http://localhost:${PORT} 出现连接拒绝。
@@ -38,6 +47,7 @@ export NEXT_HOSTNAME=${NEXT_HOSTNAME:-::}
 
 echo "前端 API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL}"
 echo "前端监听地址: ${NEXT_HOSTNAME}:${PORT}"
+echo "NO_PROXY: ${NO_PROXY}"
 echo "访问地址建议："
 echo "  - http://localhost:${PORT}"
 echo "  - http://127.0.0.1:${PORT}（若 localhost 解析/IPv6 存在问题）"

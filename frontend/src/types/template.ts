@@ -9,6 +9,8 @@
 export enum TemplateCategory {
   /** 全部模板 */
   ALL = "all",
+  /** 安全竞赛类（本期开放） */
+  SAFETY_CHALLENGE = "safety_challenge",
   /** 电商类 */
   ECOMMERCE = "ecommerce",
   /** 社交类 */
@@ -139,4 +141,6 @@ export interface CategoryMeta {
   icon: string;
   /** 模板数量 */
   count: number;
+  /** 是否可用（本期开放） */
+  isAvailable?: boolean;
 }

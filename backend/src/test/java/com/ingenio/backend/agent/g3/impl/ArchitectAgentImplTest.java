@@ -6,6 +6,10 @@ import com.ingenio.backend.ai.AIProviderFactory;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
+import com.ingenio.backend.prompt.PromptTemplateService;
+import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
+import com.ingenio.backend.service.blueprint.BlueprintValidator;
+import com.ingenio.backend.service.g3.hooks.G3HookPipeline;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -40,6 +44,18 @@ class ArchitectAgentImplTest {
     private AIProvider aiProvider;
 
     @Mock
+    private PromptTemplateService promptTemplateService;
+
+    @Mock
+    private BlueprintPromptBuilder blueprintPromptBuilder;
+
+    @Mock
+    private BlueprintValidator blueprintValidator;
+
+    @Mock
+    private G3HookPipeline hookPipeline;
+
+    @Mock
     private Consumer<G3LogEntry> logConsumer;
 
     @InjectMocks
@@ -56,6 +72,11 @@ class ArchitectAgentImplTest {
                 .requirement("创建一个用户管理系统，包含用户注册、登录、个人信息管理功能")
                 .status(G3JobEntity.Status.PLANNING.getValue())
                 .build();
+
+        // 说明：部分用例不触发 design()/execute()，这里用 lenient 避免 Strict Stubs 因“未使用桩”报错。
+        lenient().when(promptTemplateService.architectContractTemplate()).thenReturn("OpenAPI %s");
+        lenient().when(promptTemplateService.architectSchemaTemplate()).thenReturn("PostgreSQL %s %s");
+        lenient().when(hookPipeline.wrapProvider(any(), any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     /**

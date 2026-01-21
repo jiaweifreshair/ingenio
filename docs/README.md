@@ -24,6 +24,7 @@
 
 - 后端（Java / Spring Boot）：`backend/docs/README.md`
 - 前端（Next.js）：`frontend/docs/EXPLORATION_REPORTS_INDEX.md`（历史报告索引入口：`frontend/docs/HISTORY_REPORTS_INDEX.md`）
+- /lab 指南：`docs/G3_LAB_RAG_TOOLSET_GUIDE.md`（RAG 索引/检索 + Toolset 执行）
 - 架构与 ADR：`docs/architecture/README.md`
 - 开发规范：`docs/development/DEVELOPMENT_GUIDE.md`、`docs/development/CODING_STANDARDS.md`、`docs/development/GIT_WORKFLOW.md`
 - 部署相关：`docs/deployment/DEPLOYMENT_GUIDE.md`、`docs/deployment/DOCKER_GUIDE.md`、`docs/deployment/LOCAL_DEPLOYMENT_GUIDE.md`

@@ -16,6 +16,7 @@ import {
   deleteProject,
   forkProject,
 } from '@/lib/api/projects';
+import { hasToken } from '@/lib/auth/token';
 import type { Project, ProjectStats, ProjectFilters } from '@/types/project';
 import { ProjectStatus } from '@/types/project';
 import { Plus, AlertCircle, Inbox, Sparkles, Clock } from 'lucide-react';
@@ -107,11 +108,16 @@ export default function DashboardPage(): React.ReactElement {
 
   /**
    * 初始化加载
+   * 未登录时跳转到登录页
    */
   useEffect(() => {
+    if (!hasToken()) {
+      router.replace('/login');
+      return;
+    }
     loadStats();
     loadProjects();
-  }, [loadStats, loadProjects]);
+  }, [loadStats, loadProjects, router]);
 
   /**
    * 处理搜索
