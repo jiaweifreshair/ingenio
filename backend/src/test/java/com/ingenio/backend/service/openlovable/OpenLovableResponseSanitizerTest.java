@@ -29,12 +29,18 @@ class OpenLovableResponseSanitizerTest {
 
         OpenLovableResponseSanitizer.SanitizeResult result = OpenLovableResponseSanitizer.sanitizeForSandboxApply(input);
 
-        assertEquals(2, result.removedPaths().size());
-        assertTrue(result.removedPaths().contains("package.json"));
+        // package.json is now merged (not removed), vite.config.ts is removed
+        assertEquals(1, result.removedPaths().size());
         assertTrue(result.removedPaths().contains("vite.config.ts"));
 
+        // package.json should be in mergedPaths
+        assertEquals(1, result.mergedPaths().size());
+        assertTrue(result.mergedPaths().contains("package.json"));
+
         assertNotNull(result.sanitizedResponse());
-        assertFalse(result.sanitizedResponse().contains("package.json"));
+        // package.json is merged (still present in response)
+        assertTrue(result.sanitizedResponse().contains("package.json"));
+        // vite.config.ts is removed
         assertFalse(result.sanitizedResponse().contains("vite.config.ts"));
         assertTrue(result.sanitizedResponse().contains("src/App.jsx"));
         assertTrue(result.sanitizedResponse().contains("return <div>OK</div>"));
@@ -70,6 +76,9 @@ class OpenLovableResponseSanitizerTest {
         OpenLovableResponseSanitizer.SanitizeResult result = OpenLovableResponseSanitizer.sanitizeForSandboxApply(input);
 
         assertTrue(result.removedPaths().isEmpty());
-        assertSame(input, result.sanitizedResponse());
+        assertTrue(result.mergedPaths().isEmpty());
+        // The sanitizer processes the response, so it returns a new string (not the same reference)
+        // But the content should be equivalent
+        assertEquals(input.trim(), result.sanitizedResponse().trim());
     }
 }
