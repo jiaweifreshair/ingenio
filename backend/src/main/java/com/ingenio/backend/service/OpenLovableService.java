@@ -46,6 +46,7 @@ public class OpenLovableService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final UIFunctionalValidator uiFunctionalValidator;
 
     // 线程池用于异步等待生成完成
     private final ExecutorService executorService = Executors.newCachedThreadPool();
