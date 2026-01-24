@@ -479,7 +479,9 @@ public class StyleTemplateGenerator {
           line-height: var(--line-height);
           color: var(--text);
           background: var(--background);
+          min-height: 100vh;
           overflow-x: hidden;
+          overflow-y: auto;
         }
 
         .container {
