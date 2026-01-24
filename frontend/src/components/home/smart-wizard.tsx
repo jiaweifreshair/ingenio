@@ -24,6 +24,7 @@ import { useToast } from '@/hooks/use-toast';
 import { AnalysisProgressPanel } from '@/components/analysis/AnalysisProgressPanel';
 import { PrototypeConfirmation } from '@/components/prototype/prototype-confirmation';
 import { InteractionPanel, type ChatHistoryItem } from '@/components/prototype/interaction-panel';
+import { ResizablePanels } from '@/components/ui/resizable-panels';
 
 // G3 Engine Import
 import { G3Console } from '@/components/g3/g3-console';
@@ -48,6 +49,53 @@ import {
 } from "@/types/smart-builder";
 
 // ==================== 步骤定义 ====================
+
+/**
+ * 交互式分析步骤名称映射
+ *
+ * 用途：
+ * - 左侧步骤列表与右侧对话框文案保持一致
+ * - 让用户明确“当前可修改的是哪一步”
+ */
+const ANALYSIS_STEP_NAME_MAP: Record<number, string> = {
+  1: '需求语义解析',
+  2: '实体关系建模',
+  3: '功能意图识别',
+  4: '技术架构选型',
+  5: '复杂度与风险评估',
+  6: 'Ultrathink 深度规划',
+};
+
+/**
+ * 判断当前是否为大屏（lg 及以上）
+ *
+ * 用途：
+ * - 仅渲染一套布局（桌面/移动），避免 DOM 重复导致交互与测试歧义
+ * - 在桌面端启用可拖拽分栏，移动端保持上下布局
+ */
+function useIsLargeScreen(breakpointPx = 1024): boolean {
+  const [isLarge, setIsLarge] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const getMatches = (): boolean => {
+      if (typeof window.matchMedia === 'function') {
+        return window.matchMedia(`(min-width: ${breakpointPx}px)`).matches;
+      }
+      return window.innerWidth >= breakpointPx;
+    };
+
+    setIsLarge(getMatches());
+
+    const handleResize = () => setIsLarge(getMatches());
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [breakpointPx]);
+
+  return isLarge;
+}
 
 /**
  * 向导步骤枚举
@@ -114,6 +162,7 @@ interface SmartWizardProps {
 export function SmartWizard({ initialRequirement, onBack, initialContext }: SmartWizardProps): React.ReactElement {
   const router = useRouter();
   const { toast } = useToast();
+  const isLargeScreen = useIsLargeScreen();
 
   // ========== 状态管理 ==========
   const [currentStep, setCurrentStep] = useState<WizardStep>(WizardStep.ANALYZING);
@@ -189,7 +238,6 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
   
   // 状态标记
   const hasStartedRef = useRef(false);
-  const hasTriggeredTransitionRef = useRef(false);
 
   // ========== 交互式分析Hook ==========
   const {
@@ -203,6 +251,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
   const isProcessing = state.status === 'RUNNING' || state.status === 'STARTING';
   const analysisError = state.error;
   const analysisStep = state.currentStep;
+  const analysisStepName = ANALYSIS_STEP_NAME_MAP[analysisStep] || `步骤 ${analysisStep}`;
 
   /**
    * 初始化聊天历史（仅首次）
@@ -281,11 +330,40 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
   /**
    * 步骤修改包装函数
    */
-  const handleStepModify = useCallback((step: number) => {
-    // TODO: 实现步骤修改的用户输入收集
-    // 目前暂时使用空字符串作为feedback
-    modifyStep(step, '');
+  const handleStepModify = useCallback(async (step: number, feedback: string) => {
+    const trimmed = feedback.trim();
+    if (!trimmed) return;
+    await modifyStep(step, trimmed);
   }, [modifyStep]);
+
+  /**
+   * 右侧对话框发送：用于“对话式修改当前步骤”
+   *
+   * 规则：
+   * - 仅当后端处于 WAITING_CONFIRMATION（可修改/可确认）时允许发送；
+   * - 发送内容作为 step feedback 提交给后端，触发当前步骤重新执行。
+   */
+  const handleStepChatSend = useCallback((message: string) => {
+    const trimmed = message.trim();
+    if (!trimmed) return;
+
+    // 记录到历史（与方案修改复用同一展示结构）
+    const historyId = appendChatHistory(trimmed, 'iteration');
+    if (historyId) {
+      setActiveHistoryId(historyId);
+    }
+
+    if (state.status !== 'WAITING_CONFIRMATION') {
+      toast({
+        title: '暂不可修改',
+        description: '请等待当前步骤执行完成后再提交修改建议',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    modifyStep(state.currentStep, trimmed);
+  }, [appendChatHistory, modifyStep, state.currentStep, state.status, toast]);
 
   /**
    * 启动分析流程
@@ -341,15 +419,6 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     };
   }, []);
 
-
-  // 计算当前分析进度
-  const analysisProgress = analysisMessages.length > 0
-    ? analysisMessages[analysisMessages.length - 1]?.progress || 0
-    : 0;
-
-  // 是否应该触发跳转
-  const isAnalysisCompleted = state.status === 'COMPLETED';
-  const shouldTransition = isAnalysisCompleted || analysisProgress >= 100;
 
   /**
    * 需求描述摘要。
@@ -424,70 +493,6 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     });
   }, [analysisMessages, truncateText]);
 
-  // 状态流转控制
-  useEffect(() => {
-    if (
-      currentStep === WizardStep.ANALYZING &&
-      routingResult &&
-      shouldTransition &&
-      !hasTriggeredTransitionRef.current
-    ) {
-      hasTriggeredTransitionRef.current = true;
-
-      const startPrototypePhase = () => {
-        console.log('[SmartWizard] 切换到原型确认步骤, appSpecId:', routingResult.appSpecId);
-        
-        // 更新 routingResult：设置默认风格，但不要覆盖 CLONE 分支已生成的原型状态
-        setRoutingResult(prev => {
-          if (!prev) return null;
-          const hasPrototype = !!prev.prototypeUrl || !!prev.prototypeGenerated;
-          return {
-            ...prev,
-            selectedStyleId: prev.selectedStyleId || 'modern_minimal',
-            prototypeGenerated: hasPrototype,
-          };
-        });
-        
-        setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
-        setLoading(false);
-      };
-
-      // 稍微延迟，让用户感知到分析完成
-      const timer = setTimeout(startPrototypePhase, 800);
-      return () => clearTimeout(timer);
-    }
-  }, [currentStep, routingResult, shouldTransition, analysisProgress]);
-
-  // 兜底超时跳转 (如果API返回了但SSE没推完)
-  useEffect(() => {
-    if (
-      currentStep === WizardStep.ANALYZING &&
-      routingResult &&
-      !shouldTransition &&
-      !hasTriggeredTransitionRef.current
-    ) {
-      const forceTimer = setTimeout(async () => {
-        if (hasTriggeredTransitionRef.current) return;
-        console.log('[SmartWizard] 兜底：SSE超时，强制切换步骤');
-        hasTriggeredTransitionRef.current = true;
-        
-        setRoutingResult(prev => {
-          if (!prev) return null;
-          const hasPrototype = !!prev.prototypeUrl || !!prev.prototypeGenerated;
-          return {
-            ...prev,
-            selectedStyleId: prev.selectedStyleId || 'modern_minimal',
-            prototypeGenerated: hasPrototype,
-          };
-        });
-        
-        setCurrentStep(WizardStep.PROTOTYPE_CONFIRM);
-        setLoading(false);
-      }, 30000); // 增加到30秒，给AI分析足够时间
-      return () => clearTimeout(forceTimer);
-    }
-  }, [currentStep, routingResult, shouldTransition]);
-
   // API整体超时处理
   useEffect(() => {
     if (currentStep === WizardStep.ANALYZING && !routingResult && !error) {
@@ -518,7 +523,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
   }, [routingResult]);
 
   /**
-   * 处理技术方案确认（从PlanDisplay点击"Confirm & Generate Prototype"按钮）
+   * 处理技术方案确认（从PlanDisplay点击“确认并生成原型”按钮）
    * 跳转到原型预览步骤
    */
   const handlePlanConfirm = useCallback(() => {
@@ -528,7 +533,6 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     }
 
     console.log('[SmartWizard] 用户确认技术方案，跳转到原型预览');
-    hasTriggeredTransitionRef.current = true;
 
     // 更新 routingResult：设置默认风格，但不要错误覆盖 CLONE 分支的 prototypeGenerated 状态
     // - CLONE 分支可能已由后端直接生成 prototypeUrl，此时强制置 false 会导致“确认设计”按钮被禁用
@@ -559,9 +563,6 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     const nextRequirement = mergeRequirementDelta(requirement, newReq);
     requirementRevisionRef.current += 1;
     console.log('[SmartWizard] 用户请求修改方案，revision=', requirementRevisionRef.current);
-
-    // 防止"上一次完成态"触发自动跳转
-    hasTriggeredTransitionRef.current = false;
 
     setRequirement(nextRequirement);
     setError(null);
@@ -687,10 +688,10 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
 
     toast({
       title: '生成成功',
-      description: '正在跳转到应用预览页...',
+      description: '正在跳转到生成结果页...',
       duration: 2000,
     });
-    router.push(`/preview/${routingResult.appSpecId}`);
+    router.push(`/wizard/${routingResult.appSpecId}`);
   }, [routingResult, router, toast]);
 
   /**
@@ -704,10 +705,10 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     if (!routingResult?.appSpecId) return;
     toast({
       title: '准备完成',
-      description: '已进入前端直连交付流程，正在跳转预览页...',
+      description: '已进入前端直连交付流程，正在跳转生成结果页...',
       duration: 2000,
     });
-    router.push(`/preview/${routingResult.appSpecId}`);
+    router.push(`/wizard/${routingResult.appSpecId}`);
   }, [routingResult, router, toast]);
 
   // 计算显示进度
@@ -736,31 +737,79 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     switch (currentStep) {
       case WizardStep.ANALYZING:
         return (
-          <div className="h-[600px] py-4 animate-in fade-in duration-500">
-            <div className="grid h-full gap-6 lg:grid-cols-[1.4fr_1fr]">
-              <div className="min-h-0">
+          <div className="h-[720px] py-4 animate-in fade-in duration-500">
+            {/* 大屏：可拖拽分栏；小屏：上下布局 */}
+            {isLargeScreen ? (
+              <ResizablePanels
+                storageKey="smart-wizard:analysis-panels"
+                defaultLeftWidth={58}
+                minLeftWidth={35}
+                maxLeftWidth={75}
+                leftPanel={(
+                  <AnalysisProgressPanel
+                    requirement={requirement}
+                    messages={analysisMessages}
+                    isConnected={isProcessing}
+                    isCompleted={analysisStep === 6}
+                    error={analysisError}
+                    finalResult={routingResult}
+                    storageKey={state.sessionId ? `interactive-analysis:step-results:${state.sessionId}` : undefined}
+                    onConfirmPlan={handlePlanConfirm}
+                    onModifyPlan={handlePlanModify}
+                    onConfirmStep={confirmStep}
+                    onModifyStep={handleStepModify}
+                  />
+                )}
+                rightPanel={(
+                  <InteractionPanel
+                    historyItems={chatHistory}
+                    logs={analysisLogs}
+                    onSendMessage={handleStepChatSend}
+                    isGenerating={isProcessing}
+                    activeHistoryId={activeHistoryId}
+                    contextLabel={state.status === 'WAITING_CONFIRMATION' ? `当前步骤：${analysisStepName}` : `执行中：${analysisStepName}`}
+                    inputPlaceholder={
+                      state.status === 'WAITING_CONFIRMATION'
+                        ? `输入对「${analysisStepName}」的修改建议（例如：把按钮改成蓝色）...`
+                        : '分析执行中，等待步骤完成后可提交修改建议...'
+                    }
+                  />
+                )}
+              />
+            ) : (
+            <div className="h-full space-y-6 overflow-auto">
+              <div className="min-h-[420px]">
                 <AnalysisProgressPanel
+                  requirement={requirement}
                   messages={analysisMessages}
                   isConnected={isProcessing}
                   isCompleted={analysisStep === 6}
                   error={analysisError}
                   finalResult={routingResult}
+                  storageKey={state.sessionId ? `interactive-analysis:step-results:${state.sessionId}` : undefined}
                   onConfirmPlan={handlePlanConfirm}
                   onModifyPlan={handlePlanModify}
                   onConfirmStep={confirmStep}
                   onModifyStep={handleStepModify}
                 />
               </div>
-              <div className="min-h-0">
+              <div className="min-h-[420px]">
                 <InteractionPanel
                   historyItems={chatHistory}
                   logs={analysisLogs}
-                  onSendMessage={handlePlanModify}
-                  isGenerating={loading || isProcessing}
+                  onSendMessage={handleStepChatSend}
+                  isGenerating={isProcessing}
                   activeHistoryId={activeHistoryId}
+                  contextLabel={state.status === 'WAITING_CONFIRMATION' ? `当前步骤：${analysisStepName}` : `执行中：${analysisStepName}`}
+                  inputPlaceholder={
+                    state.status === 'WAITING_CONFIRMATION'
+                      ? `输入对「${analysisStepName}」的修改建议（例如：把按钮改成蓝色）...`
+                      : '分析执行中，等待步骤完成后可提交修改建议...'
+                  }
                 />
               </div>
             </div>
+            )}
           </div>
         );
 

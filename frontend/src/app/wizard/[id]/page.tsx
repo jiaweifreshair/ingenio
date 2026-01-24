@@ -141,9 +141,30 @@ export default function WizardPage() {
   // 合并连接状态
   const isConnected = isApiConnected || isWebSocketConnected;
 
+  // 状态管理
+  const [task, setTask] = useState<GenerationTask>({
+    id: appSpecId,
+    config: {
+      requirement: '',
+      model: 'gemini-3-pro-preview',
+      qualityThreshold: 70,
+      skipValidation: false,
+      generatePreview: false,
+    },
+    status: 'idle',
+  });
+
+  const [appSpec, setAppSpec] = useState<AppSpecWithPlan | null>(null);
+  const [pageLoading, setPageLoading] = useState(true);
+  
+  // 当前UI展示的步骤索引 (0: Plan, 1: Execute, 2: Validate)
+  const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  // 是否显示成功完成页面
+  const [isSuccessView, setIsSuccessView] = useState(false);
+
   // 处理下载
   const handleDownload = useCallback(async () => {
-    const currentAppSpecId = task.appSpecId || taskStatus?.appSpecId;
+    const currentAppSpecId = task.appSpecId || taskStatus?.appSpecId || appSpec?.id || appSpecId;
     if (!currentAppSpecId) {
       toast({
         variant: 'destructive',
@@ -210,28 +231,7 @@ export default function WizardPage() {
         description: '无法下载应用代码，请稍后重试',
       });
     }
-  }, [taskStatus?.appSpecId, toast]);
-
-  // 状态管理
-  const [task, setTask] = useState<GenerationTask>({
-    id: appSpecId,
-    config: {
-      requirement: '',
-      model: 'gemini-3-pro-preview',
-      qualityThreshold: 70,
-      skipValidation: false,
-      generatePreview: false,
-    },
-    status: 'idle',
-  });
-
-  const [appSpec, setAppSpec] = useState<AppSpecWithPlan | null>(null);
-  const [pageLoading, setPageLoading] = useState(true);
-  
-  // 当前UI展示的步骤索引 (0: Plan, 1: Execute, 2: Validate)
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  // 是否显示成功完成页面
-  const [isSuccessView, setIsSuccessView] = useState(false);
+  }, [appSpec?.id, appSpecId, task.appSpecId, taskStatus?.appSpecId, toast]);
 
   // 获取初始数据
   useEffect(() => {
@@ -501,7 +501,7 @@ export default function WizardPage() {
                 <h2 className="text-3xl font-bold">生成完成！</h2>
               </div>
               <p className="text-sm text-muted-foreground">
-                ID: {task.appSpecId || taskStatus?.appSpecId}
+                ID: {task.appSpecId || taskStatus?.appSpecId || appSpec?.id || appSpecId}
               </p>
             </div>
 
@@ -524,8 +524,8 @@ export default function WizardPage() {
             <div className="mb-8">
               <h3 className="text-xl font-semibold mb-4">接下来做什么？</h3>
               <QuickActionCards
-                appId={task.appSpecId || taskStatus?.appSpecId || ''}
-                projectId={task.appSpecId || taskStatus?.appSpecId || ''}
+                appId={task.appSpecId || taskStatus?.appSpecId || appSpec?.id || appSpecId}
+                projectId={task.appSpecId || taskStatus?.appSpecId || appSpec?.id || appSpecId}
                 onDownload={handleDownload}
                 onShare={() => {}}
               />
@@ -687,9 +687,9 @@ export default function WizardPage() {
               onConfigChange={handleConfigChange}
             />
           }
-          defaultLeftWidth={40}
+          defaultLeftWidth={65}
           minLeftWidth={350}
-          maxLeftWidthPercent={60}
+          maxLeftWidthPercent={80}
         />
       </div>
     </div>

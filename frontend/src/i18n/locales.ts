@@ -246,7 +246,7 @@ export const translations: Record<LocaleType, Translations> = {
     hero: {
       title_part1: "你的创意，",
       title_part2: "AI 实现",
-      subtitle: "自然语言 · 智能体 · 自动接入",
+      subtitle: "Vibe Coding · 融入 AI 引擎",
       placeholder_create: "在这里输入你想做什么小程序/APP/H5网页...",
       placeholder_redesign: "请输入重构需求（例如：保留原有布局，但改为暗黑风格，使用 React + Tailwind 重写...）",
       btn_generate: "生成",

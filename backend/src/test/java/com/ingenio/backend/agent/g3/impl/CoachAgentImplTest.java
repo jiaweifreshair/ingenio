@@ -512,7 +512,8 @@ class CoachAgentImplTest {
 
         // THEN
         assertTrue(result.success(), "修复应该成功");
-        assertEquals(2, result.fixedArtifacts().size(), "应修复2个文件");
+        // CoachAgent修复2个错误文件后，还会生成3个文档文件(progress.md, findings.md, task_plan.md)
+        assertEquals(5, result.fixedArtifacts().size(), "应修复2个文件 + 生成3个文档文件");
         assertTrue(result.analysisReport().contains("成功 2 个"), "报告应说明修复了2个文件");
     }
 

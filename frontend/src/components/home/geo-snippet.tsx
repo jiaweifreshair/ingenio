@@ -10,8 +10,7 @@ export function GEOSnippet() {
       <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 border border-purple-100 dark:border-purple-800 rounded-2xl p-6 shadow-sm">
         <div className="flex flex-col md:flex-row gap-8">
           <div className="flex-1">
-            <h2 className="text-lg font-bold text-purple-900 dark:text-purple-100 mb-3 flex items-center gap-2">
-              <span className="bg-purple-600 text-white text-xs px-2 py-1 rounded">TL;DR</span>
+            <h2 className="text-lg font-bold text-purple-900 dark:text-purple-100 mb-3">
               一分钟了解 Ingenio (妙构)
             </h2>
             <p className="text-sm text-slate-600 dark:text-slate-300 leading-relaxed">

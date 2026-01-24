@@ -119,12 +119,12 @@ public class LangChain4jArchitectAgentImpl implements IArchitectAgent {
      * 做什么：注入模型路由、工具、Prompt 与 Blueprint 依赖。
      * 为什么：保证架构设计流程可用。
      *
-     * @param modelRouter 模型路由器
-     * @param modelFactory 模型工厂
-     * @param toolRegistry 工具注册表
-     * @param promptTemplateService Prompt 模板服务
+     * @param modelRouter            模型路由器
+     * @param modelFactory           模型工厂
+     * @param toolRegistry           工具注册表
+     * @param promptTemplateService  Prompt 模板服务
      * @param blueprintPromptBuilder Blueprint Prompt 构建器
-     * @param blueprintValidator Blueprint 校验器
+     * @param blueprintValidator     Blueprint 校验器
      */
     public LangChain4jArchitectAgentImpl(
             LangChain4jModelRouter modelRouter,
@@ -217,27 +217,42 @@ public class LangChain4jArchitectAgentImpl implements IArchitectAgent {
         LangChain4jModelRouter.FailureContext failureContext = null;
         Exception lastError = null;
         for (int attempt = 0; attempt < MAX_ROUTE_ATTEMPTS; attempt++) {
-            LangChain4jModelRouter.ModelSelection selection =
-                    modelRouter.select(LangChain4jModelRouter.TaskType.ANALYSIS, attempt, failureContext);
+            LangChain4jModelRouter.ModelSelection selection = modelRouter
+                    .select(LangChain4jModelRouter.TaskType.ANALYSIS, attempt, failureContext);
             try {
                 ChatLanguageModel model = modelFactory.chatModel(selection.provider(), selection.model());
                 ArchitectService service = buildService(model);
 
                 String contractPrompt = buildContractPrompt(job);
+
+                // 输出完整 Prompt 到控制台（便于调试）
+                log.info("[{}] ========== 契约生成 Prompt (开始) ==========", AGENT_NAME);
+                log.info("[{}] Provider: {}, Model: {}", AGENT_NAME, selection.provider(), selection.model());
+                log.info("[{}] Prompt 长度: {} 字符", AGENT_NAME, contractPrompt.length());
+                log.info("[{}] Prompt 内容:\n{}", AGENT_NAME, contractPrompt);
+                log.info("[{}] ========== 契约生成 Prompt (结束) ==========", AGENT_NAME);
+
                 String contractYaml = sanitizeContract(service.generate(contractPrompt));
                 if (!validateContract(contractYaml)) {
                     throw new IllegalStateException("OpenAPI 契约校验失败");
                 }
 
                 String schemaPrompt = buildSchemaPrompt(job, contractYaml);
+
+                // 输出完整 Prompt 到控制台（便于调试）
+                log.info("[{}] ========== Schema 生成 Prompt (开始) ==========", AGENT_NAME);
+                log.info("[{}] Prompt 长度: {} 字符", AGENT_NAME, schemaPrompt.length());
+                log.info("[{}] Prompt 内容:\n{}", AGENT_NAME, schemaPrompt);
+                log.info("[{}] ========== Schema 生成 Prompt (结束) ==========", AGENT_NAME);
+
                 String schemaSql = sanitizeSchema(service.generate(schemaPrompt));
                 if (!validateSchema(schemaSql)) {
                     throw new IllegalStateException("数据库 Schema 校验失败");
                 }
 
                 if (Boolean.TRUE.equals(job.getBlueprintModeEnabled())) {
-                    BlueprintComplianceResult compliance =
-                            blueprintValidator.validateSchemaCompliance(schemaSql, job.getBlueprintSpec());
+                    BlueprintComplianceResult compliance = blueprintValidator.validateSchemaCompliance(schemaSql,
+                            job.getBlueprintSpec());
                     if (!compliance.passed()) {
                         throw new IllegalStateException("Blueprint 合规性校验失败: " + compliance.violations());
                     }
@@ -311,7 +326,7 @@ public class LangChain4jArchitectAgentImpl implements IArchitectAgent {
      * 做什么：将需求、契约与 Blueprint 约束注入模板。
      * 为什么：确保 Schema 生成与契约一致。
      *
-     * @param job G3 任务
+     * @param job          G3 任务
      * @param contractYaml OpenAPI 契约
      * @return Schema Prompt
      */

@@ -9,7 +9,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: '*',
         allow: '/',
-        disallow: ['/dashboard/', '/api/', '/preview/'],
+        disallow: ['/dashboard/', '/api/'],
       },
       {
         // 百度爬虫

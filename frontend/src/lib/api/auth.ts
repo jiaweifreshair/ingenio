@@ -321,15 +321,12 @@ export async function login(
  * POST /v1/auth/logout
  */
 export async function logout(): Promise<void> {
-  try {
-    await post<void>('/v1/auth/logout', {});
-  } catch (e) {
-    console.error('登出API失败:', e);
-  } finally {
-    // 无论API是否成功，都清除本地Token和过期时间
-    clearToken();
-    clearTokenExpiry();
-  }
+  // 登出请求采用“尽力而为”策略：是什么-异步触发登出；做什么-不阻塞本地清理；为什么-后端不可用时避免报错与卡顿。
+  void post<void>('/v1/auth/logout', {}).catch(() => undefined);
+
+  // 无论API是否成功，都清除本地Token和过期时间
+  clearToken();
+  clearTokenExpiry();
 }
 
 // ==================== 邮箱验证码API（Phase 5.2） ====================

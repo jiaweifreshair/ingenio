@@ -20,14 +20,14 @@ spring:
     time-zone: Asia/Shanghai
     date-format: yyyy-MM-dd HH:mm:ss
 
-  # Spring AI OpenAI配置（测试环境使用真实AI服务）
-  # 通过环境变量注入真实的API密钥，确保测试环境与生产环境AI行为一致
+  # Spring AI OpenAI配置（测试环境使用本地代理）
+  # 使用 Gemini 本地代理 (127.0.0.1:8045) + DeepSeek-R1
   ai:
     openai:
-      # 从环境变量读取API密钥（支持多个环境变量名称）
-      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-test-placeholder}}}}
-      # 使用七牛云OpenAI兼容接口
-      base-url: ${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:https://api.qnaigc.com}}
+      # 使用本地代理的API密钥
+      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-418de7bda2824845967ff0c8b97bfbc9}}}}
+      # 使用本地代理URL
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:http://127.0.0.1:8045/v1}}
       chat:
         enabled: true
         options:
@@ -98,10 +98,10 @@ ingenio:
 
   # AI配置（测试环境）
   ai:
-    # UniAix配置（测试环境使用占位符）
+    # UniAix配置（测试环境使用本地代理）
     uniaix:
-      base-url: https://api.uniaix.com
-      api-key: sk-test-placeholder
+      base-url: http://127.0.0.1:8045/v1
+      api-key: sk-418de7bda2824845967ff0c8b97bfbc9
       default-model: claude-3-5-sonnet-20241022
       timeout: 180000
 

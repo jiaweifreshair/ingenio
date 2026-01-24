@@ -108,11 +108,11 @@ ingenio:
       analysis: [claude, gemini, deepseek]
     providers:
       claude:
-        base-url: ${INGENIO_LC4J_CLAUDE_BASE_URL:http://127.0.0.1:8045/v1}
+        base-url: ${INGENIO_LC4J_CLAUDE_BASE_URL:https://aigateway.edgecloudapp.com/v1/your-project-id/your-app}
         api-key: ${INGENIO_LC4J_CLAUDE_API_KEY}
-        model: ${INGENIO_LC4J_CLAUDE_MODEL:claude-opus-4-5-thinking}
+        model: ${INGENIO_LC4J_CLAUDE_MODEL:claude-opus-4-5-20251101}
       gemini:
-        base-url: ${INGENIO_LC4J_GEMINI_BASE_URL:http://127.0.0.1:8045/v1}
+        base-url: ${INGENIO_LC4J_GEMINI_BASE_URL:https://aigateway.edgecloudapp.com/v1/your-project-id/your-app}
         api-key: ${INGENIO_LC4J_GEMINI_API_KEY}
         model: ${INGENIO_LC4J_GEMINI_MODEL:gemini-3-pro-high}
       deepseek:

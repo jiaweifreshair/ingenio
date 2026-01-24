@@ -62,6 +62,31 @@ export interface UseAnalysisSseOptions {
 }
 
 /**
+ * 规范化SSE网络错误提示
+ *
+ * 是什么：SSE流式请求的错误提示映射。
+ * 做什么：将“Failed to fetch”等英文错误转换为可读的中文提示。
+ * 为什么：避免用户看到生硬的英文网络错误，提升体验与可定位性。
+ */
+function normalizeSseErrorMessage(message: string): string {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('failed to fetch') ||
+    normalized.includes('networkerror') ||
+    normalized.includes('econnrefused')
+  ) {
+    return '网络连接失败，请检查后端服务是否启动（http://localhost:8080）';
+  }
+
+  if (normalized.includes('timeout')) {
+    return '分析请求超时，请稍后重试';
+  }
+
+  return message;
+}
+
+/**
  * 使用SSE订阅分析进度
  */
 export function useAnalysisSse(options: UseAnalysisSseOptions) {
@@ -227,7 +252,7 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
       fetch(apiUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ requirement }),
+        body: JSON.stringify({ requirement: effectiveRequirement }),
         signal: abortController.signal
       }).then(response => {
         if (response.status === 401) {
@@ -393,12 +418,15 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
               return;
             }
 
+            const errorMessage = normalizeSseErrorMessage(
+              error instanceof Error ? error.message : String(error)
+            );
             console.error('读取SSE流失败:', error);
             updateState({
-              error: error.message,
+              error: errorMessage,
               isConnected: false
             });
-            onErrorRef.current?.(error.message);
+            onErrorRef.current?.(errorMessage);
           });
         };
 
@@ -408,23 +436,29 @@ export function useAnalysisSse(options: UseAnalysisSseOptions) {
           console.log('SSE请求已中止');
           return;
         }
+        const errorMessage = normalizeSseErrorMessage(
+          error instanceof Error ? error.message : String(error)
+        );
         console.error('SSE连接失败:', error);
         updateState({
-          error: error.message,
+          error: errorMessage,
           isConnecting: false,
           isConnected: false
         });
-        onErrorRef.current?.(error.message);
+        onErrorRef.current?.(errorMessage);
       });
 
     } catch (error) {
+      const errorMessage = normalizeSseErrorMessage(
+        error instanceof Error ? error.message : '未知错误'
+      );
       console.error('初始化SSE失败:', error);
       updateState({
-        error: error instanceof Error ? error.message : '未知错误',
+        error: errorMessage,
         isConnecting: false,
         isConnected: false
       });
-      onErrorRef.current?.(error instanceof Error ? error.message : '未知错误');
+      onErrorRef.current?.(errorMessage);
     }
   }, [requirement, updateState, clearTimeoutTimer, resetTimeoutTimer]);
 

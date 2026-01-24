@@ -617,6 +617,21 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
         setSandboxInfo(prev => (prev && prev.sandboxId === activeSandbox.sandboxId ? { ...prev, url: appliedSandboxUrl } : prev));
       }
 
+      // Step 3.5: 注入运行时错误捕获脚本 (Auto-Repair Support)
+      try {
+        await fetch(`${API_BASE_URL}/v1/openlovable/sandbox/inject-error-handler`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': token } : {}),
+          },
+          body: JSON.stringify({ sandboxId: effectiveSandboxId }),
+        });
+        addLog('🛡️ 已注入运行时错误捕获模块');
+      } catch (injectErr) {
+        console.warn('注入错误捕获失败:', injectErr);
+      }
+
       // Step 4: 重启Vite服务器确保热更新能够正确加载新代码
       addLog('🔄 正在重启Vite服务器，确保热更新生效...');
       try {

@@ -212,7 +212,7 @@ test.describe('通知中心功能测试', () => {
 
     // 验证导航到项目页面
     await page.waitForTimeout(500);
-    await expect(page).toHaveURL(/\/preview\/p1|\/dashboard/);
+    await expect(page).toHaveURL(/\/wizard\/p1|\/dashboard/);
   });
 
   test.skip('应该显示空状态（无通知）', async ({ page }) => {

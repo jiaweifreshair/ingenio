@@ -69,8 +69,7 @@ public class OpenLovableController {
             "sand", "stone",
             "seafoam", "emerald",
             "sage", "green",
-            "coral", "rose"
-    );
+            "coral", "rose");
 
     /**
      * Tailwind 颜色别名匹配模式
@@ -80,10 +79,10 @@ public class OpenLovableController {
      * 为什么：保证自动替换只作用于颜色 token，避免误伤其他文本。
      */
     private static final Pattern TAILWIND_COLOR_ALIAS_PATTERN = Pattern.compile(
-            "\\b(sand|seafoam|sage|coral)-(50|100|200|300|400|500|600|700|800|900|950)\\b"
-    );
+            "\\b(sand|seafoam|sage|coral)-(50|100|200|300|400|500|600|700|800|900|950)\\b");
 
     private final RestTemplate restTemplate = new RestTemplate();
+    private final com.ingenio.backend.langchain4j.model.LangChain4jModelFactory modelFactory;
 
     /**
      * 归一化模型名（用于候选模型去重/稳定性兜底判断）
@@ -260,6 +259,18 @@ public class OpenLovableController {
                 if (originalPrompt != null && !templateContext.isBlank()) {
                     originalPrompt = originalPrompt + "\n\n" + templateContext;
                     log.info("已注入 Scout 模版上下文");
+                }
+            }
+
+            // M1: 处理 Blueprint Markdown（Step 6 生成的技术蓝图）
+            // 前端通过 blueprintMarkdown 字段传递完整蓝图，用于约束 OpenLovable 生成
+            if (adaptedRequest.containsKey("blueprintMarkdown")) {
+                String blueprintMarkdown = (String) adaptedRequest.remove("blueprintMarkdown");
+                if (originalPrompt != null && blueprintMarkdown != null && !blueprintMarkdown.isBlank()) {
+                    // 将 Blueprint 作为设计约束注入到提示词
+                    String blueprintConstraint = buildBlueprintConstraint(blueprintMarkdown);
+                    originalPrompt = originalPrompt + blueprintConstraint;
+                    log.info("已注入 Blueprint 约束: 蓝图长度={}", blueprintMarkdown.length());
                 }
             }
 
@@ -717,14 +728,13 @@ public class OpenLovableController {
                         .body(Result.error(400, String.format(
                                 "AI代码生成不完整：检测到 %d 个截断文件（%s）。请重新生成以获取完整代码。",
                                 sanitizeResult.truncatedPaths().size(),
-                                String.join(", ", sanitizeResult.truncatedPaths())
-                        )));
+                                String.join(", ", sanitizeResult.truncatedPaths()))));
             }
             aiResponse = sanitizeResult.sanitizedResponse();
 
             // V2.4增强：仅保留 <file ...>...</file>，剥离非文件文本，避免上游解析误判
-            java.util.List<OpenLovableResponseSanitizer.FileBlock> fileBlocks =
-                    OpenLovableResponseSanitizer.extractFileBlocks(aiResponse);
+            java.util.List<OpenLovableResponseSanitizer.FileBlock> fileBlocks = OpenLovableResponseSanitizer
+                    .extractFileBlocks(aiResponse);
             if (fileBlocks.isEmpty()) {
                 log.warn("apply请求未解析到任何文件块，已拒绝写入");
                 return ResponseEntity.badRequest()
@@ -758,11 +768,15 @@ public class OpenLovableController {
             }
 
             Map<String, Object> finalResult = applyOutcome.result();
+            // 确保 Map 可变，并追加被过滤的文件列表（供前端展示差异）
+            finalResult = finalResult == null ? new HashMap<>() : new HashMap<>(finalResult);
+            if (sanitizeResult.removedPaths() != null && !sanitizeResult.removedPaths().isEmpty()) {
+                finalResult.put("filteredFiles", sanitizeResult.removedPaths());
+            }
             boolean repaired = verifyAndRepairMockDataExports(
                     fileBlocks,
                     finalResult,
-                    request.get("sandboxId") instanceof String sid ? sid : null
-            );
+                    request.get("sandboxId") instanceof String sid ? sid : null);
             if (repaired) {
                 log.info("mockData 导出异常已自动修复");
             }
@@ -784,7 +798,8 @@ public class OpenLovableController {
      * 为什么：避免重复解析 SSE 带来的维护风险。
      */
     private record ApplyOutcome(boolean success, int httpStatus, String errorMessage,
-                                Map<String, Object> result, int filesWritten) {}
+            Map<String, Object> result, int filesWritten) {
+    }
 
     /**
      * 执行 OpenLovable apply 并解析 SSE 响应
@@ -1007,8 +1022,7 @@ public class OpenLovableController {
     private boolean verifyAndRepairMockDataExports(
             java.util.List<OpenLovableResponseSanitizer.FileBlock> fileBlocks,
             Map<String, Object> applyResult,
-            String fallbackSandboxId
-    ) {
+            String fallbackSandboxId) {
         if (fileBlocks == null || fileBlocks.isEmpty()) {
             return false;
         }
@@ -1084,7 +1098,8 @@ public class OpenLovableController {
      * 为什么：避免只靠 AI 输出判断，忽略上游覆盖导致的白屏。
      */
     private String fetchSandboxFileContent(String sandboxUrl, String filePath) {
-        String normalizedBase = sandboxUrl.endsWith("/") ? sandboxUrl.substring(0, sandboxUrl.length() - 1) : sandboxUrl;
+        String normalizedBase = sandboxUrl.endsWith("/") ? sandboxUrl.substring(0, sandboxUrl.length() - 1)
+                : sandboxUrl;
         String target = normalizedBase + "/" + filePath;
 
         try {
@@ -1100,7 +1115,8 @@ public class OpenLovableController {
             }
 
             try (InputStream inputStream = connection.getInputStream();
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+                    BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
                 return reader.lines().collect(Collectors.joining("\n"));
             }
         } catch (Exception e) {
@@ -1552,6 +1568,93 @@ public class OpenLovableController {
         return sb.toString();
     }
 
+    /**
+     * 构建 Blueprint 约束提示词
+     *
+     * 职责：将 Step 6 生成的技术蓝图 Markdown 转换为 OpenLovable 可理解的设计约束。
+     * 
+     * 注入内容：
+     * - UI 风格约束（颜色、字体、布局）
+     * - 页面规划（核心页面与功能）
+     * - 技术栈要求（Next.js/React/Tailwind）
+     *
+     * @param blueprintMarkdown Step 6 生成的完整蓝图 Markdown
+     * @return 约束提示词（追加到用户需求后）
+     */
+    private String buildBlueprintConstraint(String blueprintMarkdown) {
+        if (blueprintMarkdown == null || blueprintMarkdown.isBlank()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n\n## 🎨 技术蓝图约束（必须严格遵守）\n\n");
+        sb.append("以下是用户确认的技术蓝图，生成的前端代码必须遵循这些约束：\n\n");
+
+        // 提取并注入关键章节
+        // 1. UI 风格与设计规范
+        String uiStyleSection = extractSection(blueprintMarkdown, "UI 风格", "设计风格", "视觉设计");
+        if (!uiStyleSection.isBlank()) {
+            sb.append("### UI 风格约束\n");
+            sb.append(uiStyleSection).append("\n\n");
+        }
+
+        // 2. 页面规划
+        String pagesSection = extractSection(blueprintMarkdown, "页面规划", "核心页面", "功能页面");
+        if (!pagesSection.isBlank()) {
+            sb.append("### 页面规划约束\n");
+            sb.append(pagesSection).append("\n\n");
+        }
+
+        // 3. 技术栈要求
+        String techStackSection = extractSection(blueprintMarkdown, "技术栈", "技术选型", "前端技术");
+        if (!techStackSection.isBlank()) {
+            sb.append("### 技术栈约束\n");
+            sb.append(techStackSection).append("\n\n");
+        }
+
+        // 如果没有提取到任何章节，则直接使用原始蓝图（截断到合理长度）
+        if (sb.length() < 100) {
+            sb.setLength(0);
+            sb.append("\n\n## 🎨 技术蓝图约束（必须严格遵守）\n\n");
+            String truncated = blueprintMarkdown.length() > 3000
+                    ? blueprintMarkdown.substring(0, 3000) + "\n\n[... 蓝图内容已截断 ...]"
+                    : blueprintMarkdown;
+            sb.append(truncated);
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * 从 Markdown 中提取指定章节内容
+     *
+     * @param markdown     完整 Markdown 文本
+     * @param sectionNames 章节名称候选（任意匹配即返回）
+     * @return 章节内容（不含标题），未找到返回空字符串
+     */
+    private String extractSection(String markdown, String... sectionNames) {
+        if (markdown == null || markdown.isBlank()) {
+            return "";
+        }
+
+        for (String sectionName : sectionNames) {
+            // 匹配 ## 章节名 或 ### 章节名
+            Pattern pattern = Pattern.compile(
+                    "(?m)^#{2,3}\\s*.*?" + Pattern.quote(sectionName) + ".*?$\\n([\\s\\S]*?)(?=^#{2,3}\\s|\\z)",
+                    Pattern.MULTILINE);
+            Matcher matcher = pattern.matcher(markdown);
+            if (matcher.find()) {
+                String content = matcher.group(1).trim();
+                // 限制单个章节长度
+                if (content.length() > 1000) {
+                    content = content.substring(0, 1000) + "\n[... 内容已截断 ...]";
+                }
+                return content;
+            }
+        }
+        return "";
+    }
+
     // ==================== 方案A: 结构化提示词增强 ====================
 
     /**
@@ -1878,8 +1981,8 @@ public class OpenLovableController {
             return fileBlocks;
         }
 
-        java.util.List<OpenLovableResponseSanitizer.FileBlock> normalizedBlocks =
-                new java.util.ArrayList<>(fileBlocks.size());
+        java.util.List<OpenLovableResponseSanitizer.FileBlock> normalizedBlocks = new java.util.ArrayList<>(
+                fileBlocks.size());
         boolean changed = false;
 
         for (OpenLovableResponseSanitizer.FileBlock block : fileBlocks) {
@@ -1891,8 +1994,7 @@ public class OpenLovableController {
                         block.rawPath(),
                         block.openTag(),
                         normalizedContent,
-                        block.closeTag()
-                );
+                        block.closeTag());
             }
             normalizedBlocks.add(block);
         }
@@ -2224,5 +2326,249 @@ public class OpenLovableController {
                         现在请开始：先<thinking>，然后按顺序输出所有文件（main.jsx第一个）。
                         """,
                 originalPrompt, langName);
+    }
+
+    /**
+     * 创建项目ZIP包下载
+     *
+     * POST /v1/openlovable/sandbox/create-zip
+     *
+     * 说明：
+     * - 代理 open-lovable-cn 的 /api/create-zip 接口
+     * - 返回 base64 编码的 ZIP 文件，供前端下载
+     *
+     * 响应示例：
+     * {
+     * "success": true,
+     * "dataUrl": "data:application/zip;base64,UEsDBBQAAAAI...",
+     * "fileName": "sandbox-project.zip",
+     * "message": "Zip file created successfully"
+     * }
+     */
+    @PostMapping("/sandbox/create-zip")
+    public ResponseEntity<?> createZip(@RequestBody(required = false) Map<String, Object> request) {
+        try {
+            String url = openLovableBaseUrl + "/api/create-zip";
+            log.info("创建项目ZIP包: {}", url);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            // 传递 sandboxId（如果有）
+            Map<String, Object> requestBody = request != null ? new HashMap<>(request) : new HashMap<>();
+
+            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(requestBody, headers);
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, requestEntity, Map.class);
+
+            if (response.getBody() == null) {
+                log.error("创建ZIP包响应为空");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Result.error("创建ZIP包失败: 响应为空"));
+            }
+
+            Map<String, Object> responseBody = response.getBody();
+
+            // 检查上游响应是否成功
+            Object successObj = responseBody.get("success");
+            if (successObj instanceof Boolean success && !success) {
+                String error = responseBody.get("error") instanceof String e ? e : "未知错误";
+                log.error("创建ZIP包失败: {}", error);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Result.error("创建ZIP包失败: " + error));
+            }
+
+            log.info("ZIP包创建成功: fileName={}", responseBody.get("fileName"));
+            return ResponseEntity.ok(Result.success(responseBody));
+
+        } catch (Exception e) {
+            log.error("创建ZIP包失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Result.error("创建ZIP包失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 智能刷新预览（自动检测并修复代码错误）
+     *
+     * POST /v1/openlovable/sandbox/smart-refresh
+     *
+     * 说明：
+     * - 代理 open-lovable-cn 的 /api/smart-refresh-preview 接口
+     * - 读取沙箱中的源代码，校验依赖完整性
+     * - 自动修复缺失文件、截断文件和入口挂载问题
+     * - 使用 AI 模型进行代码补全
+     *
+     * 请求体示例：
+     * {
+     * "sandboxId": "sb_xxxxx",
+     * "model": "deepseek-v3"
+     * }
+     *
+     * 响应示例：
+     * {
+     * "success": true,
+     * "fixed": true,
+     * "filesCreated": ["src/utils.js"],
+     * "filesUpdated": ["src/main.jsx"],
+     * "issues": [...],
+     * "message": "Auto-fixed: 1 created, 1 updated"
+     * }
+     */
+    @PostMapping("/sandbox/smart-refresh")
+    public ResponseEntity<?> smartRefreshPreview(@RequestBody(required = false) Map<String, Object> request) {
+        try {
+            // V2.5 Auto-Repair: 检查是否包含运行时错误日志
+            if (request != null && request.containsKey("errorLog") && request.get("errorLog") != null) {
+                log.info("触发智能修复 (Runtime Auto-Repair)...");
+                return handleRuntimeErrorFix(request);
+            }
+
+            String url = openLovableBaseUrl + "/api/smart-refresh-preview";
+            log.info("智能刷新预览（自动修复）: {}", url);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            // 传递模型和其他配置
+            Map<String, Object> requestBody = request != null ? new HashMap<>(request) : new HashMap<>();
+
+            // 如果没有指定模型，使用默认的 deepseek-v3
+            if (!requestBody.containsKey("model") || requestBody.get("model") == null) {
+                requestBody.put("model", "deepseek-v3");
+            }
+
+            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(requestBody, headers);
+
+            log.info("智能刷新请求: model={}", requestBody.get("model"));
+
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, requestEntity, Map.class);
+
+            if (response.getBody() == null) {
+                log.error("智能刷新响应为空");
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Result.error("智能刷新失败: 响应为空"));
+            }
+
+            Map<String, Object> responseBody = response.getBody();
+
+            // 检查上游响应是否成功
+            Object successObj = responseBody.get("success");
+            if (successObj instanceof Boolean success && !success) {
+                String error = responseBody.get("error") instanceof String e ? e : "未知错误";
+                log.warn("智能刷新失败: {}", error);
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Result.error("智能刷新失败: " + error));
+            }
+
+            Object fixed = responseBody.get("fixed");
+            Object filesCreated = responseBody.get("filesCreated");
+            Object filesUpdated = responseBody.get("filesUpdated");
+            String message = responseBody.get("message") instanceof String m ? m : "";
+
+            log.info("智能刷新完成: fixed={}, created={}, updated={}, message={}",
+                    fixed, filesCreated, filesUpdated, message);
+
+            return ResponseEntity.ok(Result.success(responseBody));
+
+        } catch (Exception e) {
+            log.error("智能刷新失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Result.error("智能刷新失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 处理运行时错误修复
+     */
+    private ResponseEntity<?> handleRuntimeErrorFix(Map<String, Object> request) {
+        String sandboxId = (String) request.get("sandboxId");
+        Object errorLog = request.get("errorLog");
+        String modelName = (String) request.getOrDefault("model", "deepseek-v3");
+
+        log.info("正在分析运行时错误: sandboxId={}, model={}", sandboxId, modelName);
+
+        // 1. 构建 Prompt
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("You are an expert React/Frontend Coach.\n");
+        prompt.append("The user's application crashed with the following Runtime Error in the browser:\n\n");
+        prompt.append("```json\n").append(new com.google.gson.Gson().toJson(errorLog)).append("\n```\n\n");
+        prompt.append("Please analyze the error and provide a fix.\n");
+
+        // 尝试提取相关文件内容
+        String relatedFile = extractFileFromError(errorLog);
+        String fileContent = null;
+        if (relatedFile != null && sandboxId != null) {
+            // 构造沙箱URL (简单推断，实际应用中可能需要从数据库查询或由前端传递)
+            // 尝试从 request 中获取 url，如果没有则尝试构造
+            String sandboxUrl = (String) request.get("url");
+            if (sandboxUrl == null) {
+                // 尝试通过 status 接口查询 (会比较慢，且为了一个 url 调两次有点重)
+                // V2.6 优化：前端 smart-refresh 应该传 url
+            }
+
+            if (sandboxUrl != null && !sandboxUrl.isBlank()) {
+                log.info("尝试读取沙箱文件以辅助修复: {}", relatedFile);
+                fileContent = fetchSandboxFileContent(sandboxUrl, relatedFile);
+
+                if (fileContent != null) {
+                    prompt.append("Here is the content of the file `").append(relatedFile)
+                            .append("` where the error might have occurred:\n");
+                    prompt.append("```javascript\n").append(fileContent).append("\n```\n\n");
+                }
+            }
+        }
+
+        prompt.append("Return the fixed code in the following XML format (if you modify the file):\n");
+        prompt.append("<file path=\"src/PathTo/File.jsx\">\n... code ...\n</file>\n\n");
+        prompt.append("Only return the files that need to be changed/created. Do not provide explanations.");
+
+        // 2. 调用 LLM
+        try {
+            dev.langchain4j.model.chat.ChatLanguageModel chatModel = modelFactory.chatModel("deepseek", modelName);
+            String response = chatModel.generate(prompt.toString());
+
+            // 3. 应用修复
+            Map<String, Object> applyRequest = new HashMap<>();
+            applyRequest.put("sandboxId", sandboxId);
+            applyRequest.put("response", response);
+
+            return applyCode(applyRequest);
+
+        } catch (Exception e) {
+            log.error("智能修复失败", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Result.error("智能修复失败: " + e.getMessage()));
+        }
+    }
+
+    /**
+     * 从错误日志中提取文件名
+     * 
+     * 策略：
+     * 1. 优先查找 stack trace 中的文件路径 (如 http://.../src/App.jsx:10:5)
+     * 2. 查找 message 中的组件名 (如 "Gift is not defined" -> 盲猜 src/Gift.jsx 还是引用方? 通常引用方
+     * App.jsx 概率大)
+     */
+    private String extractFileFromError(Object errorLog) {
+        if (errorLog == null)
+            return null;
+
+        try {
+            // 将 errorLog 转为 String 方便正则
+            String logStr = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(errorLog);
+
+            // 匹配 src/xxx.jsx 或 src/xxx.tsx
+            // 浏览器堆栈通常是: at App (http://localhost:5173/src/App.jsx?t=123:25:9)
+            Pattern p = Pattern.compile("src/([a-zA-Z0-9_/\\-\\.]+\\.(?:jsx|tsx|js|ts))");
+            Matcher m = p.matcher(logStr);
+            if (m.find()) {
+                return "src/" + m.group(1);
+            }
+        } catch (Exception e) {
+            log.warn("提取文件名失败", e);
+        }
+
+        // 默认兜底：大多数预览错误发生在 App.jsx 或 main.jsx
+        return "src/App.jsx";
     }
 }

@@ -8,24 +8,36 @@ import {
   XCircle,
   ChevronDown,
   ChevronRight,
-  Terminal,
-  Cpu,
   Database,
   Layout,
-  Zap,
   Brain,
-  LucideIcon
+  LucideIcon,
+  Briefcase,
+  Code,
+  ScanSearch,
+  ShieldCheck
 } from 'lucide-react';
 import { type AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Typewriter } from '@/components/ui/typewriter';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import type { PhaseType } from '@/types/requirement-form';
 import { PlanDisplay } from './PlanDisplay';
-import { useLanguage } from '@/contexts/LanguageContext';
+// import { useLanguage } from '@/contexts/LanguageContext';
 import { StepResultDisplay } from './StepResultDisplay';
 import type { StepResult } from '@/types/analysis-step-results';
+import { normalizeStepResult } from './step-result-normalizer';
 
 export interface AnalysisProgressPanelProps {
   requirement?: string;
@@ -36,19 +48,21 @@ export interface AnalysisProgressPanelProps {
   error: string | null;
   finalResult?: unknown;
   currentPhase?: PhaseType;
+  /** 本地存储Key（可选）：用于持久化已完成步骤的结构化结果，支持刷新后回看 */
+  storageKey?: string;
   onConfirmPlan?: () => void;
   onModifyPlan?: (requirement: string) => void;
   onConfirmStep?: (step: number) => void;
-  onModifyStep?: (step: number) => void;
+  onModifyStep?: (step: number, feedback: string) => void | Promise<void>;
 }
 
 const STEP_CONFIG = [
-  { name: '需求语义解析', icon: Terminal, description: '正在解构您的自然语言需求...' },
-  { name: '实体关系建模', icon: Database, description: '识别核心数据实体与关联...' },
-  { name: '功能意图识别', icon: Cpu, description: '分析所需的功能模块与业务逻辑...' },
-  { name: '技术架构选型', icon: Layout, description: '匹配最佳技术栈与设计模式...' },
-  { name: '复杂度与风险评估', icon: Zap, description: '计算开发成本与潜在风险...' },
-  { name: 'Ultrathink 深度规划', icon: Brain, description: '构建系统架构、数据流图与实施路径...' }
+  { name: '👩‍💼 产品经理 (PM)', icon: Briefcase, description: '产品经理正在分析您的需求，拆解业务流程...' },
+  { name: '👨‍💻 数据架构师', icon: Database, description: '架构师正在设计数据模型与实体关系...' },
+  { name: '🕵️ 业务分析师', icon: ScanSearch, description: '分析师正在识别功能意图与边界...' },
+  { name: '🏗️ 技术负责人', icon: Code, description: 'Tech Lead 正在选型技术栈与开发框架...' },
+  { name: '🛡️ 安全工程师', icon: ShieldCheck, description: '安全专家正在评估系统复杂度与风险...' },
+  { name: '🧠 首席架构师', icon: Brain, description: '首席架构师正在生成最终实施蓝图...' }
 ];
 
 /**
@@ -60,7 +74,8 @@ const StepLogItem = ({
   status,
   message,
   isExpanded,
-  onToggle
+  onToggle,
+  onViewResult
 }: {
   step: number;
   config: { name: string; icon: LucideIcon; description: string };
@@ -68,10 +83,12 @@ const StepLogItem = ({
   message: AnalysisProgressMessage | null;
   isExpanded: boolean;
   onToggle: () => void;
+  onViewResult?: () => void;
 }) => {
-  const { t } = useLanguage();
+  // const { t } = useLanguage(); // Removed unused translation hook
   const Icon = config.icon;
   const progressPercent = message?.progress || 0;
+  const canViewResult = status === 'COMPLETED' && step !== 6 && !!onViewResult;
 
   return (
     <div className={cn(
@@ -84,7 +101,14 @@ const StepLogItem = ({
       {/* 头部点击区域 */}
       <div 
         className="flex items-center p-3 cursor-pointer hover:bg-accent/50 transition-colors"
-        onClick={onToggle}
+        onClick={() => {
+          // 完成态：优先进入“结果回看”，展开日志由右侧箭头控制
+          if (canViewResult) {
+            onViewResult?.();
+            return;
+          }
+          onToggle();
+        }}
       >
         <div className="flex-shrink-0 mr-3">
           {status === 'COMPLETED' ? (
@@ -112,7 +136,21 @@ const StepLogItem = ({
               {status === 'RUNNING' && (
                 <span className="text-xs font-mono text-blue-600 dark:text-blue-400">{progressPercent}%</span>
               )}
-              {isExpanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+              <button
+                type="button"
+                className="rounded p-0.5 hover:bg-accent"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggle();
+                }}
+                aria-label={isExpanded ? '收起步骤日志' : '展开步骤日志'}
+              >
+                {isExpanded ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+              </button>
             </div>
           </div>
           <p className="text-xs text-muted-foreground truncate pr-4">
@@ -124,21 +162,28 @@ const StepLogItem = ({
       {/* 展开的内容区域 - 模拟终端输出 */}
       {isExpanded && (
         <div className="bg-zinc-950 dark:bg-black text-zinc-300 p-3 font-mono text-xs border-t border-border/50">
-          <div className="space-y-1">
-            <div className="flex items-center text-zinc-500">
-              <span className="mr-2">$</span>
-              <span>analyzing --step={step} --verbose</span>
+          <div className="space-y-3 font-mono text-xs">
+            <div className="flex items-center text-zinc-500 gap-2 border-b border-zinc-900 pb-2 mb-2">
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-zinc-900 text-zinc-400">
+                 <Icon className="w-3 h-3" />
+                 <span>{config.name.split(' ')[1] || '智能体'} 活动日志</span>
+              </div>
+              {status === 'RUNNING' && <span className="animate-pulse text-blue-500">● 实时</span>}
             </div>
             
             {status === 'PENDING' && (
-              <div className="text-zinc-600 italic">Waiting for previous steps...</div>
+              <div className="text-zinc-600 italic pl-2 border-l-2 border-zinc-900">
+                等待上游智能体交付...
+              </div>
             )}
 
             {(status === 'RUNNING' || status === 'COMPLETED') && (
-               <div className="animate-in fade-in slide-in-from-left-1 duration-300">
-                 <div className="text-blue-400">→ Initiating {config.name} process...</div>
+               <div className="animate-in fade-in slide-in-from-left-1 duration-300 pl-2 border-l-2 border-blue-500/30">
+                 <div className="text-blue-400 mb-1">
+                    {status === 'RUNNING' ? '⚡ 正在分析需求...' : '✓ 分析已完成'}
+                 </div>
                  {message?.detail && (
-                   <div className="text-zinc-100 pl-4 border-l-2 border-zinc-800 my-1 py-1 min-h-[1.5em] whitespace-pre-wrap">
+                   <div className="text-zinc-300 min-h-[1.5em] whitespace-pre-wrap leading-relaxed">
                      <Typewriter 
                        text={message.detail} 
                        speed={step === 6 ? 5 : 10} 
@@ -146,24 +191,24 @@ const StepLogItem = ({
                      />
                    </div>
                  )}
-                 {status === 'COMPLETED' && (
-                   <div className="text-green-400">✓ Process completed successfully.</div>
-                 )}
                </div>
             )}
 
             {/* 结构化结果预览 */}
             {status === 'COMPLETED' && !!message?.result && step !== 6 && (
-              <div className="mt-2 bg-zinc-900 rounded p-2 border border-zinc-800 overflow-x-auto">
-                <div className="text-zinc-500 mb-1 text-[10px] uppercase tracking-wider">{t('ui.output_preview')}</div>
-                <pre className="text-green-300/90 text-[10px] leading-relaxed">
+              <div className="mt-3 bg-zinc-900/50 rounded p-3 border border-zinc-800/50 overflow-x-auto">
+                <div className="flex items-center gap-2 text-zinc-500 mb-2 text-[10px] uppercase tracking-wider">
+                  <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                  输出产物
+                </div>
+                <pre className="text-green-300/90 text-[10px] leading-relaxed font-mono">
                   {JSON.stringify(message.result as object, null, 2)}
                 </pre>
               </div>
             )}
             
             {status === 'FAILED' && message?.error && (
-               <div className="text-red-400 font-bold">
+               <div className="text-red-400 font-bold pl-2 border-l-2 border-red-500">
                  Error: {message.error}
                </div>
             )}
@@ -182,7 +227,67 @@ const isWaitingForPrototype = (isCompleted: boolean, finalResult: unknown): bool
   return isCompleted && !finalResult;
 };
 
+/**
+ * 已完成步骤结果的本地存储结构（V1）
+ *
+ * 用途：
+ * - 解决“每个完成的任务需要存储并可点击查看”的诉求；
+ * - 在页面刷新/返回后仍可回看已完成步骤的结构化结果（StepResult）。
+ */
+type StoredStepResultsV1 = {
+  version: 1;
+  updatedAt: string;
+  stepResults: Record<string, StepResult>;
+};
+
+/**
+ * 从 localStorage 读取步骤结果（安全兜底）
+ */
+function loadStepResultsFromStorage(storageKey?: string): Record<number, StepResult> {
+  if (!storageKey) return {};
+  if (typeof window === 'undefined') return {};
+
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as StoredStepResultsV1;
+    if (!parsed || parsed.version !== 1 || !parsed.stepResults) return {};
+
+    const result: Record<number, StepResult> = {};
+    for (const [key, value] of Object.entries(parsed.stepResults)) {
+      const stepNumber = Number(key);
+      if (!Number.isFinite(stepNumber)) continue;
+      if (!value || typeof value !== 'object') continue;
+      result[stepNumber] = value;
+    }
+    return result;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * 将步骤结果写入 localStorage（安全兜底）
+ */
+function saveStepResultsToStorage(storageKey: string, stepResults: Record<number, StepResult>): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    const payload: StoredStepResultsV1 = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      stepResults: Object.fromEntries(
+        Object.entries(stepResults).map(([k, v]) => [String(k), v])
+      ) as Record<string, StepResult>,
+    };
+    localStorage.setItem(storageKey, JSON.stringify(payload));
+  } catch {
+    // ignore：localStorage 可能不可用（隐私模式/容量限制等）
+  }
+}
+
 export function AnalysisProgressPanel({
+  requirement,
   messages,
   isConnected, // Keep prop but mark as used or ignore
   isCompleted,
@@ -190,6 +295,7 @@ export function AnalysisProgressPanel({
   error,
   finalResult,
   currentPhase,
+  storageKey,
   onConfirmPlan,
   onModifyPlan,
   onConfirmStep,
@@ -200,7 +306,29 @@ export function AnalysisProgressPanel({
 
   // 步骤确认状态管理
   const [waitingForStepConfirmation, setWaitingForStepConfirmation] = useState<number | null>(null);
-  const [stepResults, setStepResults] = useState<Record<number, StepResult>>({});
+  const [stepResults, setStepResults] = useState<Record<number, StepResult>>(() => loadStepResultsFromStorage(storageKey));
+
+  // 步骤修改弹窗：收集用户对当前步骤的修改建议（避免直接提交空参数导致后端返回“参数错误”）
+  const [stepModifyDialogOpen, setStepModifyDialogOpen] = useState(false);
+  const [stepModifyTargetStep, setStepModifyTargetStep] = useState<number | null>(null);
+  const [stepModifyFeedback, setStepModifyFeedback] = useState('');
+  const [isSubmittingStepModify, setIsSubmittingStepModify] = useState(false);
+
+  // 回看弹窗：用于“已完成任务”点击查看
+  const [stepViewDialogOpen, setStepViewDialogOpen] = useState(false);
+  const [stepViewTargetStep, setStepViewTargetStep] = useState<number | null>(null);
+
+  // storageKey 变化时加载（例如新建会话/刷新恢复）
+  useEffect(() => {
+    if (!storageKey) return;
+    setStepResults(loadStepResultsFromStorage(storageKey));
+  }, [storageKey]);
+
+  // 持久化保存已完成步骤结果
+  useEffect(() => {
+    if (!storageKey) return;
+    saveStepResultsToStorage(storageKey, stepResults);
+  }, [storageKey, stepResults]);
 
   // 判断当前是否处于等待原型生成状态
   const waitingForPrototype = isWaitingForPrototype(isCompleted, finalResult);
@@ -229,20 +357,27 @@ export function AnalysisProgressPanel({
         !stepResults[step] &&
         waitingForStepConfirmation === null
       ) {
-        // 保存步骤结果
+        const normalized = normalizeStepResult(step as 1 | 2 | 3 | 4 | 5, latestMessage.result, {
+          requirement,
+          previousStepResults: {
+            1: stepResults[1],
+            2: stepResults[2],
+            3: stepResults[3],
+            4: stepResults[4]
+          }
+        });
+
+        // 保存步骤结果（确保 UI 不因数据结构漂移而崩溃）
         setStepResults(prev => ({
           ...prev,
-          [step]: {
-            step: step as 1 | 2 | 3 | 4 | 5,
-            data: latestMessage.result
-          } as StepResult
+          [step]: normalized
         }));
 
         // 设置等待确认状态
         setWaitingForStepConfirmation(step);
       }
     }
-  }, [messages, stepResults, waitingForStepConfirmation]);
+  }, [messages, stepResults, waitingForStepConfirmation, requirement]);
 
   // 处理步骤确认
   const handleConfirmStep = (step: number) => {
@@ -252,7 +387,55 @@ export function AnalysisProgressPanel({
 
   // 处理步骤修改
   const handleModifyStep = (step: number) => {
-    onModifyStep?.(step);
+    if (!onModifyStep) return;
+    setStepModifyTargetStep(step);
+    setStepModifyFeedback('');
+    setStepModifyDialogOpen(true);
+  };
+
+  /**
+   * 提交步骤修改
+   *
+   * 用途：
+   * - 将用户输入的反馈传给上层（通常会调用 /interactive-analysis/{sessionId}/modify）
+   * - 清理本地 stepResults，允许同一步骤重新产出并进入“等待确认”状态
+   */
+  const handleSubmitStepModify = async (): Promise<void> => {
+    if (!onModifyStep) return;
+    if (stepModifyTargetStep == null) return;
+
+    const feedback = stepModifyFeedback.trim();
+    if (!feedback) return;
+
+    setIsSubmittingStepModify(true);
+    // 清理旧结果，确保后续 SSE 新结果可覆盖
+    setWaitingForStepConfirmation(null);
+    setStepResults((prev) => {
+      const next = { ...prev };
+      delete next[stepModifyTargetStep];
+      return next;
+    });
+
+    try {
+      await Promise.resolve(onModifyStep(stepModifyTargetStep, feedback));
+    } finally {
+      setIsSubmittingStepModify(false);
+      setStepModifyDialogOpen(false);
+      setStepModifyTargetStep(null);
+      setStepModifyFeedback('');
+    }
+  };
+
+  /**
+   * 打开步骤结果回看弹窗
+   *
+   * 用途：
+   * - 支持“任务结果已保存，点击可查看”的交互；
+   * - 复用 StepResultDisplay 的结构化展示能力。
+   */
+  const handleOpenStepView = (step: number) => {
+    setStepViewTargetStep(step);
+    setStepViewDialogOpen(true);
   };
 
   // 自动展开正在运行的步骤，等待原型时收起所有步骤
@@ -371,6 +554,100 @@ export function AnalysisProgressPanel({
         </div>
       )}
 
+      {/* 步骤修改弹窗：用于收集用户修改建议并触发重新执行 */}
+      <Dialog
+        open={stepModifyDialogOpen}
+        onOpenChange={(open) => {
+          if (isSubmittingStepModify) return;
+          setStepModifyDialogOpen(open);
+          if (!open) {
+            setStepModifyTargetStep(null);
+            setStepModifyFeedback('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>
+              修改步骤：{stepModifyTargetStep ? STEP_CONFIG[stepModifyTargetStep - 1]?.name : ''}
+            </DialogTitle>
+            <DialogDescription>
+              请输入你希望如何调整本步骤的结果，系统将基于你的反馈重新执行该步骤。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Textarea
+              value={stepModifyFeedback}
+              onChange={(e) => setStepModifyFeedback(e.target.value)}
+              placeholder={
+                stepModifyTargetStep
+                  ? `例如：补充/修正「${STEP_CONFIG[stepModifyTargetStep - 1]?.name}」中的关键点（字段、约束、模块划分等）...`
+                  : '请输入修改建议...'
+              }
+              className="min-h-[120px] resize-none"
+              disabled={isSubmittingStepModify}
+            />
+            <div className="text-xs text-muted-foreground">
+              提示：尽量给出“可执行”的修改点，例如“实体增加字段 xxx”、“把架构改为 React + Spring Boot”。
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setStepModifyDialogOpen(false)}
+              disabled={isSubmittingStepModify}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={handleSubmitStepModify}
+              disabled={!stepModifyFeedback.trim() || isSubmittingStepModify}
+            >
+              {isSubmittingStepModify ? '提交中...' : '提交修改'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 步骤结果回看弹窗：用于查看已完成任务的结构化结果 */}
+      <Dialog
+        open={stepViewDialogOpen}
+        onOpenChange={(open) => {
+          setStepViewDialogOpen(open);
+          if (!open) {
+            setStepViewTargetStep(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[860px]">
+          <DialogHeader>
+            <DialogTitle>
+              查看步骤结果：{stepViewTargetStep ? STEP_CONFIG[stepViewTargetStep - 1]?.name : ''}
+            </DialogTitle>
+            <DialogDescription>
+              已完成步骤结果已自动保存。若需要调整，请在“等待确认”的步骤中通过右侧对话框输入修改建议。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-[70vh] overflow-auto pr-1">
+            {stepViewTargetStep && stepResults[stepViewTargetStep] ? (
+              <StepResultDisplay
+                result={stepResults[stepViewTargetStep]}
+                onConfirm={() => setStepViewDialogOpen(false)}
+                onModify={() => {}}
+                loading={isLoading}
+                confirmLabel="关闭"
+                showModifyButton={false}
+              />
+            ) : (
+              <div className="text-sm text-muted-foreground">暂无可展示的步骤结果</div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* 步骤列表区 - 等待原型时显示简洁的等待动画 */}
       <ScrollArea className="flex-1 -mx-4 px-4" ref={scrollRef}>
         {waitingForPrototype ? (
@@ -418,6 +695,7 @@ export function AnalysisProgressPanel({
             {STEP_CONFIG.map((config, index) => {
               const step = index + 1;
               const { status, message } = getStepStatus(step);
+              const canView = !!stepResults[step];
 
               return (
                 <StepLogItem
@@ -428,6 +706,7 @@ export function AnalysisProgressPanel({
                   message={message}
                   isExpanded={expandedStep === step}
                   onToggle={() => setExpandedStep(expandedStep === step ? null : step)}
+                  onViewResult={canView ? () => handleOpenStepView(step) : undefined}
                 />
               );
             })}

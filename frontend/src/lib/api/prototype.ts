@@ -11,9 +11,9 @@ import { generateTraceId } from '@/lib/api/trace-id';
 
 /** 原型请求超时时间（毫秒），超过即判定依赖服务未响应
  * 参考 open-lovable-cn: E2B沙箱创建通常需要30-40秒，生成代码可能需要60-90秒
- * 设置为120秒（2分钟）以确保有足够时间完成生成
+ * 设置为180秒（3分钟）以确保有足够时间完成生成，避免network error
  */
-const PROTOTYPE_GENERATION_TIMEOUT_MS = 120_000;
+const PROTOTYPE_GENERATION_TIMEOUT_MS = 180_000;
 
 /**
  * 原型生成请求参数
@@ -31,6 +31,11 @@ export interface GeneratePrototypeRequest {
   } | null;
   /** 意图识别结果（可选） */
   intentResult?: IntentClassificationResult | null;
+  /** 
+   * Step 6 生成的技术蓝图 Markdown（可选）
+   * M1: 用于透传给 OpenLovable，约束前端生成遵循蓝图设计
+   */
+  blueprintMarkdown?: string | null;
 }
 
 /**
@@ -99,7 +104,7 @@ export async function generatePrototypeStream(
   try {
     const payload = buildPayload(request);
     const apiBaseUrl = getApiBaseUrl();
-    const url = `${apiBaseUrl}/v1/prototype/generate/stream`;
+    const url = `${apiBaseUrl}/v1/openlovable/generate/stream`;
     const token = getToken();
 
     const controller = new AbortController();
@@ -338,6 +343,8 @@ function buildPayload(request: GeneratePrototypeRequest) {
     selectedTemplateId: request.selectedTemplate?.id ?? null,
     selectedTemplateName: request.selectedTemplate?.name ?? null,
     selectedTemplateReferenceUrl: request.selectedTemplate?.referenceUrl ?? null,
+    // M1: Blueprint 透传给后端 OpenLovable
+    blueprintMarkdown: request.blueprintMarkdown ?? null,
   };
 }
 
@@ -412,4 +419,64 @@ export async function restartVite(sandboxId: string): Promise<void> {
   if (!response.ok) {
     throw new Error(`Failed to restart Vite: ${response.statusText}`);
   }
+}
+
+/**
+ * 智能修复沙箱预览白屏（兜底）
+ *
+ * 说明：
+ * - 该接口用于“iframe 白屏但无显式报错”的场景；
+ * - 后端会尝试修复入口挂载（src/main.*）并在必要时生成兜底 App.jsx，确保预览可见。
+ */
+export type SmartFixSandboxResult = {
+  fixed: boolean;
+  filesCreated: string[];
+  filesUpdated: string[];
+  diagnostics?: Record<string, unknown>;
+  message?: string;
+  timestamp?: string;
+};
+
+export async function smartFixPrototypeSandbox(sandboxId: string): Promise<SmartFixSandboxResult> {
+  const apiBaseUrl = getApiBaseUrl();
+  const url = `${apiBaseUrl}/v1/openlovable/sandbox/smart-fix`;
+  const token = getToken();
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-trace-id': generateTraceId(),
+      ...(token ? { Authorization: token } : {}),
+    },
+    body: JSON.stringify({ sandboxId }),
+    credentials: 'include',
+  });
+
+  if (!response.ok) {
+    let errorText = `智能修复失败: HTTP ${response.status}`;
+    try {
+      const errorBody = await response.json();
+      if (typeof errorBody?.message === 'string') errorText = errorBody.message;
+      if (typeof errorBody?.error === 'string') errorText = errorBody.error;
+    } catch {
+      // 忽略解析失败，保留默认错误信息
+    }
+    throw new Error(errorText);
+  }
+
+  const result = await response.json();
+  if (result && typeof result.success === 'boolean' && result.success === false) {
+    throw new Error(result.message || '智能修复失败');
+  }
+
+  const data = result?.data ?? result;
+  return {
+    fixed: Boolean(data?.fixed),
+    filesCreated: Array.isArray(data?.filesCreated) ? data.filesCreated : [],
+    filesUpdated: Array.isArray(data?.filesUpdated) ? data.filesUpdated : [],
+    diagnostics: data?.diagnostics && typeof data.diagnostics === 'object' ? data.diagnostics : undefined,
+    message: typeof data?.message === 'string' ? data.message : undefined,
+    timestamp: typeof data?.timestamp === 'string' ? data.timestamp : undefined,
+  };
 }

@@ -2,6 +2,7 @@ package com.ingenio.backend.service;
 
 import com.ingenio.backend.common.response.Result;
 import com.ingenio.backend.controller.PlanRoutingController;
+import com.ingenio.backend.mapper.UserMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -31,11 +32,13 @@ class PlanRoutingServiceTest {
         AppSpecService appSpecService = Mockito.mock(AppSpecService.class);
         BillingService billingService = Mockito.mock(BillingService.class);
         OpenLovableService openLovableService = Mockito.mock(OpenLovableService.class);
+        UserMapper userMapper = Mockito.mock(UserMapper.class);
 
         PlanRoutingController controller = new PlanRoutingController(
                 appSpecService,
                 billingService,
-                openLovableService);
+                openLovableService,
+                userMapper);
 
         Mockito.when(appSpecService.getById(Mockito.any())).thenReturn(null);
 

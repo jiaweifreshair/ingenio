@@ -62,6 +62,31 @@ export class APIError extends Error {
 }
 
 /**
+ * 规范化网络错误提示
+ *
+ * 是什么：统一处理浏览器/Node 返回的网络错误信息。
+ * 做什么：把“Failed to fetch”等英文错误转换为更易懂的中文提示。
+ * 为什么：避免用户看到生硬的原始错误文本，提升诊断可读性。
+ */
+function normalizeNetworkErrorMessage(message: string): string {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('failed to fetch') ||
+    normalized.includes('networkerror') ||
+    normalized.includes('econnrefused')
+  ) {
+    return '网络连接失败，请确认后端服务已启动（http://localhost:8080）';
+  }
+
+  if (normalized.includes('timeout')) {
+    return '网络请求超时，请稍后重试';
+  }
+
+  return `网络请求失败: ${message}`;
+}
+
+/**
  * 发起API请求
  *
  * @param endpoint - API端点
@@ -220,8 +245,9 @@ async function request<T>(
         );
       }
 
+      const normalizedMessage = normalizeNetworkErrorMessage(error.message);
       throw new APIError(
-        `网络请求失败: ${error.message}`,
+        normalizedMessage,
         undefined,
         { originalError: error.message }
       );

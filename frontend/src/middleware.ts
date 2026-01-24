@@ -22,7 +22,6 @@ const protectedPaths = [
   '/dashboard',
   '/create',
   '/wizard',
-  '/preview',
   '/publish',
   '/settings',
   '/account',

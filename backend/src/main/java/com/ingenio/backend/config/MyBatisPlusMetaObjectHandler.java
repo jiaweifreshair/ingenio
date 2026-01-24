@@ -43,7 +43,14 @@ public class MyBatisPlusMetaObjectHandler implements MetaObjectHandler {
             String className = metaObject.getOriginalObject().getClass().getSimpleName().replace("Entity", "").toUpperCase();
             IngenioBusinessType businessType = getBusinessType(className);
             UUID generatedId = UUIDv8Generator.generate(businessType, 0); // 租户ID=0表示系统生成
-            this.strictInsertFill(metaObject, "id", UUID.class, generatedId);
+            // 注意：strictInsertFill 通常依赖 @TableField(fill=INSERT) 才会生效，但 id 多数是 @TableId。
+            // 这里改为直接写入 MetaObject，确保所有 UUID/String 类型主键都能被正确填充，避免插入时 id 为 null 触发 500。
+            Class<?> idType = metaObject.getGetterType("id");
+            if (UUID.class.isAssignableFrom(idType)) {
+                metaObject.setValue("id", generatedId);
+            } else if (String.class.isAssignableFrom(idType)) {
+                metaObject.setValue("id", generatedId.toString());
+            }
         }
 
         // 自动填充租户ID（如果为空），从TenantContextHolder获取

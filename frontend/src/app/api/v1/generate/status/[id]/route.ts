@@ -93,7 +93,7 @@ export async function GET(
         appSpecId: id,
         qualityScore: 88,
         downloadUrl: `/api/download/${id}`,
-        previewUrl: `/preview/${id}`,
+        previewUrl: `/wizard/${id}`,
         tokenUsage: {
           planTokens: 1500,
           executeTokens: 3200,

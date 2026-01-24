@@ -15,13 +15,11 @@ CREATE TABLE IF NOT EXISTS generated_schemas (
     status VARCHAR(50) NOT NULL DEFAULT 'draft',      -- draft/approved/deployed/deprecated
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_generated_schemas_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     CONSTRAINT fk_generated_schemas_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_generated_schemas_task FOREIGN KEY (task_id) REFERENCES generation_tasks(id) ON DELETE CASCADE
 );
 
 -- 索引
-CREATE INDEX idx_generated_schemas_tenant ON generated_schemas(tenant_id);
 CREATE INDEX idx_generated_schemas_user ON generated_schemas(user_id);
 CREATE INDEX idx_generated_schemas_task ON generated_schemas(task_id);
 CREATE INDEX idx_generated_schemas_status ON generated_schemas(status);
@@ -52,14 +50,12 @@ CREATE TABLE IF NOT EXISTS generated_apis (
     status VARCHAR(50) NOT NULL DEFAULT 'draft',      -- draft/approved/deployed/deprecated
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_generated_apis_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     CONSTRAINT fk_generated_apis_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_generated_apis_task FOREIGN KEY (task_id) REFERENCES generation_tasks(id) ON DELETE CASCADE,
     CONSTRAINT fk_generated_apis_schema FOREIGN KEY (schema_id) REFERENCES generated_schemas(id) ON DELETE SET NULL
 );
 
 -- 索引
-CREATE INDEX idx_generated_apis_tenant ON generated_apis(tenant_id);
 CREATE INDEX idx_generated_apis_user ON generated_apis(user_id);
 CREATE INDEX idx_generated_apis_task ON generated_apis(task_id);
 CREATE INDEX idx_generated_apis_schema ON generated_apis(schema_id);
@@ -92,14 +88,12 @@ CREATE TABLE IF NOT EXISTS generated_code_files (
     checksum VARCHAR(64),                             -- 文件内容SHA256校验和
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_generated_code_files_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     CONSTRAINT fk_generated_code_files_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_generated_code_files_task FOREIGN KEY (task_id) REFERENCES generation_tasks(id) ON DELETE CASCADE,
     CONSTRAINT fk_generated_code_files_api FOREIGN KEY (api_id) REFERENCES generated_apis(id) ON DELETE CASCADE
 );
 
 -- 索引
-CREATE INDEX idx_generated_code_files_tenant ON generated_code_files(tenant_id);
 CREATE INDEX idx_generated_code_files_user ON generated_code_files(user_id);
 CREATE INDEX idx_generated_code_files_task ON generated_code_files(task_id);
 CREATE INDEX idx_generated_code_files_api ON generated_code_files(api_id);
@@ -116,40 +110,7 @@ COMMENT ON COLUMN generated_code_files.file_type IS '文件类型：entity/mappe
 COMMENT ON COLUMN generated_code_files.checksum IS 'SHA256校验和，用于检测文件变更';
 
 
--- 4. 生成版本管理
-CREATE TABLE IF NOT EXISTS generation_versions (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID,
-    user_id UUID,
-    task_id UUID NOT NULL,                           -- 关联的生成任务ID
-    version_number INTEGER NOT NULL,                  -- 版本号（自增）
-    version_tag VARCHAR(50),                          -- 版本标签（如v1.0.0）
-    description TEXT,                                 -- 版本描述
-    changes JSONB,                                    -- 变更记录（与上一版本对比）
-    snapshot JSONB NOT NULL,                          -- 完整快照（包含schema/api/code）
-    parent_version_id UUID,                           -- 父版本ID（用于版本树）
-    is_deployed BOOLEAN DEFAULT FALSE,                -- 是否已部署
-    deployed_at TIMESTAMP,                            -- 部署时间
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_generation_versions_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
-    CONSTRAINT fk_generation_versions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
-    CONSTRAINT fk_generation_versions_task FOREIGN KEY (task_id) REFERENCES generation_tasks(id) ON DELETE CASCADE,
-    CONSTRAINT fk_generation_versions_parent FOREIGN KEY (parent_version_id) REFERENCES generation_versions(id) ON DELETE SET NULL
-);
-
--- 索引
-CREATE INDEX idx_generation_versions_tenant ON generation_versions(tenant_id);
-CREATE INDEX idx_generation_versions_user ON generation_versions(user_id);
-CREATE INDEX idx_generation_versions_task ON generation_versions(task_id);
-CREATE INDEX idx_generation_versions_deployed ON generation_versions(is_deployed);
-CREATE UNIQUE INDEX idx_generation_versions_task_number ON generation_versions(task_id, version_number);
-
-COMMENT ON TABLE generation_versions IS '生成版本管理（支持回滚）';
-COMMENT ON COLUMN generation_versions.snapshot IS '完整快照（包含schema、api、code的完整数据）';
-COMMENT ON COLUMN generation_versions.changes IS '变更记录（与父版本对比的差异）';
-
-
--- 5. 结构化需求表（AI分析结果）
+-- 4. 结构化需求表（AI分析结果）
 CREATE TABLE IF NOT EXISTS structured_requirements (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID,
@@ -164,13 +125,11 @@ CREATE TABLE IF NOT EXISTS structured_requirements (
     confidence_score DECIMAL(5,2),                    -- 置信度分数（0-100）
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_structured_requirements_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
     CONSTRAINT fk_structured_requirements_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
     CONSTRAINT fk_structured_requirements_task FOREIGN KEY (task_id) REFERENCES generation_tasks(id) ON DELETE CASCADE
 );
 
 -- 索引
-CREATE INDEX idx_structured_requirements_tenant ON structured_requirements(tenant_id);
 CREATE INDEX idx_structured_requirements_user ON structured_requirements(user_id);
 CREATE INDEX idx_structured_requirements_task ON structured_requirements(task_id);
 

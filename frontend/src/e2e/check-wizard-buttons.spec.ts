@@ -31,12 +31,12 @@ test('检查wizard完成页面按钮功能', async ({ page }) => {
   const buttons = await page.locator('button').all();
   console.log(`找到 ${buttons.length} 个按钮`);
 
-  // 检查4个主要操作按钮
+  // 检查主要操作入口
   const mainButtons = [
-    '生成新的AppSpec',
-    '预览应用',
-    '发布应用',
-    '导出代码'
+    '下载代码',
+    '配置发布',
+    '应用设置',
+    '分享应用'
   ];
 
   for (const buttonText of mainButtons) {

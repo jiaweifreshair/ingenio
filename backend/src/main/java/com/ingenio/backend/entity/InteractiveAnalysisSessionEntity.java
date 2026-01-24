@@ -89,6 +89,16 @@ public class InteractiveAnalysisSessionEntity {
     private String errorMessage;
 
     /**
+     * Step 6 生成的技术蓝图 Markdown
+     * 
+     * 用途：
+     * - 透传给 OpenLovable-CN 前端生成
+     * - 透传给 G3 Engine 后端生成
+     * - Session 级别存储，无需持久化到文件
+     */
+    private String blueprintMarkdown;
+
+    /**
      * 创建时间
      */
     private LocalDateTime createdAt;

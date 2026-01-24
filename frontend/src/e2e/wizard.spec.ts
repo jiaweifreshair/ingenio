@@ -155,7 +155,7 @@ test.beforeEach(async ({ page }) => {
           appSpecId: 'test-app-123',
           qualityScore: 85,
           downloadUrl: '/api/download/test-app-123',
-          previewUrl: '/preview/test-app-123',
+          previewUrl: '/wizard/test-app-123',
           tokenUsage: {
             planTokens: 1000,
             executeTokens: 2000,
@@ -249,29 +249,11 @@ test.describe('向导页面功能测试', () => {
 
     // 验证QuickActionCards中的操作卡片存在（V2.0使用Card布局，不是Button）
     // 使用heading level 3来定位卡片标题
-    await expect(page.getByRole('heading', { level: 3, name: /预览应用/ })).toBeVisible();
     await expect(page.getByRole('heading', { level: 3, name: /下载代码/ })).toBeVisible();
     await expect(page.getByRole('heading', { level: 3, name: /SuperDesign方案/ })).toBeVisible();
     await expect(page.getByRole('heading', { level: 3, name: /配置发布/ })).toBeVisible();
     await expect(page.getByRole('heading', { level: 3, name: /应用设置/ })).toBeVisible();
     await expect(page.getByRole('heading', { level: 3, name: /分享应用/ })).toBeVisible();
-  });
-
-  test('点击预览按钮应该可以点击', async ({ page }) => {
-    await page.goto('/wizard/test-app-123');
-
-    // 等待生成完成
-    await expect(page.getByRole('heading', { name: '生成完成！' })).toBeVisible({ timeout: 30000 });
-
-    // 验证预览卡片可见（V2.0使用Link卡片，不是Button）
-    const previewCard = page.getByRole('heading', { level: 3, name: /预览应用/ });
-    await expect(previewCard).toBeVisible();
-
-    // 点击卡片 - 点击heading会触发父级Link的导航
-    await previewCard.click();
-
-    // 验证导航到预览页面
-    await expect(page).toHaveURL(/\/preview\/test-app-123/, { timeout: 5000 });
   });
 
   test('点击发布按钮应该可以点击', async ({ page }) => {

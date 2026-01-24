@@ -229,8 +229,8 @@ public class LangChain4jModelFactoryImpl implements LangChain4jModelFactory {
      * 规范化 OpenAI 兼容 baseUrl。
      *
      * 是什么：OpenAI baseUrl 规范化方法。
-     * 做什么：确保 baseUrl 以 /v1 结尾。
-     * 为什么：OpenAI 兼容接口需要 /v1 前缀，避免 404。
+     * 做什么：确保 baseUrl 包含 /v1 路径段（避免重复追加）。
+     * 为什么：OpenAI 兼容接口通常需要 /v1 前缀，但部分网关会使用 /v1/{xxx}/{yyy} 作为根路径。
      *
      * @param baseUrl 原始 baseUrl
      * @return 规范化后的 baseUrl
@@ -240,7 +240,7 @@ public class LangChain4jModelFactoryImpl implements LangChain4jModelFactory {
             return baseUrl;
         }
         String trimmed = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
-        if (trimmed.endsWith("/v1")) {
+        if (trimmed.endsWith("/v1") || trimmed.contains("/v1/")) {
             return trimmed;
         }
         return trimmed + "/v1";

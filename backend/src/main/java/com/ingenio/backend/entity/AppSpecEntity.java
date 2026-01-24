@@ -100,7 +100,7 @@ public class AppSpecEntity {
      * - DESIGN_FROM_SCRATCH: 从零开始设计
      * - HYBRID_CLONE_AND_CUSTOMIZE: 混合模式（克隆+定制）
      */
-    @TableField("intent_type")
+    @TableField(value = "intent_type", exist = false)
     private String intentType;
 
     /**
@@ -108,7 +108,7 @@ public class AppSpecEntity {
      * 意图识别的置信度分数，范围：0.00 - 1.00
      * 使用BigDecimal匹配数据库DECIMAL(3,2)类型，确保精度
      */
-    @TableField("confidence_score")
+    @TableField(value = "confidence_score", exist = false)
     private java.math.BigDecimal confidenceScore;
 
     /**
@@ -116,14 +116,14 @@ public class AppSpecEntity {
      * 根据用户需求匹配的行业模板ID列表（JSONB格式）
      * 例如：["template-airbnb-001", "template-booking-002"]
      */
-    @TableField(value = "matched_templates", typeHandler = JacksonTypeHandler.class)
+    @TableField(value = "matched_templates", typeHandler = JacksonTypeHandler.class, exist = false)
     private java.util.List<String> matchedTemplates;
 
     /**
      * V2.0选中的模板ID（新增）
      * 用户最终选择的行业模板ID（如果选择了模板）
      */
-    @TableField(value = "selected_template_id", typeHandler = UUIDv8TypeHandler.class)
+    @TableField(value = "selected_template_id", typeHandler = UUIDv8TypeHandler.class, exist = false)
     private UUID selectedTemplateId;
 
     /**
@@ -137,7 +137,7 @@ public class AppSpecEntity {
      * - F: 游戏化设计
      * - G: 自然流动
      */
-    @TableField("selected_style")
+    @TableField(value = "selected_style", exist = false)
     private String selectedStyle;
 
     /**
@@ -145,14 +145,14 @@ public class AppSpecEntity {
      * 用户是否已确认设计方案（确认后才进入Execute阶段）
      * 默认值：false（未确认）
      */
-    @TableField("design_confirmed")
+    @TableField(value = "design_confirmed", exist = false)
     private Boolean designConfirmed;
 
     /**
      * V2.0设计确认时间（新增）
      * 用户点击"确认设计"的时间戳
      */
-    @TableField("design_confirmed_at")
+    @TableField(value = "design_confirmed_at", exist = false)
     private Instant designConfirmedAt;
 
     // ==================== V2.0 新增字段（原型预览相关）====================
@@ -162,7 +162,7 @@ public class AppSpecEntity {
      * OpenLovable生成的React原型代码（JSONB格式）
      * 包含：组件代码、路由配置、样式文件等
      */
-    @TableField(value = "frontend_prototype", typeHandler = JacksonTypeHandler.class)
+    @TableField(value = "frontend_prototype", typeHandler = JacksonTypeHandler.class, exist = false)
     private Map<String, Object> frontendPrototype;
 
     /**
@@ -170,14 +170,14 @@ public class AppSpecEntity {
      * E2B Sandbox中部署的原型预览地址
      * 例如：https://sandbox-xxx.e2b.dev
      */
-    @TableField("frontend_prototype_url")
+    @TableField(value = "frontend_prototype_url", exist = false)
     private String frontendPrototypeUrl;
 
     /**
      * V2.0原型生成时间（新增）
      * OpenLovable开始生成原型的时间戳
      */
-    @TableField("prototype_generated_at")
+    @TableField(value = "prototype_generated_at", exist = false)
     private Instant prototypeGeneratedAt;
 
     /**
@@ -185,7 +185,7 @@ public class AppSpecEntity {
      * IntentClassifier返回的完整分类结果（JSONB格式）
      * 包含：intent、confidence、reasoning、keywords、urls等
      */
-    @TableField(value = "intent_classification_result", typeHandler = JacksonTypeHandler.class)
+    @TableField(value = "intent_classification_result", typeHandler = JacksonTypeHandler.class, exist = false)
     private Map<String, Object> intentClassificationResult;
 
     // ==================== Blueprint（蓝图规范）====================
@@ -194,21 +194,21 @@ public class AppSpecEntity {
      * Blueprint ID（可选）
      * 来自 blueprintSpec.id，用于快速追溯当前AppSpec绑定的蓝图
      */
-    @TableField(value = "blueprint_id", typeHandler = UUIDv8TypeHandler.class)
+    @TableField(value = "blueprint_id", typeHandler = UUIDv8TypeHandler.class, exist = false)
     private UUID blueprintId;
 
     /**
      * Blueprint 完整规范（JSONB）
      * 用于在运行期注入约束（Blueprint Mode）并做合规性校验
      */
-    @TableField(value = "blueprint_spec", typeHandler = JacksonTypeHandler.class)
+    @TableField(value = "blueprint_spec", typeHandler = JacksonTypeHandler.class, exist = false)
     private Map<String, Object> blueprintSpec;
 
     /**
      * Blueprint 模式是否启用
      * true 表示生成流程必须遵守 blueprintSpec 中的约束
      */
-    @TableField("blueprint_mode_enabled")
+    @TableField(value = "blueprint_mode_enabled", exist = false)
     private Boolean blueprintModeEnabled;
 
     // ==================== AppSpec状态枚举 ====================

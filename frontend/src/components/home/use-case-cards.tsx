@@ -44,8 +44,8 @@ export function UseCaseCards(): React.ReactElement {
   const router = useRouter();
 
   const handleCardClick = (exampleId: string) => {
-    // 跳转到对应的预览页面
-    router.push(`/preview/${exampleId}`);
+    // 跳转到对应的生成结果页
+    router.push(`/wizard/${exampleId}`);
   };
 
   return (
@@ -81,7 +81,7 @@ export function UseCaseCards(): React.ReactElement {
                 </p>
                 
                 <div className="mt-6 flex items-center text-sm font-medium text-blue-600 dark:text-blue-400 opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-300">
-                  查看预览 <span className="ml-1">→</span>
+                  查看结果 <span className="ml-1">→</span>
                 </div>
               </div>
             </Card>
@@ -90,7 +90,7 @@ export function UseCaseCards(): React.ReactElement {
 
         <div className="mt-12 text-center">
           <p className="text-sm text-muted-foreground font-medium">
-            点击卡片即可直接体验应用原型
+            点击卡片查看生成结果
           </p>
         </div>
       </div>

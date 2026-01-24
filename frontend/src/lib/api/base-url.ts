@@ -1,6 +1,6 @@
 /**
  * API基准URL工具
- * 负责标准化 NEXT_PUBLIC_API_BASE_URL，避免出现 `/api/v1` 重复拼接导致的404。
+ * 负责标准化 NEXT_PUBLIC_API_BASE_URL / NEXT_PUBLIC_API_URL，避免出现 `/api/v1` 重复拼接导致的404。
  * 逻辑：裁剪空白、移除末尾斜杠、剔除尾部 `/v1`，并确保最终以 `/api` 结尾。
  */
 const DEFAULT_API_BASE_URL = 'http://localhost:8080/api';
@@ -16,7 +16,7 @@ const RELATIVE_API_BASE_URL = '/api';
  * 用于所有前端直接访问后端的场景，确保不会出现 `/api/v1` 的重复拼接。
  */
 export function getApiBaseUrl(): string {
-  const rawValue = process.env.NEXT_PUBLIC_API_BASE_URL;
+  const rawValue = process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL;
 
   // 显式未配置时，回落到本地后端地址，方便本地开发直连Java服务
   if (rawValue === undefined) {

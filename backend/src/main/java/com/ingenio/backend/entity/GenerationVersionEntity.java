@@ -14,7 +14,7 @@ import java.util.UUID;
 /**
  * 生成版本管理实体
  */
-@TableName(value = "generation_versions")
+@TableName(value = "generation_versions", autoResultMap = true)
 public class GenerationVersionEntity {
 
     @TableId(type = IdType.ASSIGN_UUID)

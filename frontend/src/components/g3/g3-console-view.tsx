@@ -182,10 +182,10 @@ export function G3ConsoleView({
     <div
       className={cn(
         // 容器：苹果风格深色背景
-        "flex flex-col w-full min-h-[calc(100vh-120px)]",
+        "flex flex-col w-full h-full",
         "bg-[#0a0a0c]",
         "text-white/90",
-        "p-6 md:p-8 rounded-3xl",
+        "p-4 md:p-6 rounded-3xl",
         "border border-white/[0.06]",
         "shadow-2xl shadow-black/50",
         "overflow-hidden",

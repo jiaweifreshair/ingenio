@@ -19,11 +19,5 @@ ALTER TABLE app_specs ADD COLUMN IF NOT EXISTS intent_classification_result JSON
 COMMENT ON COLUMN app_specs.intent_classification_result IS 'V2.0意图识别完整结果，包含intent/confidence/reasoning/keywords/urls';
 
 -- 创建索引以优化查询性能
--- 对设计确认状态创建索引（用于ExecuteGuard快速查询未确认的AppSpec）
-CREATE INDEX IF NOT EXISTS idx_app_specs_design_confirmed ON app_specs(design_confirmed) WHERE design_confirmed = FALSE;
-
 -- 对原型生成时间创建索引（用于监控原型生成状态）
 CREATE INDEX IF NOT EXISTS idx_app_specs_prototype_generated_at ON app_specs(prototype_generated_at) WHERE prototype_generated_at IS NOT NULL;
-
--- 对意图类型创建索引（用于统计分析不同意图类型的分布）
-CREATE INDEX IF NOT EXISTS idx_app_specs_intent_type ON app_specs(intent_type) WHERE intent_type IS NOT NULL;

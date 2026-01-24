@@ -106,21 +106,21 @@ test.describe('应用仪表板功能测试', () => {
 
       // 等待导航完成 - 增加超时时间到10秒，并使用networkidle
       try {
-        await page.waitForURL(/\/preview\/.+/, { timeout: 10000, waitUntil: 'networkidle' });
+        await page.waitForURL(/\/wizard\/.+/, { timeout: 10000, waitUntil: 'networkidle' });
 
         // 验证URL发生变化（导航到预览页面）
         const newUrl = page.url();
         expect(newUrl).not.toBe(currentUrl);
-        expect(newUrl).toContain('/preview/');
+        expect(newUrl).toContain('/wizard/');
       } catch (error) {
         // 如果waitForURL超时，检查URL是否至少改变了
         const newUrl = page.url();
         console.log(`Navigation timeout. Current URL: ${currentUrl}, New URL: ${newUrl}`);
 
-        // 如果URL确实改变到preview页面，即使加载慢也算通过
-        if (newUrl.includes('/preview/')) {
+        // 如果URL确实改变到wizard页面，即使加载慢也算通过
+        if (newUrl.includes('/wizard/')) {
           expect(newUrl).not.toBe(currentUrl);
-          expect(newUrl).toContain('/preview/');
+          expect(newUrl).toContain('/wizard/');
         } else {
           throw error; // 如果URL没变，重新抛出错误
         }

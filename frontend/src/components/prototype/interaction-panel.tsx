@@ -37,6 +37,10 @@ export interface InteractionPanelProps {
   isGenerating: boolean;
   /** 当前正在处理的历史记录ID（可选，用于显示处理中状态） */
   activeHistoryId?: string | null;
+  /** 顶部上下文标签（可选，例如“当前步骤：实体关系建模”） */
+  contextLabel?: string;
+  /** 输入框占位提示（可选，用于引导用户输入） */
+  inputPlaceholder?: string;
   className?: string;
 }
 
@@ -97,6 +101,8 @@ export function InteractionPanel({
   onSendMessage,
   isGenerating,
   activeHistoryId,
+  contextLabel,
+  inputPlaceholder,
   className
 }: InteractionPanelProps) {
   const { t } = useLanguage();
@@ -205,6 +211,11 @@ export function InteractionPanel({
             </Button>
             <Sparkles className="w-4 h-4 text-purple-600" />
             <span className="font-medium text-sm">{t('ui.ai_thinking')}</span>
+            {contextLabel && (
+              <Badge variant="secondary" className="text-[10px] bg-muted text-muted-foreground">
+                {contextLabel}
+              </Badge>
+            )}
           </div>
           {isGenerating && (
             <Badge variant="secondary" className="text-xs animate-pulse bg-purple-100 text-purple-700">
@@ -317,7 +328,7 @@ export function InteractionPanel({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={t('ui.input_suggestion')}
+              placeholder={inputPlaceholder || t('ui.input_suggestion')}
               className="w-full min-h-[80px] p-3 pr-12 text-sm bg-muted/30 rounded-lg border focus:outline-none focus:ring-2 focus:ring-purple-500/20 resize-none"
               disabled={isGenerating}
             />

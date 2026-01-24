@@ -38,16 +38,37 @@ export interface StepResultDisplayProps {
   onModify: () => void;
   /** 是否正在加载 */
   loading?: boolean;
+  /** 确认按钮文案（可选，用于“查看模式”等场景） */
+  confirmLabel?: string;
+  /** 修改按钮文案（可选，用于“查看模式”等场景） */
+  modifyLabel?: string;
+  /** 是否显示确认按钮（默认显示） */
+  showConfirmButton?: boolean;
+  /** 是否显示修改按钮（默认显示） */
+  showModifyButton?: boolean;
 }
 
 /**
  * Step 1: 需求语义解析结果展示
  */
-function Step1Display({ data, onConfirm, onModify, loading }: {
+function Step1Display({
+  data,
+  onConfirm,
+  onModify,
+  loading,
+  confirmLabel = '确认，继续分析',
+  modifyLabel = '修改需求',
+  showConfirmButton = true,
+  showModifyButton = true,
+}: {
   data: Step1Result;
   onConfirm: () => void;
   onModify: () => void;
   loading?: boolean;
+  confirmLabel?: string;
+  modifyLabel?: string;
+  showConfirmButton?: boolean;
+  showModifyButton?: boolean;
 }) {
   return (
     <Card className="p-6 space-y-6 border-2 border-blue-200 dark:border-blue-800 bg-blue-50/30 dark:bg-blue-900/10">
@@ -92,24 +113,28 @@ function Step1Display({ data, onConfirm, onModify, loading }: {
 
       {/* 操作按钮 */}
       <div className="flex items-center gap-3 pt-4 border-t">
-        <Button
-          variant="ghost"
-          onClick={onModify}
-          disabled={loading}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Edit2 className="w-4 h-4 mr-2" />
-          修改需求
-        </Button>
-        <Button
-          onClick={onConfirm}
-          disabled={loading}
-          className="flex-1"
-        >
-          <CheckCircle2 className="w-4 h-4 mr-2" />
-          确认，继续分析
-          <ArrowRight className="w-4 h-4 ml-2" />
-        </Button>
+        {showModifyButton && (
+          <Button
+            variant="ghost"
+            onClick={onModify}
+            disabled={loading}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Edit2 className="w-4 h-4 mr-2" />
+            {modifyLabel}
+          </Button>
+        )}
+        {showConfirmButton && (
+          <Button
+            onClick={onConfirm}
+            disabled={loading}
+            className={showModifyButton ? 'flex-1' : 'w-full'}
+          >
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            {confirmLabel}
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        )}
       </div>
     </Card>
   );
@@ -118,11 +143,24 @@ function Step1Display({ data, onConfirm, onModify, loading }: {
 /**
  * Step 2: 实体关系建模结果展示
  */
-function Step2Display({ data, onConfirm, onModify, loading }: {
+function Step2Display({
+  data,
+  onConfirm,
+  onModify,
+  loading,
+  confirmLabel = '确认，继续分析',
+  modifyLabel = '修改实体',
+  showConfirmButton = true,
+  showModifyButton = true,
+}: {
   data: Step2Result;
   onConfirm: () => void;
   onModify: () => void;
   loading?: boolean;
+  confirmLabel?: string;
+  modifyLabel?: string;
+  showConfirmButton?: boolean;
+  showModifyButton?: boolean;
 }) {
   return (
     <Card className="p-6 space-y-6 border-2 border-purple-200 dark:border-purple-800 bg-purple-50/30 dark:bg-purple-900/10">
@@ -181,24 +219,28 @@ function Step2Display({ data, onConfirm, onModify, loading }: {
 
       {/* 操作按钮 */}
       <div className="flex items-center gap-3 pt-4 border-t">
-        <Button
-          variant="ghost"
-          onClick={onModify}
-          disabled={loading}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Edit2 className="w-4 h-4 mr-2" />
-          修改实体
-        </Button>
-        <Button
-          onClick={onConfirm}
-          disabled={loading}
-          className="flex-1"
-        >
-          <CheckCircle2 className="w-4 h-4 mr-2" />
-          确认，继续分析
-          <ArrowRight className="w-4 h-4 ml-2" />
-        </Button>
+        {showModifyButton && (
+          <Button
+            variant="ghost"
+            onClick={onModify}
+            disabled={loading}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Edit2 className="w-4 h-4 mr-2" />
+            {modifyLabel}
+          </Button>
+        )}
+        {showConfirmButton && (
+          <Button
+            onClick={onConfirm}
+            disabled={loading}
+            className={showModifyButton ? 'flex-1' : 'w-full'}
+          >
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            {confirmLabel}
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        )}
       </div>
     </Card>
   );
@@ -207,11 +249,24 @@ function Step2Display({ data, onConfirm, onModify, loading }: {
 /**
  * Step 3: 功能意图识别结果展示
  */
-function Step3Display({ data, onConfirm, onModify, loading }: {
+function Step3Display({
+  data,
+  onConfirm,
+  onModify,
+  loading,
+  confirmLabel = '确认，继续分析',
+  modifyLabel = '修改功能',
+  showConfirmButton = true,
+  showModifyButton = true,
+}: {
   data: Step3Result;
   onConfirm: () => void;
   onModify: () => void;
   loading?: boolean;
+  confirmLabel?: string;
+  modifyLabel?: string;
+  showConfirmButton?: boolean;
+  showModifyButton?: boolean;
 }) {
   const intentDisplayMap = {
     CLONE: { label: '克隆现有应用', color: 'bg-green-500' },
@@ -288,24 +343,28 @@ function Step3Display({ data, onConfirm, onModify, loading }: {
 
       {/* 操作按钮 */}
       <div className="flex items-center gap-3 pt-4 border-t">
-        <Button
-          variant="ghost"
-          onClick={onModify}
-          disabled={loading}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Edit2 className="w-4 h-4 mr-2" />
-          修改功能
-        </Button>
-        <Button
-          onClick={onConfirm}
-          disabled={loading}
-          className="flex-1"
-        >
-          <CheckCircle2 className="w-4 h-4 mr-2" />
-          确认，继续分析
-          <ArrowRight className="w-4 h-4 ml-2" />
-        </Button>
+        {showModifyButton && (
+          <Button
+            variant="ghost"
+            onClick={onModify}
+            disabled={loading}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Edit2 className="w-4 h-4 mr-2" />
+            {modifyLabel}
+          </Button>
+        )}
+        {showConfirmButton && (
+          <Button
+            onClick={onConfirm}
+            disabled={loading}
+            className={showModifyButton ? 'flex-1' : 'w-full'}
+          >
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            {confirmLabel}
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        )}
       </div>
     </Card>
   );
@@ -314,11 +373,24 @@ function Step3Display({ data, onConfirm, onModify, loading }: {
 /**
  * Step 4: 技术架构选型结果展示
  */
-function Step4Display({ data, onConfirm, onModify, loading }: {
+function Step4Display({
+  data,
+  onConfirm,
+  onModify,
+  loading,
+  confirmLabel = '确认，继续分析',
+  modifyLabel = '修改技术栈',
+  showConfirmButton = true,
+  showModifyButton = true,
+}: {
   data: Step4Result;
   onConfirm: () => void;
   onModify: () => void;
   loading?: boolean;
+  confirmLabel?: string;
+  modifyLabel?: string;
+  showConfirmButton?: boolean;
+  showModifyButton?: boolean;
 }) {
   return (
     <Card className="p-6 space-y-6 border-2 border-orange-200 dark:border-orange-800 bg-orange-50/30 dark:bg-orange-900/10">
@@ -393,24 +465,28 @@ function Step4Display({ data, onConfirm, onModify, loading }: {
 
       {/* 操作按钮 */}
       <div className="flex items-center gap-3 pt-4 border-t">
-        <Button
-          variant="ghost"
-          onClick={onModify}
-          disabled={loading}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Edit2 className="w-4 h-4 mr-2" />
-          修改技术栈
-        </Button>
-        <Button
-          onClick={onConfirm}
-          disabled={loading}
-          className="flex-1"
-        >
-          <CheckCircle2 className="w-4 h-4 mr-2" />
-          确认，继续分析
-          <ArrowRight className="w-4 h-4 ml-2" />
-        </Button>
+        {showModifyButton && (
+          <Button
+            variant="ghost"
+            onClick={onModify}
+            disabled={loading}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Edit2 className="w-4 h-4 mr-2" />
+            {modifyLabel}
+          </Button>
+        )}
+        {showConfirmButton && (
+          <Button
+            onClick={onConfirm}
+            disabled={loading}
+            className={showModifyButton ? 'flex-1' : 'w-full'}
+          >
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            {confirmLabel}
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        )}
       </div>
     </Card>
   );
@@ -419,11 +495,24 @@ function Step4Display({ data, onConfirm, onModify, loading }: {
 /**
  * Step 5: 复杂度与风险评估结果展示
  */
-function Step5Display({ data, onConfirm, onModify, loading }: {
+function Step5Display({
+  data,
+  onConfirm,
+  onModify,
+  loading,
+  confirmLabel = '确认，进入深度规划',
+  modifyLabel = '修改评估',
+  showConfirmButton = true,
+  showModifyButton = true,
+}: {
   data: Step5Result;
   onConfirm: () => void;
   onModify: () => void;
   loading?: boolean;
+  confirmLabel?: string;
+  modifyLabel?: string;
+  showConfirmButton?: boolean;
+  showModifyButton?: boolean;
 }) {
   const getRiskColor = (level: 'HIGH' | 'MEDIUM' | 'LOW') => {
     switch (level) {
@@ -536,24 +625,28 @@ function Step5Display({ data, onConfirm, onModify, loading }: {
 
       {/* 操作按钮 */}
       <div className="flex items-center gap-3 pt-4 border-t">
-        <Button
-          variant="ghost"
-          onClick={onModify}
-          disabled={loading}
-          className="text-muted-foreground hover:text-foreground"
-        >
-          <Edit2 className="w-4 h-4 mr-2" />
-          修改评估
-        </Button>
-        <Button
-          onClick={onConfirm}
-          disabled={loading}
-          className="flex-1"
-        >
-          <CheckCircle2 className="w-4 h-4 mr-2" />
-          确认，进入深度规划
-          <ArrowRight className="w-4 h-4 ml-2" />
-        </Button>
+        {showModifyButton && (
+          <Button
+            variant="ghost"
+            onClick={onModify}
+            disabled={loading}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <Edit2 className="w-4 h-4 mr-2" />
+            {modifyLabel}
+          </Button>
+        )}
+        {showConfirmButton && (
+          <Button
+            onClick={onConfirm}
+            disabled={loading}
+            className={showModifyButton ? 'flex-1' : 'w-full'}
+          >
+            <CheckCircle2 className="w-4 h-4 mr-2" />
+            {confirmLabel}
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+        )}
       </div>
     </Card>
   );
@@ -566,19 +659,78 @@ export function StepResultDisplay({
   result,
   onConfirm,
   onModify,
-  loading = false
+  loading = false,
+  confirmLabel,
+  modifyLabel,
+  showConfirmButton = true,
+  showModifyButton = true,
 }: StepResultDisplayProps) {
   switch (result.step) {
     case 1:
-      return <Step1Display data={result.data} onConfirm={onConfirm} onModify={onModify} loading={loading} />;
+      return (
+        <Step1Display
+          data={result.data}
+          onConfirm={onConfirm}
+          onModify={onModify}
+          loading={loading}
+          confirmLabel={confirmLabel}
+          modifyLabel={modifyLabel}
+          showConfirmButton={showConfirmButton}
+          showModifyButton={showModifyButton}
+        />
+      );
     case 2:
-      return <Step2Display data={result.data} onConfirm={onConfirm} onModify={onModify} loading={loading} />;
+      return (
+        <Step2Display
+          data={result.data}
+          onConfirm={onConfirm}
+          onModify={onModify}
+          loading={loading}
+          confirmLabel={confirmLabel}
+          modifyLabel={modifyLabel}
+          showConfirmButton={showConfirmButton}
+          showModifyButton={showModifyButton}
+        />
+      );
     case 3:
-      return <Step3Display data={result.data} onConfirm={onConfirm} onModify={onModify} loading={loading} />;
+      return (
+        <Step3Display
+          data={result.data}
+          onConfirm={onConfirm}
+          onModify={onModify}
+          loading={loading}
+          confirmLabel={confirmLabel}
+          modifyLabel={modifyLabel}
+          showConfirmButton={showConfirmButton}
+          showModifyButton={showModifyButton}
+        />
+      );
     case 4:
-      return <Step4Display data={result.data} onConfirm={onConfirm} onModify={onModify} loading={loading} />;
+      return (
+        <Step4Display
+          data={result.data}
+          onConfirm={onConfirm}
+          onModify={onModify}
+          loading={loading}
+          confirmLabel={confirmLabel}
+          modifyLabel={modifyLabel}
+          showConfirmButton={showConfirmButton}
+          showModifyButton={showModifyButton}
+        />
+      );
     case 5:
-      return <Step5Display data={result.data} onConfirm={onConfirm} onModify={onModify} loading={loading} />;
+      return (
+        <Step5Display
+          data={result.data}
+          onConfirm={onConfirm}
+          onModify={onModify}
+          loading={loading}
+          confirmLabel={confirmLabel}
+          modifyLabel={modifyLabel}
+          showConfirmButton={showConfirmButton}
+          showModifyButton={showModifyButton}
+        />
+      );
     default:
       return null;
   }

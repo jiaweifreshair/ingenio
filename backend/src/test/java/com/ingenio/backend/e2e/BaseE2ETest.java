@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -84,13 +85,31 @@ public abstract class BaseE2ETest {
     @Autowired
     protected MockMvc mockMvc;
 
+    @Autowired
+    protected JdbcTemplate jdbcTemplate;
+
     /**
      * 每个测试前的初始化
      * 子类可以重写此方法进行额外初始化
      */
     @BeforeEach
     public void setUp() {
-        // 基础初始化（如清理测试数据等）
-        // 子类可以重写并调用super.setUp()
+        ensureTestUserExists();
+    }
+
+    private void ensureTestUserExists() {
+        String checkSql = "SELECT COUNT(*) FROM users WHERE id = ?";
+        Integer count = jdbcTemplate.queryForObject(checkSql, Integer.class, TestSaTokenConfig.TEST_USER_ID);
+
+        if (count == null || count == 0) {
+            String insertSql = "INSERT INTO users (id, tenant_id, username, email, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW())";
+            jdbcTemplate.update(insertSql,
+                TestSaTokenConfig.TEST_USER_ID,
+                TestSaTokenConfig.TEST_TENANT_ID,
+                "test_user",
+                "test@example.com",
+                "test_password_hash"
+            );
+        }
     }
 }

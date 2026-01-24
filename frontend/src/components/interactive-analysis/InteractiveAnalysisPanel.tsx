@@ -9,7 +9,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { CheckCircle2, Circle, Loader2, XCircle, Send, ChevronDown, ChevronUp } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, XCircle, Send, ChevronDown, ChevronUp, Edit2 } from 'lucide-react';
 import { useInteractiveAnalysis } from '@/hooks/use-interactive-analysis';
 import { cn } from '@/lib/utils';
 import { Card } from '@/components/ui/card';
@@ -17,14 +17,17 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
+import { StepResultDisplay } from '@/components/analysis/StepResultDisplay';
+import { normalizeStepResult } from '@/components/analysis/step-result-normalizer';
+import { Briefcase, Code, ScanSearch, ShieldCheck, Database, Brain } from 'lucide-react';
 
 const STEP_CONFIG = [
-  { name: '需求语义解析', description: '正在解构您的自然语言需求...' },
-  { name: '实体关系建模', description: '识别核心数据实体与关联...' },
-  { name: '功能意图识别', description: '分析所需的功能模块与业务逻辑...' },
-  { name: '技术架构选型', description: '匹配最佳技术栈与设计模式...' },
-  { name: '复杂度与风险评估', description: '计算开发成本与潜在风险...' },
-  { name: 'Ultrathink 深度规划', description: '构建系统架构、数据流图与实施路径...' }
+  { name: '👩‍💼 产品经理 (PM)', description: '产品经理正在分析您的需求，拆解业务流程...', icon: Briefcase },
+  { name: '👨‍💻 数据架构师', description: '架构师正在设计数据模型与实体关系...', icon: Database },
+  { name: '🕵️ 业务分析师', description: '分析师正在识别功能意图与边界...', icon: ScanSearch },
+  { name: '🏗️ 技术负责人', description: 'Tech Lead 正在选型技术栈与开发框架...', icon: Code },
+  { name: '🛡️ 安全工程师', description: '安全专家正在评估系统复杂度与风险...', icon: ShieldCheck },
+  { name: '🧠 首席架构师', description: '首席架构师正在生成最终实施蓝图...', icon: Brain }
 ];
 
 export interface InteractiveAnalysisPanelProps {
@@ -108,12 +111,18 @@ export function InteractiveAnalysisPanel({ requirement, onComplete }: Interactiv
                 )}
               >
                 <div className="flex-shrink-0 mt-0.5">
-                  {isCompleted ? (
-                    <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
-                  ) : isActive ? (
-                    <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />
-                  ) : (
+                  {/* Use Persona Icon if available */}
+                  {config.icon && !isCompleted && !isActive && (
+                    <config.icon className="h-5 w-5 text-muted-foreground" />
+                  )}
+                  {!config.icon && !isCompleted && !isActive && (
                     <Circle className="h-5 w-5 text-muted-foreground" />
+                  )}
+                  {isCompleted && (
+                    <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
+                  )}
+                  {isActive && (
+                    <Loader2 className="h-5 w-5 text-blue-600 dark:text-blue-400 animate-spin" />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -229,7 +238,7 @@ export function InteractiveAnalysisPanel({ requirement, onComplete }: Interactiv
                             className="flex items-center gap-2 text-sm font-medium text-blue-600 hover:text-blue-700"
                           >
                             {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-                            AI思考过程
+                            智能体活动日志
                           </button>
                           {isExpanded && (
                             <div className="mt-2 p-3 bg-muted rounded text-sm whitespace-pre-wrap">
@@ -239,102 +248,110 @@ export function InteractiveAnalysisPanel({ requirement, onComplete }: Interactiv
                         </div>
                       )}
 
-                      {/* 结果数据 */}
-                      {msg.result != null && (
-                        <div className="mt-3 ml-8">
-                          <div className="p-3 bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-800 rounded">
-                            <div className="text-sm font-medium text-green-900 dark:text-green-100 mb-2">
-                              ✓ 生成结果
-                            </div>
-                            <pre className="text-xs overflow-x-auto text-green-800 dark:text-green-200">
-                              {typeof msg.result === 'string' ? msg.result : JSON.stringify(msg.result, null, 2)}
-                            </pre>
-                          </div>
-                        </div>
+                      {/* 结构化 Steps 1-5 结果展示 - 替代上方原始 JSON */}
+                      {msg.result != null && typeof msg.result === 'object' && currentStep >= 1 && currentStep <= 5 && (
+                         <div className="mt-3 ml-8">
+                            <StepResultDisplay 
+                                result={normalizeStepResult(currentStep as 1|2|3|4|5, msg.result, { requirement })} 
+                                onConfirm={() => {}} 
+                                onModify={() => {}} 
+                                showConfirmButton={false} 
+                                showModifyButton={false} 
+                            />
+                         </div>
                       )}
                     </div>
                   </Card>
                 );
               })}
 
-              {/* 等待确认提示 */}
+              {/* 等待确认提示与交互区域 */}
               {isWaitingConfirmation && (
-                <Card className="p-6 bg-blue-50 dark:bg-blue-900/10 border-blue-200 dark:border-blue-800">
-                  <div className="text-center">
-                    <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-2">
-                      步骤 {currentStep} 已完成
-                    </h3>
-                    <p className="text-sm text-blue-700 dark:text-blue-300 mb-4">
-                      请确认结果是否满意,或提出修改建议
-                    </p>
+                <Card className="p-6 bg-white dark:bg-zinc-900 border-2 border-primary/20 shadow-lg animate-in fade-in slide-in-from-bottom-2 mb-8">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3 border-b pb-4 mb-4">
+                      <div className="h-8 w-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
+                        <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-400" />
+                      </div>
+                      <div>
+                        <h3 className="text-lg font-semibold">
+                          步骤 {currentStep} 已生成
+                        </h3>
+                        <p className="text-sm text-muted-foreground">
+                          请审核上方结果。您可以直接确认进入下一步，或在下方输入修改建议。
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* 修改建议输入框 - 替代原来的按钮 */}
+                    <div className="space-y-3">
+                      <label className="text-sm font-medium flex items-center gap-2 text-primary">
+                        <Edit2 className="w-4 h-4" />
+                        修改建议 (可选)
+                      </label>
+                      <Textarea
+                        value={feedback}
+                        onChange={(e) => setFeedback(e.target.value)}
+                        placeholder={`例如：${
+                          currentStep === 1 ? "补充XXX业务场景，明确..." :
+                          currentStep === 2 ? "增加User表的字段..." :
+                          "调整这个模块的功能..."
+                        }`}
+                        className="min-h-[100px] resize-y bg-muted/30"
+                      />
+                    </div>
+
+                    {/* 操作按钮区 */}
+                    <div className="flex gap-3 pt-2">
+                      {feedback.trim() ? (
+                        <Button
+                          onClick={handleModify}
+                          disabled={isLoading}
+                          variant="secondary"
+                          className="flex-1"
+                        >
+                          {isLoading ? (
+                            <>
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              处理中...
+                            </>
+                          ) : (
+                            <>
+                              <Send className="h-4 w-4 mr-2" />
+                              提交修改建议
+                            </>
+                          )}
+                        </Button>
+                      ) : null}
+
+                      <Button
+                        onClick={handleConfirm}
+                        disabled={isLoading}
+                        className={cn(
+                          "bg-primary hover:bg-primary/90 text-primary-foreground shadow-lg transition-all",
+                          feedback.trim() ? "flex-1" : "w-full py-6 text-lg"
+                        )}
+                      >
+                         {isLoading ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            启动下一步...
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-5 w-5 mr-2" />
+                            确认，继续分析
+                            <ChevronDown className="h-4 w-4 ml-2 opacity-50 rotate-[-90deg]" />
+                          </>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 </Card>
               )}
             </div>
           </div>
         </ScrollArea>
-
-        {/* 底部确认/修改UI */}
-        {isWaitingConfirmation && (
-          <div className="border-t bg-card p-6">
-            <div className="max-w-4xl mx-auto space-y-4">
-              {/* 修改建议输入框 */}
-              <div>
-                <label className="text-sm font-medium mb-2 block">
-                  修改建议 (可选)
-                </label>
-                <Textarea
-                  value={feedback}
-                  onChange={(e) => setFeedback(e.target.value)}
-                  placeholder="例如: 把按钮改成蓝色的..."
-                  className="min-h-[100px]"
-                />
-              </div>
-
-              {/* 操作按钮 */}
-              <div className="flex gap-3">
-                <Button
-                  onClick={handleConfirm}
-                  disabled={isLoading}
-                  className="flex-1"
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      处理中...
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
-                      确认,进入下一步
-                    </>
-                  )}
-                </Button>
-
-                {feedback.trim() && (
-                  <Button
-                    onClick={handleModify}
-                    disabled={isLoading}
-                    variant="outline"
-                    className="flex-1"
-                  >
-                    {isLoading ? (
-                      <>
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        处理中...
-                      </>
-                    ) : (
-                      <>
-                        <Send className="h-4 w-4 mr-2" />
-                        提交修改建议
-                      </>
-                    )}
-                  </Button>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

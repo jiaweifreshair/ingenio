@@ -44,8 +44,8 @@ public class NLRequirementAnalyzer {
      */
     private final AIProviderFactory aiProviderFactory;
 
-	private final StructuredRequirementMapper requirementMapper;
-	private final ObjectMapper objectMapper;
+    private final StructuredRequirementMapper requirementMapper;
+    private final ObjectMapper objectMapper;
 
     // 重试配置
     private static final int MAX_RETRIES = 2;
@@ -126,13 +126,13 @@ public class NLRequirementAnalyzer {
                 log.info("调用AI API进行需求分析 (尝试 {}/{})", attempt, MAX_RETRIES + 1);
 
                 // 启动心跳线程
-                final java.util.concurrent.atomic.AtomicBoolean isCompleted = 
-                    new java.util.concurrent.atomic.AtomicBoolean(false);
-                final java.util.concurrent.atomic.AtomicInteger heartbeatCount = 
-                    new java.util.concurrent.atomic.AtomicInteger(0);
+                final java.util.concurrent.atomic.AtomicBoolean isCompleted = new java.util.concurrent.atomic.AtomicBoolean(
+                        false);
+                final java.util.concurrent.atomic.AtomicInteger heartbeatCount = new java.util.concurrent.atomic.AtomicInteger(
+                        0);
 
-                java.util.concurrent.ScheduledExecutorService heartbeat = 
-                    java.util.concurrent.Executors.newSingleThreadScheduledExecutor();
+                java.util.concurrent.ScheduledExecutorService heartbeat = java.util.concurrent.Executors
+                        .newSingleThreadScheduledExecutor();
 
                 heartbeat.scheduleAtFixedRate(() -> {
                     if (!isCompleted.get()) {
@@ -245,107 +245,107 @@ public class NLRequirementAnalyzer {
      */
     private String buildAnalysisPrompt() {
         return """
-            You are a professional software architect for Ingenio (秒构AI) platform.
-            Analyze the user requirement comprehensively.
+                You are a professional software architect for Ingenio (秒构AI) platform.
+                Analyze the user requirement comprehensively.
 
-            ===== CRITICAL: Tech Stack Selection Rules =====
+                ===== CRITICAL: Tech Stack Selection Rules =====
 
-            【技术栈选择核心原则】
+                【技术栈选择核心原则】
 
-            1. 需要原生功能调用的多端应用 → 使用 "Kuikly" 框架
-               Kuikly适用场景（需要原生能力）：
-               - 相机、GPS定位、传感器、蓝牙等硬件调用
-               - 推送通知、后台任务、本地存储大量数据
-               - 高性能渲染（游戏、动画、图形处理）
-               - 需要App Store/Play Store上架的原生应用
-               - 离线优先应用、需要深度系统集成的应用
+                1. 需要原生功能调用的多端应用 → 使用 "Kuikly" 框架
+                   Kuikly适用场景（需要原生能力）：
+                   - 相机、GPS定位、传感器、蓝牙等硬件调用
+                   - 推送通知、后台任务、本地存储大量数据
+                   - 高性能渲染（游戏、动画、图形处理）
+                   - 需要App Store/Play Store上架的原生应用
+                   - 离线优先应用、需要深度系统集成的应用
 
-            2. 普通多端应用（无原生功能需求）→ 使用 "H5 + WebView" (套壳方案)
-               H5+WebView适用场景：
-               - 内容展示类应用（新闻、博客、文档）
-               - 简单表单、列表、数据管理应用
-               - 电商展示、信息查询类应用
-               - 不需要复杂原生交互的应用
-               - 快速迭代、频繁更新的应用
+                2. 普通多端应用（无原生功能需求）→ 使用 "H5 + WebView" (套壳方案)
+                   H5+WebView适用场景：
+                   - 内容展示类应用（新闻、博客、文档）
+                   - 简单表单、列表、数据管理应用
+                   - 电商展示、信息查询类应用
+                   - 不需要复杂原生交互的应用
+                   - 快速迭代、频繁更新的应用
 
-            3. 纯Web应用 → 使用 "React + Supabase"
-               Web-only适用场景：
-               - 仅在浏览器运行的应用
-               - SaaS管理后台
-               - 数据可视化Dashboard
+                3. 纯Web应用 → 使用 "React + Supabase"
+                   Web-only适用场景：
+                   - 仅在浏览器运行的应用
+                   - SaaS管理后台
+                   - 数据可视化Dashboard
 
-            4. 复杂企业级应用（>8实体）→ 使用 "React + Spring Boot + PostgreSQL"
+                4. 复杂企业级应用（>8实体）→ 使用 "React + Spring Boot + PostgreSQL"
 
-            【关键词识别】
-            需要Kuikly的关键词：相机、摄像头、GPS、定位、蓝牙、NFC、指纹、Face ID、
-                               推送通知、后台下载、离线、本地数据库、传感器、陀螺仪、
-                               App Store、Play Store、原生、高性能、游戏
+                【关键词识别】
+                需要Kuikly的关键词：相机、摄像头、GPS、定位、蓝牙、NFC、指纹、Face ID、
+                                   推送通知、后台下载、离线、本地数据库、传感器、陀螺仪、
+                                   App Store、Play Store、原生、高性能、游戏
 
-            可用H5+WebView的关键词：展示、浏览、查询、表单、列表、内容、文章、
-                                   商品展示、信息展示、简单交互
+                可用H5+WebView的关键词：展示、浏览、查询、表单、列表、内容、文章、
+                                       商品展示、信息展示、简单交互
 
-            【不确定时】
-            如果无法明确判断是否需要原生功能，设置 "needsConfirmation": true，
-            并在reason中说明需要与用户确认的点。
-            ==============================================
+                【不确定时】
+                如果无法明确判断是否需要原生功能，设置 "needsConfirmation": true，
+                并在reason中说明需要与用户确认的点。
+                ==============================================
 
-            Return a JSON object with the following structure:
-            {
-              "entities": {
-                "EntityName": {
-                  "fields": ["field1", "field2"],
-                  "description": "Entity description"
+                Return a JSON object with the following structure:
+                {
+                  "entities": {
+                    "EntityName": {
+                      "fields": ["field1", "field2"],
+                      "description": "Entity description"
+                    }
+                  },
+                  "relationships": {
+                    "RelationName": {
+                      "from": "Entity1",
+                      "to": "Entity2",
+                      "type": "one-to-many|many-to-many|one-to-one"
+                    }
+                  },
+                  "operations": {
+                    "OperationName": {
+                      "type": "CRUD|business",
+                      "description": "What this operation does"
+                    }
+                  },
+                  "constraints": {
+                    "ConstraintName": {
+                      "type": "validation|business|security",
+                      "description": "Constraint description"
+                    }
+                  },
+                  "techStack": {
+                    "platform": "Kuikly|H5+WebView|Web|React Native",
+                    "frontend": "Kuikly|React|Vue|H5",
+                    "backend": "Supabase|Spring Boot|Node.js|Firebase",
+                    "database": "SQLite|PostgreSQL|MySQL|MongoDB",
+                    "needsNativeFeatures": true/false,
+                    "nativeFeatures": ["camera", "gps", "bluetooth"],
+                    "needsConfirmation": true/false,
+                    "reason": "Why this tech stack is recommended, and what needs user confirmation if any"
+                  },
+                  "complexity": {
+                    "level": "SIMPLE|MEDIUM|COMPLEX",
+                    "estimatedDays": 5,
+                    "estimatedLines": 1000,
+                    "riskFactors": ["risk1", "risk2"],
+                    "reason": "Why this complexity level"
+                  },
+                  "confidence": 0.85
                 }
-              },
-              "relationships": {
-                "RelationName": {
-                  "from": "Entity1",
-                  "to": "Entity2",
-                  "type": "one-to-many|many-to-many|one-to-one"
-                }
-              },
-              "operations": {
-                "OperationName": {
-                  "type": "CRUD|business",
-                  "description": "What this operation does"
-                }
-              },
-              "constraints": {
-                "ConstraintName": {
-                  "type": "validation|business|security",
-                  "description": "Constraint description"
-                }
-              },
-              "techStack": {
-                "platform": "Kuikly|H5+WebView|Web|React Native",
-                "frontend": "Kuikly|React|Vue|H5",
-                "backend": "Supabase|Spring Boot|Node.js|Firebase",
-                "database": "SQLite|PostgreSQL|MySQL|MongoDB",
-                "needsNativeFeatures": true/false,
-                "nativeFeatures": ["camera", "gps", "bluetooth"],
-                "needsConfirmation": true/false,
-                "reason": "Why this tech stack is recommended, and what needs user confirmation if any"
-              },
-              "complexity": {
-                "level": "SIMPLE|MEDIUM|COMPLEX",
-                "estimatedDays": 5,
-                "estimatedLines": 1000,
-                "riskFactors": ["risk1", "risk2"],
-                "reason": "Why this complexity level"
-              },
-              "confidence": 0.85
-            }
 
-            Analyze based on:
-            - Number and complexity of entities (≤3 = SIMPLE, 4-8 = MEDIUM, >8 = COMPLEX)
-            - Whether native device features are needed (camera, GPS, sensors, etc.)
-            - Business logic requirements
-            - User interaction patterns
-            - Data relationships
-            - Security requirements
+                Analyze based on:
+                - Number and complexity of entities (≤3 = SIMPLE, 4-8 = MEDIUM, >8 = COMPLEX)
+                - Whether native device features are needed (camera, GPS, sensors, etc.)
+                - Business logic requirements
+                - User interaction patterns
+                - Data relationships
+                - Security requirements
 
-            Return ONLY valid JSON, no markdown, no explanation.
-            """;
+                Return ONLY valid JSON, no markdown, no explanation.
+                """;
     }
 
     private Map<String, Object> parseAnalysisResult(String analysisJson) {
@@ -438,7 +438,7 @@ public class NLRequirementAnalyzer {
                 .uiFramework(frontend)
                 .backend(backend)
                 .database(database)
-                .confidence(needsConfirmation ? 0.6 : 0.85)  // 需要确认时降低置信度
+                .confidence(needsConfirmation ? 0.6 : 0.85) // 需要确认时降低置信度
                 .reason(reason)
                 .build();
     }
@@ -560,7 +560,8 @@ public class NLRequirementAnalyzer {
      * 支持多种格式: SIMPLE/LOW, MEDIUM, COMPLEX/HIGH
      */
     private ComplexityLevel parseComplexityLevel(String levelStr) {
-        if (levelStr == null) return ComplexityLevel.MEDIUM;
+        if (levelStr == null)
+            return ComplexityLevel.MEDIUM;
 
         String upper = levelStr.toUpperCase().trim();
 
@@ -671,8 +672,7 @@ public class NLRequirementAnalyzer {
                     .result(Map.of(
                             "entitiesCount", entities.size(),
                             "relationshipsCount", relationships.size(),
-                            "entities", entities.keySet()
-                    ))
+                            "entities", entities.keySet()))
                     .timestamp(Instant.now())
                     .build());
 
@@ -703,8 +703,7 @@ public class NLRequirementAnalyzer {
                     .result(Map.of(
                             "operationsCount", operations.size(),
                             "constraintsCount", constraints.size(),
-                            "operations", operations.keySet()
-                    ))
+                            "operations", operations.keySet()))
                     .timestamp(Instant.now())
                     .build());
 
@@ -737,8 +736,7 @@ public class NLRequirementAnalyzer {
                             "uiFramework", techStack.getUiFramework(),
                             "backend", techStack.getBackend(),
                             "database", techStack.getDatabase(),
-                            "confidence", techStack.getConfidence()
-                    ))
+                            "confidence", techStack.getConfidence()))
                     .timestamp(Instant.now())
                     .build());
 
@@ -771,8 +769,7 @@ public class NLRequirementAnalyzer {
                             "complexityLevel", complexity.getLevel().name(),
                             "estimatedDays", complexity.getEstimatedDays(),
                             "estimatedLines", complexity.getEstimatedLines(),
-                            "confidenceScore", confidenceScore
-                    ))
+                            "confidenceScore", confidenceScore))
                     .timestamp(Instant.now())
                     .build());
 
@@ -788,7 +785,7 @@ public class NLRequirementAnalyzer {
                     .build());
 
             String technicalBlueprint = generateTechnicalBlueprint(analysisResult, techStack, complexity);
-            
+
             // 模拟打字机效果的延迟，让前端展示更自然
             Thread.sleep(800);
 
@@ -801,8 +798,7 @@ public class NLRequirementAnalyzer {
                     .progress(100)
                     .result(Map.of(
                             "blueprint", technicalBlueprint,
-                            "sections", 4
-                    ))
+                            "sections", 4))
                     .timestamp(Instant.now())
                     .build());
 
@@ -834,45 +830,321 @@ public class NLRequirementAnalyzer {
     }
 
     /**
-     * 生成技术蓝图 Markdown
+     * 生成技术蓝图 Markdown（完整版）
+     * 
+     * 包含 Step1~5 的完整上下文：
+     * 1. 系统架构 - 技术栈选型（Step 4）
+     * 2. UI 设计风格 - 界面设计要求（Step 1 + 自动生成）
+     * 3. 产品功能规划 - 核心功能与用户故事（Step 1 + Step 3）
+     * 4. 目标用户画像（Step 1）
+     * 5. 数据领域模型 - 实体定义（Step 2）
+     * 6. 实体关系图（Step 2）
+     * 7. API 与逻辑层 - 功能操作（Step 3）
+     * 8. 业务约束条件（Step 3）
+     * 9. 复杂度与风险评估（Step 5）
+     * 10. 执行策略（前端/服务端/数据库规范）
      */
-    private String generateTechnicalBlueprint(Map<String, Object> analysisResult, TechStackRecommendation techStack, ComplexityAssessment complexity) {
+    private String generateTechnicalBlueprint(Map<String, Object> analysisResult, TechStackRecommendation techStack,
+            ComplexityAssessment complexity) {
         StringBuilder sb = new StringBuilder();
-        sb.append("# 🚀 Technical Implementation Blueprint\n\n");
-        
-        sb.append("## 1. System Architecture\n");
-        sb.append("- **Platform**: ").append(techStack.getPlatform()).append("\n");
-        sb.append("- **Frontend**: ").append(techStack.getUiFramework()).append("\n");
-        sb.append("- **Backend**: ").append(techStack.getBackend()).append("\n");
-        sb.append("- **Database**: ").append(techStack.getDatabase()).append("\n\n");
-        
-        sb.append("## 2. Data Domain Model\n");
-        Map<String, Object> entities = extractMap(analysisResult, "entities");
-        if (!entities.isEmpty()) {
-            entities.forEach((k, v) -> {
-                String desc = getDescription(v);
-                sb.append("- **").append(k).append("**: ").append(desc).append("\n");
-            });
-        } else {
-            sb.append("- No complex entities detected.\n");
+        sb.append("# 🚀 技术实施蓝图\n\n");
+
+        // ============ 1. 系统架构（Step 4 技术选型）============
+        sb.append("## 1. 系统架构\n");
+        sb.append("**平台**: ").append(techStack.getPlatform()).append("\n");
+        sb.append("**前端**: ").append(techStack.getUiFramework()).append("\n");
+        sb.append("**后端**: ").append(techStack.getBackend()).append("\n");
+        sb.append("**数据库**: ").append(techStack.getDatabase()).append("\n");
+        if (techStack.getReason() != null && !techStack.getReason().isEmpty()) {
+            sb.append("**选型理由**: ").append(techStack.getReason()).append("\n");
         }
         sb.append("\n");
 
-        sb.append("## 3. API & Logic Layer\n");
-        Map<String, Object> operations = extractMap(analysisResult, "operations");
-        if (!operations.isEmpty()) {
-            operations.forEach((k, v) -> {
-                String desc = getDescription(v);
-                sb.append("- `").append(k).append("`: ").append(desc).append("\n");
-            });
+        // ============ 2. UI 设计风格（新增）============
+        sb.append("## 2. UI 设计风格\n");
+        Map<String, Object> uiStyle = extractMap(analysisResult, "uiStyle");
+        if (!uiStyle.isEmpty()) {
+            String theme = getStringValue(uiStyle, "theme", "");
+            String colorScheme = getStringValue(uiStyle, "colorScheme", "");
+            String layout = getStringValue(uiStyle, "layout", "");
+            if (!theme.isEmpty())
+                sb.append("**主题风格**: ").append(theme).append("\n");
+            if (!colorScheme.isEmpty())
+                sb.append("**配色方案**: ").append(colorScheme).append("\n");
+            if (!layout.isEmpty())
+                sb.append("**布局模式**: ").append(layout).append("\n");
+        } else {
+            // 根据平台自动推荐 UI 风格
+            sb.append("**设计原则**:\n");
+            sb.append("- 采用现代简约设计风格，注重用户体验\n");
+            sb.append("- 使用清晰的视觉层次和一致的组件规范\n");
+            sb.append("- 支持响应式布局，适配不同屏幕尺寸\n");
+            if ("Web".equalsIgnoreCase(techStack.getPlatform())
+                    || techStack.getUiFramework().toLowerCase().contains("react")) {
+                sb.append("- 遵循 Material Design 或 Ant Design 设计规范\n");
+                sb.append("- 支持深色模式切换\n");
+            }
         }
         sb.append("\n");
-        
-        sb.append("## 4. Execution Strategy\n");
-        sb.append("- **Complexity**: ").append(complexity.getLevel()).append("\n");
-        sb.append("- **Est. Timeline**: ").append(complexity.getEstimatedDays()).append(" days\n");
-        sb.append("- **Code Volume**: ~").append(complexity.getEstimatedLines()).append(" lines\n");
-        
+        sb.append("**交互设计**:\n");
+        sb.append("- 提供清晰的操作反馈和加载状态提示\n");
+        sb.append("- 实现表单验证与友好的错误提示\n");
+        sb.append("- 关键操作需二次确认，防止误操作\n");
+        sb.append("\n");
+
+        // ============ 3. 产品功能规划（新增）============
+        sb.append("## 3. 产品功能规划\n");
+        Map<String, Object> features = extractMap(analysisResult, "features");
+        Map<String, Object> operations = extractMap(analysisResult, "operations");
+
+        if (!features.isEmpty()) {
+            sb.append("### 核心功能模块\n");
+            for (Map.Entry<String, Object> entry : features.entrySet()) {
+                String featureName = entry.getKey();
+                String featureDesc = getDescription(entry.getValue());
+                sb.append("- **").append(featureName).append("**: ").append(featureDesc).append("\n");
+            }
+            sb.append("\n");
+        } else if (!operations.isEmpty()) {
+            // 从 operations 推断功能模块
+            sb.append("### 核心功能模块\n");
+            // 按功能类型分组
+            List<String> crudOps = new ArrayList<>();
+            List<String> businessOps = new ArrayList<>();
+            List<String> queryOps = new ArrayList<>();
+
+            for (String opName : operations.keySet()) {
+                String lowerName = opName.toLowerCase();
+                if (lowerName.contains("create") || lowerName.contains("add") || lowerName.contains("新增") ||
+                        lowerName.contains("update") || lowerName.contains("edit") || lowerName.contains("修改") ||
+                        lowerName.contains("delete") || lowerName.contains("remove") || lowerName.contains("删除")) {
+                    crudOps.add(opName);
+                } else if (lowerName.contains("list") || lowerName.contains("get") || lowerName.contains("query") ||
+                        lowerName.contains("search") || lowerName.contains("查询") || lowerName.contains("列表")) {
+                    queryOps.add(opName);
+                } else {
+                    businessOps.add(opName);
+                }
+            }
+
+            if (!crudOps.isEmpty()) {
+                sb.append("**数据管理**: ");
+                sb.append(String.join("、", crudOps)).append("\n");
+            }
+            if (!queryOps.isEmpty()) {
+                sb.append("**数据查询**: ");
+                sb.append(String.join("、", queryOps)).append("\n");
+            }
+            if (!businessOps.isEmpty()) {
+                sb.append("**业务功能**: ");
+                sb.append(String.join("、", businessOps)).append("\n");
+            }
+            sb.append("\n");
+        }
+
+        // 用户故事
+        Object userStories = analysisResult.get("userStories");
+        if (userStories instanceof List) {
+            @SuppressWarnings("unchecked")
+            List<Object> storyList = (List<Object>) userStories;
+            if (!storyList.isEmpty()) {
+                sb.append("### 用户故事\n");
+                for (Object story : storyList) {
+                    sb.append("- ").append(story.toString()).append("\n");
+                }
+                sb.append("\n");
+            }
+        }
+
+        // 页面规划
+        sb.append("### 页面规划\n");
+        Map<String, Object> pages = extractMap(analysisResult, "pages");
+        if (!pages.isEmpty()) {
+            for (Map.Entry<String, Object> entry : pages.entrySet()) {
+                String pageName = entry.getKey();
+                String pageDesc = getDescription(entry.getValue());
+                sb.append("- **").append(pageName).append("**: ").append(pageDesc).append("\n");
+            }
+        } else {
+            // 根据实体自动推断页面
+            Map<String, Object> entities = extractMap(analysisResult, "entities");
+            if (!entities.isEmpty()) {
+                for (String entityName : entities.keySet()) {
+                    sb.append("- **").append(entityName).append("列表页**: 展示").append(entityName)
+                            .append("数据列表，支持分页、搜索、筛选\n");
+                    sb.append("- **").append(entityName).append("详情页**: 查看").append(entityName).append("详细信息\n");
+                }
+            } else {
+                sb.append("- 系统将根据需求自动规划页面结构\n");
+            }
+        }
+        sb.append("\n");
+
+        // ============ 4. 目标用户画像（Step 1）============
+        Object targetUser = analysisResult.get("targetUser");
+        Object userProfile = analysisResult.get("userProfile");
+        if (targetUser != null || userProfile != null) {
+            sb.append("## 4. 目标用户画像\n");
+            if (targetUser != null) {
+                sb.append(getDescription(targetUser)).append("\n");
+            }
+            if (userProfile != null) {
+                sb.append(getDescription(userProfile)).append("\n");
+            }
+            sb.append("\n");
+        }
+
+        // ============ 5. 数据领域模型（Step 2）============
+        sb.append("## 5. 数据领域模型\n");
+        Map<String, Object> entities = extractMap(analysisResult, "entities");
+        if (!entities.isEmpty()) {
+            for (Map.Entry<String, Object> entry : entities.entrySet()) {
+                String entityName = entry.getKey();
+                Object entityValue = entry.getValue();
+                sb.append("**").append(entityName).append("**: ");
+                String desc = getDescription(entityValue);
+                sb.append(desc).append("\n");
+
+                // 尝试提取字段信息
+                if (entityValue instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> entityMap = (Map<String, Object>) entityValue;
+                    Object fields = entityMap.get("fields");
+                    if (fields instanceof List) {
+                        @SuppressWarnings("unchecked")
+                        List<Object> fieldList = (List<Object>) fields;
+                        if (!fieldList.isEmpty()) {
+                            sb.append("  - 字段: ");
+                            List<String> fieldNames = new ArrayList<>();
+                            for (Object field : fieldList) {
+                                if (field instanceof Map) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> fieldMap = (Map<String, Object>) field;
+                                    String fieldName = getStringValue(fieldMap, "name", "");
+                                    String fieldType = getStringValue(fieldMap, "type", "");
+                                    if (!fieldName.isEmpty()) {
+                                        fieldNames.add(fieldName + (fieldType.isEmpty() ? "" : "(" + fieldType + ")"));
+                                    }
+                                }
+                            }
+                            sb.append(String.join(", ", fieldNames)).append("\n");
+                        }
+                    }
+                }
+            }
+        } else {
+            sb.append("未检测到复杂实体，系统将根据需求自动推断简单数据结构。\n");
+        }
+        sb.append("\n");
+
+        // ============ 6. 实体关系（Step 2）============
+        Map<String, Object> relationships = extractMap(analysisResult, "relationships");
+        if (!relationships.isEmpty()) {
+            sb.append("## 6. 实体关系\n");
+            for (Map.Entry<String, Object> entry : relationships.entrySet()) {
+                String relName = entry.getKey();
+                String relDesc = getDescription(entry.getValue());
+                sb.append("- **").append(relName).append("**: ").append(relDesc).append("\n");
+            }
+            sb.append("\n");
+        }
+
+        // ============ 7. API 与逻辑层（Step 3）============
+        sb.append("## 7. API 与逻辑层\n");
+        if (!operations.isEmpty()) {
+            for (Map.Entry<String, Object> entry : operations.entrySet()) {
+                String opName = entry.getKey();
+                String opDesc = getDescription(entry.getValue());
+                sb.append("- `").append(opName).append("`: ").append(opDesc).append("\n");
+            }
+        } else {
+            sb.append("系统将根据实体自动生成标准 CRUD 接口。\n");
+        }
+        sb.append("\n");
+
+        // ============ 8. 业务约束条件（Step 3）============
+        Map<String, Object> constraints = extractMap(analysisResult, "constraints");
+        if (!constraints.isEmpty()) {
+            sb.append("## 8. 业务约束条件\n");
+            for (Map.Entry<String, Object> entry : constraints.entrySet()) {
+                String constName = entry.getKey();
+                String constDesc = getDescription(entry.getValue());
+                sb.append("- **").append(constName).append("**: ").append(constDesc).append("\n");
+            }
+            sb.append("\n");
+        }
+
+        // ============ 9. 复杂度与风险评估（Step 5）============
+        sb.append("## 9. 复杂度与风险评估\n");
+        sb.append("**复杂度级别**: ").append(complexity.getLevel().getDisplayName()).append("\n");
+        sb.append("**预计开发周期**: ").append(complexity.getEstimatedDays()).append(" 天\n");
+        sb.append("**预计代码规模**: 约 ").append(complexity.getEstimatedLines()).append(" 行\n");
+        if (complexity.getDescription() != null && !complexity.getDescription().isEmpty()) {
+            sb.append("**评估说明**: ").append(complexity.getDescription()).append("\n");
+        }
+        sb.append("\n");
+
+        // ============ 10. 执行策略 ============
+        sb.append("## 10. 执行策略\n");
+        sb.append("### 前端生成规范\n");
+        sb.append("- 使用 ").append(techStack.getUiFramework()).append(" 构建响应式用户界面\n");
+        sb.append("- 遵循组件化设计原则，确保代码可维护性\n");
+        sb.append("- 实现友好的用户交互与错误提示\n");
+        sb.append("- 页面布局采用模块化设计，便于后续扩展\n");
+        sb.append("\n");
+
+        sb.append("### 服务端生成规范\n");
+        if ("Supabase".equalsIgnoreCase(techStack.getBackend())) {
+            sb.append("- 使用 Supabase 提供的 RESTful API 和实时订阅功能\n");
+            sb.append("- 前端直连数据库，无需额外服务端代码\n");
+            sb.append("- 利用 Row Level Security (RLS) 实现数据安全\n");
+        } else {
+            sb.append("- 使用 ").append(techStack.getBackend()).append(" 构建企业级服务端\n");
+            sb.append("- 实现标准的分层架构：Controller → Service → Repository\n");
+            sb.append("- 遵循 RESTful API 设计规范\n");
+            sb.append("- 实现统一的异常处理和响应格式\n");
+        }
+        sb.append("\n");
+
+        sb.append("### 数据库设计规范\n");
+        sb.append("- 使用 ").append(techStack.getDatabase()).append(" 作为主数据库\n");
+        sb.append("- 根据实体模型自动生成表结构和索引\n");
+        sb.append("- 确保数据完整性约束和外键关系\n");
+        sb.append("- 关键字段添加索引优化查询性能\n");
+        sb.append("\n");
+
+        // ============ 新用户引导流程（如有检测到）============
+        Object onboardingFlow = analysisResult.get("onboardingFlow");
+        if (onboardingFlow != null) {
+            sb.append("## 新用户引导流程\n");
+            sb.append(getDescription(onboardingFlow)).append("\n\n");
+        }
+
+        // ============ 11. AI 能力规划（M3 新增）============
+        Object aiCapabilitiesObj = analysisResult.get("aiCapabilities");
+        if (aiCapabilitiesObj instanceof List) {
+            @SuppressWarnings("unchecked")
+            List<String> aiCapabilities = (List<String>) aiCapabilitiesObj;
+            if (!aiCapabilities.isEmpty()) {
+                sb.append("## 11. AI 能力规划\n\n");
+                sb.append("本应用需要集成以下 AI 能力：\n\n");
+                sb.append("| 能力类型 | 用途 | 建议 API |\n");
+                sb.append("|----------|------|----------|\n");
+                for (String cap : aiCapabilities) {
+                    String displayName = getAICapabilityDisplayName(cap);
+                    String useCase = getAICapabilityUseCase(cap);
+                    String apiEndpoint = "/api/v1/ai/" + cap.toLowerCase().replace("_", "-");
+                    sb.append("| ").append(cap).append(" | ").append(displayName)
+                            .append(" - ").append(useCase).append(" | `").append(apiEndpoint).append("` |\n");
+                }
+                sb.append("\n");
+                sb.append("**集成说明**:\n");
+                sb.append("- 后端 Service 层需注入 `AIProvider` 接口调用 AI 能力\n");
+                sb.append("- 前端可通过生成的 API Client 调用 AI 相关接口\n");
+                sb.append("\n");
+            }
+        }
+
         return sb.toString();
     }
 
@@ -884,13 +1156,165 @@ public class NLRequirementAnalyzer {
     }
 
     /**
+     * M3: 基于需求文本检测 AI 能力（用于 G3 任务启动时的补救/增强）
+     */
+    public List<String> detectAiCapabilities(String requirement) {
+        if (requirement == null || requirement.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        List<String> capabilities = new ArrayList<>();
+        String searchText = requirement.toLowerCase();
+
+        // AI 能力关键词映射 (保持与 extractAICapabilities 一致)
+        Map<String, List<String>> keywordMap = Map.ofEntries(
+                Map.entry("CHATBOT", List.of("聊天", "客服", "对话", "chat", "conversation", "客户服务")),
+                Map.entry("QA_SYSTEM", List.of("问答", "faq", "qa", "知识问答", "智能问答")),
+                Map.entry("RAG", List.of("知识库", "文档检索", "rag", "retrieval", "知识检索")),
+                Map.entry("SUMMARIZATION", List.of("摘要", "总结", "summarize", "summary", "归纳")),
+                Map.entry("IMAGE_RECOGNITION", List.of("图片识别", "图像识别", "image recognition", "图片分析")),
+                Map.entry("SPEECH_TO_TEXT", List.of("语音识别", "语音转文字", "stt", "speech")),
+                Map.entry("TEXT_TO_SPEECH", List.of("语音合成", "tts", "文字转语音")),
+                Map.entry("CONTENT_GENERATION", List.of("内容生成", "文案", "自动写作", "content generation")),
+                Map.entry("SENTIMENT_ANALYSIS", List.of("情感分析", "sentiment", "舆情", "评论分析")),
+                Map.entry("TRANSLATION", List.of("翻译", "translate", "多语言")),
+                Map.entry("CODE_COMPLETION", List.of("代码补全", "代码生成", "code completion")),
+                Map.entry("RECOMMENDATION", List.of("推荐", "recommend", "个性化推荐", "智能推荐")),
+                Map.entry("VIDEO_ANALYSIS", List.of("视频分析", "视频识别", "video analysis")),
+                Map.entry("KNOWLEDGE_GRAPH", List.of("知识图谱", "knowledge graph", "实体关系")),
+                Map.entry("OCR_DOCUMENT", List.of("ocr", "文档识别", "发票识别", "证件识别")),
+                Map.entry("REALTIME_STREAM", List.of("实时分析", "流分析", "realtime")),
+                Map.entry("HYPER_PERSONALIZATION", List.of("超个性化", "用户画像", "精准推荐")),
+                Map.entry("PREDICTIVE_ANALYTICS", List.of("预测分析", "predictive", "趋势预测", "预估")),
+                Map.entry("MULTIMODAL_GENERATION", List.of("文生图", "图生文", "multimodal", "多模态生成")),
+                Map.entry("ANOMALY_DETECTION", List.of("异常检测", "anomaly", "欺诈检测", "风控")));
+
+        for (Map.Entry<String, List<String>> entry : keywordMap.entrySet()) {
+            for (String keyword : entry.getValue()) {
+                if (searchText.contains(keyword.toLowerCase())) {
+                    if (!capabilities.contains(entry.getKey())) {
+                        capabilities.add(entry.getKey());
+                    }
+                    break; // Found one keyword for this capability, move to next capability
+                }
+            }
+        }
+        return capabilities;
+    }
+
+    /**
+     * M3: 从分析结果和操作列表中提取 AI 能力需求
+     * 通过关键词匹配识别用户需求中涉及的 AI 能力类型
+     */
+    private List<String> extractAICapabilities(Map<String, Object> analysisResult, Map<String, Object> operations) {
+        List<String> capabilities = new ArrayList<>();
+
+        // 将分析结果和操作转为可搜索的文本
+        String searchText = (analysisResult.toString() + operations.toString()).toLowerCase();
+
+        // AI 能力关键词映射
+        Map<String, List<String>> keywordMap = Map.ofEntries(
+                Map.entry("CHATBOT", List.of("聊天", "客服", "对话", "chat", "conversation", "客户服务")),
+                Map.entry("QA_SYSTEM", List.of("问答", "faq", "qa", "知识问答", "智能问答")),
+                Map.entry("RAG", List.of("知识库", "文档检索", "rag", "retrieval", "知识检索")),
+                Map.entry("SUMMARIZATION", List.of("摘要", "总结", "summarize", "summary", "归纳")),
+                Map.entry("IMAGE_RECOGNITION", List.of("图片识别", "图像识别", "image recognition", "图片分析")),
+                Map.entry("SPEECH_TO_TEXT", List.of("语音识别", "语音转文字", "stt", "speech")),
+                Map.entry("TEXT_TO_SPEECH", List.of("语音合成", "tts", "文字转语音")),
+                Map.entry("CONTENT_GENERATION", List.of("内容生成", "文案", "自动写作", "content generation")),
+                Map.entry("SENTIMENT_ANALYSIS", List.of("情感分析", "sentiment", "舆情", "评论分析")),
+                Map.entry("TRANSLATION", List.of("翻译", "translate", "多语言")),
+                Map.entry("CODE_COMPLETION", List.of("代码补全", "代码生成", "code completion")),
+                Map.entry("RECOMMENDATION", List.of("推荐", "recommend", "个性化推荐", "智能推荐")),
+                Map.entry("VIDEO_ANALYSIS", List.of("视频分析", "视频识别", "video analysis")),
+                Map.entry("KNOWLEDGE_GRAPH", List.of("知识图谱", "knowledge graph", "实体关系")),
+                Map.entry("OCR_DOCUMENT", List.of("ocr", "文档识别", "发票识别", "证件识别")),
+                Map.entry("REALTIME_STREAM", List.of("实时分析", "流分析", "realtime")),
+                Map.entry("HYPER_PERSONALIZATION", List.of("超个性化", "用户画像", "精准推荐")),
+                Map.entry("PREDICTIVE_ANALYTICS", List.of("预测分析", "predictive", "趋势预测", "预估")),
+                Map.entry("MULTIMODAL_GENERATION", List.of("文生图", "图生文", "multimodal", "多模态生成")),
+                Map.entry("ANOMALY_DETECTION", List.of("异常检测", "anomaly", "欺诈检测", "风控")));
+
+        for (Map.Entry<String, List<String>> entry : keywordMap.entrySet()) {
+            for (String keyword : entry.getValue()) {
+                if (searchText.contains(keyword.toLowerCase())) {
+                    if (!capabilities.contains(entry.getKey())) {
+                        capabilities.add(entry.getKey());
+                    }
+                    break;
+                }
+            }
+        }
+
+        return capabilities;
+    }
+
+    /**
+     * 获取 AI 能力的中文显示名称
+     */
+    private String getAICapabilityDisplayName(String capabilityType) {
+        return switch (capabilityType) {
+            case "CHATBOT" -> "聊天机器人";
+            case "QA_SYSTEM" -> "问答系统";
+            case "RAG" -> "知识库检索";
+            case "SUMMARIZATION" -> "文本摘要";
+            case "IMAGE_RECOGNITION" -> "图片识别";
+            case "SPEECH_TO_TEXT" -> "语音识别";
+            case "TEXT_TO_SPEECH" -> "语音合成";
+            case "CONTENT_GENERATION" -> "内容生成";
+            case "SENTIMENT_ANALYSIS" -> "情感分析";
+            case "TRANSLATION" -> "智能翻译";
+            case "CODE_COMPLETION" -> "代码补全";
+            case "RECOMMENDATION" -> "智能推荐";
+            case "VIDEO_ANALYSIS" -> "视频分析";
+            case "KNOWLEDGE_GRAPH" -> "知识图谱";
+            case "OCR_DOCUMENT" -> "智能文档识别";
+            case "REALTIME_STREAM" -> "实时流分析";
+            case "HYPER_PERSONALIZATION" -> "超个性化引擎";
+            case "PREDICTIVE_ANALYTICS" -> "预测分析";
+            case "MULTIMODAL_GENERATION" -> "多模态生成";
+            case "ANOMALY_DETECTION" -> "异常检测";
+            default -> capabilityType;
+        };
+    }
+
+    /**
+     * 获取 AI 能力的典型使用场景
+     */
+    private String getAICapabilityUseCase(String capabilityType) {
+        return switch (capabilityType) {
+            case "CHATBOT" -> "智能客服对话";
+            case "QA_SYSTEM" -> "基于知识库的问答";
+            case "RAG" -> "检索增强生成";
+            case "SUMMARIZATION" -> "长文本自动摘要";
+            case "IMAGE_RECOGNITION" -> "图片内容识别";
+            case "SPEECH_TO_TEXT" -> "语音转文字";
+            case "TEXT_TO_SPEECH" -> "文字转语音";
+            case "CONTENT_GENERATION" -> "文案/文章自动生成";
+            case "SENTIMENT_ANALYSIS" -> "评论/舆情分析";
+            case "TRANSLATION" -> "多语言翻译";
+            case "CODE_COMPLETION" -> "代码智能补全";
+            case "RECOMMENDATION" -> "个性化内容/商品推荐";
+            case "VIDEO_ANALYSIS" -> "视频内容理解";
+            case "KNOWLEDGE_GRAPH" -> "实体关系提取";
+            case "OCR_DOCUMENT" -> "票据/证件识别";
+            case "REALTIME_STREAM" -> "音视频流实时处理";
+            case "HYPER_PERSONALIZATION" -> "精准用户画像";
+            case "PREDICTIVE_ANALYTICS" -> "业务数据趋势预测";
+            case "MULTIMODAL_GENERATION" -> "跨模态内容生成";
+            case "ANOMALY_DETECTION" -> "欺诈/异常行为检测";
+            default -> "通用 AI 调用";
+        };
+    }
+
+    /**
      * 执行单个步骤的分析（用于交互式分析）
      *
-     * @param requirement 需求描述
-     * @param step 步骤编号 (1-6)
-     * @param stepResults 之前步骤的结果
-     * @param stepFeedback 之前步骤的反馈
-     * @param currentFeedback 当前步骤的反馈
+     * @param requirement      需求描述
+     * @param step             步骤编号 (1-6)
+     * @param stepResults      之前步骤的结果
+     * @param stepFeedback     之前步骤的反馈
+     * @param currentFeedback  当前步骤的反馈
      * @param progressCallback 进度回调
      * @return 步骤执行结果
      */
@@ -1006,7 +1430,8 @@ public class NLRequirementAnalyzer {
         };
     }
 
-    private Object executeStep1(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+    private Object executeStep1(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
+            throws Exception {
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(1)
                 .stepName("需求语义解析")
@@ -1035,7 +1460,8 @@ public class NLRequirementAnalyzer {
         return analysisResult;
     }
 
-    private Object executeStep2(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+    private Object executeStep2(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
+            throws Exception {
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(2)
                 .stepName("实体关系建模")
@@ -1058,8 +1484,7 @@ public class NLRequirementAnalyzer {
                 "entities", entities,
                 "relationships", relationships,
                 "entitiesCount", entities.size(),
-                "relationshipsCount", relationships.size()
-        );
+                "relationshipsCount", relationships.size());
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(2)
@@ -1075,7 +1500,8 @@ public class NLRequirementAnalyzer {
         return result;
     }
 
-    private Object executeStep3(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+    private Object executeStep3(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
+            throws Exception {
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(3)
                 .stepName("功能意图识别")
@@ -1093,12 +1519,18 @@ public class NLRequirementAnalyzer {
 
         Thread.sleep(500);
 
-        Map<String, Object> result = Map.of(
+        // M3: AI 能力识别 - 分析需求是否包含 AI 相关功能
+        List<String> aiCapabilities = extractAICapabilities(analysisResult, operations);
+
+        Map<String, Object> result = new java.util.HashMap<>(Map.of(
                 "operations", operations,
                 "constraints", constraints,
                 "operationsCount", operations.size(),
-                "constraintsCount", constraints.size()
-        );
+                "constraintsCount", constraints.size()));
+        // 如果识别到 AI 能力，添加到结果中
+        if (!aiCapabilities.isEmpty()) {
+            result.put("aiCapabilities", aiCapabilities);
+        }
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(3)
@@ -1114,7 +1546,8 @@ public class NLRequirementAnalyzer {
         return result;
     }
 
-    private Object executeStep4(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+    private Object executeStep4(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
+            throws Exception {
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(4)
                 .stepName("技术架构选型")
@@ -1137,15 +1570,15 @@ public class NLRequirementAnalyzer {
                 "backend", techStack.getBackend(),
                 "database", techStack.getDatabase(),
                 "confidence", techStack.getConfidence(),
-                "reason", techStack.getReason()
-        );
+                "reason", techStack.getReason());
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(4)
                 .stepName("技术架构选型")
                 .status(AnalysisProgressMessage.StepStatus.COMPLETED)
                 .description("技术方案已确定")
-                .detail(String.format("推荐: %s + %s + %s", techStack.getPlatform(), techStack.getUiFramework(), techStack.getBackend()))
+                .detail(String.format("推荐: %s + %s + %s", techStack.getPlatform(), techStack.getUiFramework(),
+                        techStack.getBackend()))
                 .progress(100)
                 .result(result)
                 .timestamp(Instant.now())
@@ -1154,7 +1587,8 @@ public class NLRequirementAnalyzer {
         return result;
     }
 
-    private Object executeStep5(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+    private Object executeStep5(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
+            throws Exception {
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(5)
                 .stepName("复杂度与风险评估")
@@ -1177,8 +1611,7 @@ public class NLRequirementAnalyzer {
                 "estimatedDays", complexity.getEstimatedDays(),
                 "estimatedLines", complexity.getEstimatedLines(),
                 "confidenceScore", confidenceScore,
-                "description", complexity.getDescription()
-        );
+                "description", complexity.getDescription());
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(5)
@@ -1195,7 +1628,8 @@ public class NLRequirementAnalyzer {
         return result;
     }
 
-    private Object executeStep6(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+    private Object executeStep6(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
+            throws Exception {
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(6)
                 .stepName("Ultrathink 深度规划")
@@ -1216,8 +1650,7 @@ public class NLRequirementAnalyzer {
 
         Map<String, Object> result = Map.of(
                 "blueprint", technicalBlueprint,
-                "sections", 4
-        );
+                "sections", 10);
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(6)

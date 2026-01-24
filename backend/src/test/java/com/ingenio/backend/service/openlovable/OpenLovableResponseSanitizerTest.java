@@ -27,11 +27,11 @@ class OpenLovableResponseSanitizerTest {
                 </file>
                 """;
 
-        OpenLovableResponseSanitizer.SanitizeResult result = OpenLovableResponseSanitizer.sanitizeForSandboxApply(input);
+        OpenLovableResponseSanitizer.SanitizeResult result = OpenLovableResponseSanitizer
+                .sanitizeForSandboxApply(input);
 
-        // package.json is now merged (not removed), vite.config.ts is removed
-        assertEquals(1, result.removedPaths().size());
-        assertTrue(result.removedPaths().contains("vite.config.ts"));
+        // package.json is now merged (not removed), vite.config.ts is NOT removed
+        assertEquals(0, result.removedPaths().size());
 
         // package.json should be in mergedPaths
         assertEquals(1, result.mergedPaths().size());
@@ -40,8 +40,8 @@ class OpenLovableResponseSanitizerTest {
         assertNotNull(result.sanitizedResponse());
         // package.json is merged (still present in response)
         assertTrue(result.sanitizedResponse().contains("package.json"));
-        // vite.config.ts is removed
-        assertFalse(result.sanitizedResponse().contains("vite.config.ts"));
+        // vite.config.ts should be RETAINED
+        assertTrue(result.sanitizedResponse().contains("vite.config.ts"));
         assertTrue(result.sanitizedResponse().contains("src/App.jsx"));
         assertTrue(result.sanitizedResponse().contains("return <div>OK</div>"));
     }
@@ -57,7 +57,8 @@ class OpenLovableResponseSanitizerTest {
                 </file>
                 """;
 
-        OpenLovableResponseSanitizer.SanitizeResult result = OpenLovableResponseSanitizer.sanitizeForSandboxApply(input);
+        OpenLovableResponseSanitizer.SanitizeResult result = OpenLovableResponseSanitizer
+                .sanitizeForSandboxApply(input);
 
         assertEquals(1, result.removedPaths().size());
         assertEquals(".env.local", result.removedPaths().get(0));
@@ -73,11 +74,13 @@ class OpenLovableResponseSanitizerTest {
                 </file>
                 """;
 
-        OpenLovableResponseSanitizer.SanitizeResult result = OpenLovableResponseSanitizer.sanitizeForSandboxApply(input);
+        OpenLovableResponseSanitizer.SanitizeResult result = OpenLovableResponseSanitizer
+                .sanitizeForSandboxApply(input);
 
         assertTrue(result.removedPaths().isEmpty());
         assertTrue(result.mergedPaths().isEmpty());
-        // The sanitizer processes the response, so it returns a new string (not the same reference)
+        // The sanitizer processes the response, so it returns a new string (not the
+        // same reference)
         // But the content should be equivalent
         assertEquals(input.trim(), result.sanitizedResponse().trim());
     }

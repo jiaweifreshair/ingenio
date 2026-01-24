@@ -103,6 +103,8 @@ interface LivePreviewIframeProps {
   loadingText?: string;
   /** 错误文案 */
   errorText?: string;
+  /** 运行时错误回调 */
+  onRuntimeError?: (error: any) => void;
 }
 
 /**
@@ -145,6 +147,7 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
   title = '应用预览',
   loadingText = '正在加载预览...',
   errorText = '预览加载失败',
+  onRuntimeError,
 }) => {
   const [device, setDevice] = useState<DeviceType>(initialDevice);
   const [isLoading, setIsLoading] = useState(true);
@@ -244,6 +247,22 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
       setHasError(false);
     }
   }, [validPreviewUrl]);
+
+  // 监听来自沙箱的运行时错误消息
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // 简单校验消息格式
+      if (event.data && event.data.type === 'SANDBOX_ERROR' && event.data.error) {
+        console.warn('[LivePreview] 捕获到沙箱运行时错误:', event.data.error);
+        if (onRuntimeError) {
+          onRuntimeError(event.data.error);
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [onRuntimeError]);
 
   // 计算iframe尺寸
   const iframeStyle: React.CSSProperties = device === 'fullscreen'

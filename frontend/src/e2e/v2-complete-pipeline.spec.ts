@@ -205,7 +205,7 @@ test.describe('Blueprint E2E（API + UI）', () => {
     await expect(page.getByText('深度分析')).toBeVisible({ timeout: 60_000 });
 
     // 分析完成后可能出现 PlanDisplay，需要用户点击确认；也可能直接进入原型确认
-    const planConfirmButton = page.getByRole('button', { name: 'Confirm & Generate Prototype' });
+    const planConfirmButton = page.getByRole('button', { name: '确认并生成原型' });
     const prototypePanel = page.locator('[data-testid="prototype-confirmation-panel"]');
 
     const reached = await Promise.race([

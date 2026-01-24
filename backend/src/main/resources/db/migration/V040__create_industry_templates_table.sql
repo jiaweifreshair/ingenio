@@ -49,29 +49,40 @@ CREATE TABLE IF NOT EXISTS industry_templates (
 -- 2. 创建索引（优化查询性能）
 
 -- GIN索引：支持JSONB数组的高效查询（关键词匹配）
-CREATE INDEX idx_industry_templates_keywords
+CREATE INDEX IF NOT EXISTS idx_industry_templates_keywords
     ON industry_templates USING GIN (keywords);
 
 -- 复合索引：支持分类浏览
-CREATE INDEX idx_industry_templates_category
+CREATE INDEX IF NOT EXISTS idx_industry_templates_category
     ON industry_templates (category, subcategory)
     WHERE is_active = true;
 
 -- 排序索引：支持按使用次数排序（热门模板）
-CREATE INDEX idx_industry_templates_usage_count
+CREATE INDEX IF NOT EXISTS idx_industry_templates_usage_count
     ON industry_templates (usage_count DESC)
     WHERE is_active = true;
 
 -- 排序索引：支持按评分排序（优质模板）
-CREATE INDEX idx_industry_templates_rating
+CREATE INDEX IF NOT EXISTS idx_industry_templates_rating
     ON industry_templates (rating DESC NULLS LAST)
     WHERE is_active = true AND rating IS NOT NULL;
 
 -- 3. 创建触发器（自动更新 updated_at）
-CREATE TRIGGER update_industry_templates_updated_at
-    BEFORE UPDATE ON industry_templates
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+-- 说明：兼容旧版初始化脚本已创建触发器的场景，避免重复创建失败
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'update_industry_templates_updated_at'
+          AND tgrelid = 'industry_templates'::regclass
+    ) THEN
+        CREATE TRIGGER update_industry_templates_updated_at
+            BEFORE UPDATE ON industry_templates
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
 -- 4. 添加表和列注释（便于维护）
 COMMENT ON TABLE industry_templates IS '行业应用模板库 - Phase X.4';

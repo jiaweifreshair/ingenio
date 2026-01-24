@@ -285,8 +285,8 @@ export function AppsSection(): React.ReactElement {
               <div className="flex items-center gap-2 mt-6 pt-4 border-t border-border/40">
                 {/* 查看详情 */}
                 <Button variant="outline" size="sm" asChild className="flex-1 rounded-full h-9 text-xs border-border/50 hover:bg-primary/5 hover:text-primary hover:border-primary/20">
-                  <Link href={`/preview/${app.id}`}>
-                    查看预览
+                  <Link href={`/wizard/${app.appSpecId || app.id}`}>
+                    查看结果
                   </Link>
                 </Button>
 

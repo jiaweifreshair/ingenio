@@ -3,6 +3,7 @@ package com.ingenio.backend.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.ingenio.backend.client.JeecgPayClient;
+import com.ingenio.backend.common.exception.BusinessException;
 import com.ingenio.backend.dto.billing.CreateOrderRequest;
 import com.ingenio.backend.dto.billing.CreateOrderResponse;
 import com.ingenio.backend.dto.billing.PayOrderDTO;
@@ -65,12 +66,26 @@ public class PayOrderService {
         log.info("创建支付订单: orderNo={}, userId={}, package={}", orderNo, userId, pkg.getCode());
 
         // 调用 JeecgBoot 获取支付参数
-        Map<String, Object> payResult = jeecgPayClient.getAlipayParams(
-                orderNo,
-                pkg.getPrice(),
-                pkg.getName(),
-                request.getPayChannel()
-        );
+        final Map<String, Object> payResult;
+        try {
+            payResult = jeecgPayClient.getAlipayParams(
+                    orderNo,
+                    pkg.getPrice(),
+                    pkg.getName(),
+                    request.getPayChannel()
+            );
+        } catch (Exception e) {
+            // 说明：
+            // - 创建订单是用户侧强依赖能力，支付中心不可用时不应返回 500（系统错误），而应返回可感知的业务错误。
+            // - 使用 BusinessException 走统一的错误结构，便于前端展示与定位 JEECG_PAY_BASE_URL/JeecgBoot 运行状态问题。
+            log.error("获取支付参数失败: orderNo={}, userId={}, channel={}, error={}", orderNo, userId, request.getPayChannel(), e.getMessage(), e);
+            String detail = e.getMessage();
+            String suffix = (detail == null || detail.isBlank()) ? "" : "：" + detail;
+            throw new BusinessException(
+                    "503",
+                    "支付服务暂不可用" + suffix + "，请确认 JeecgBoot 支付服务可访问（JEECG_PAY_BASE_URL）"
+            );
+        }
 
         // 更新订单支付数据
         order.setPayDataType((String) payResult.get("payDataType"));

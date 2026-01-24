@@ -54,10 +54,10 @@ const nextConfig: NextConfig = {
      * 是否启用同源代理
      *
      * 说明：
-     * - 仅当 NEXT_PUBLIC_API_BASE_URL 显式为空字符串时启用
+     * - 仅当 NEXT_PUBLIC_API_BASE_URL / NEXT_PUBLIC_API_URL 显式为空字符串时启用
      * - 避免在直连后端模式下触发 Next.js 内部 http-proxy 产生弃用告警
      */
-    const enableDevProxy = process.env.NEXT_PUBLIC_API_BASE_URL === '';
+    const enableDevProxy = (process.env.NEXT_PUBLIC_API_BASE_URL ?? process.env.NEXT_PUBLIC_API_URL)?.trim() === '';
 
     if (!enableDevProxy) {
       return [];

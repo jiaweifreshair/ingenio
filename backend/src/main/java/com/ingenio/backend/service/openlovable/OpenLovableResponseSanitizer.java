@@ -17,10 +17,11 @@ import java.util.regex.Pattern;
 /**
  * OpenLovable AI 输出清洗器（用于 apply 阶段）
  *
- * <p>处理策略（V2.0 智能合并）：
+ * <p>
+ * 处理策略（V2.0 智能合并）：
  * <ul>
- *   <li>对于 package.json：提取AI生成的依赖，与沙箱模板合并，保留模板的scripts/devDependencies等关键配置</li>
- *   <li>对于其他高风险配置文件：仍然完全过滤，保护沙箱模板的稳定性</li>
+ * <li>对于 package.json：提取AI生成的依赖，与沙箱模板合并，保留模板的scripts/devDependencies等关键配置</li>
+ * <li>对于其他高风险配置文件：仍然完全过滤，保护沙箱模板的稳定性</li>
  * </ul>
  */
 public final class OpenLovableResponseSanitizer {
@@ -34,19 +35,7 @@ public final class OpenLovableResponseSanitizer {
     private static final Set<String> BLOCKED_FILENAMES = Set.of(
             "package-lock.json",
             "pnpm-lock.yaml",
-            "yarn.lock",
-            "vite.config.js",
-            "vite.config.ts",
-            "vite.config.mjs",
-            "vite.config.cjs",
-            "tailwind.config.js",
-            "tailwind.config.ts",
-            "postcss.config.js",
-            "postcss.config.cjs",
-            "tsconfig.json",
-            "tsconfig.app.json",
-            "tsconfig.node.json"
-    );
+            "yarn.lock");
 
     /**
      * 沙箱模板的 package.json 基础配置
@@ -88,8 +77,7 @@ public final class OpenLovableResponseSanitizer {
 
     private static final Pattern FILE_BLOCK_PATTERN = Pattern.compile(
             "(<file\\s+path=['\"]([^'\"]+)['\"][^>]*>)([\\s\\S]*?)(</file>|$)",
-            Pattern.CASE_INSENSITIVE
-    );
+            Pattern.CASE_INSENSITIVE);
 
     private OpenLovableResponseSanitizer() {
     }
@@ -159,7 +147,8 @@ public final class OpenLovableResponseSanitizer {
 
         matcher.appendTail(buffer);
 
-        return new SanitizeResult(buffer.toString(), List.copyOf(removedPaths), List.copyOf(mergedPaths), List.copyOf(truncatedPaths));
+        return new SanitizeResult(buffer.toString(), List.copyOf(removedPaths), List.copyOf(mergedPaths),
+                List.copyOf(truncatedPaths));
     }
 
     /**
@@ -169,7 +158,8 @@ public final class OpenLovableResponseSanitizer {
      * 做什么：用于剥离非文件文本、复用解析结果做校验/修复。
      * 为什么：避免重复正则解析导致的稳定性问题。
      */
-    public record FileBlock(String normalizedPath, String rawPath, String openTag, String content, String closeTag) {}
+    public record FileBlock(String normalizedPath, String rawPath, String openTag, String content, String closeTag) {
+    }
 
     /**
      * 提取 AI 输出中的所有文件块
@@ -210,13 +200,13 @@ public final class OpenLovableResponseSanitizer {
         // 检测未标记代码：如果没有文件块但响应看起来像代码，记录警告
         if (blocks.isEmpty() && looksLikeCode(response)) {
             log.warn("检测到未标记代码：AI返回了代码但没有使用 <file> 标签包裹。响应长度: {}, 前200字符: {}",
-                response.length(),
-                response.substring(0, Math.min(200, response.length())));
+                    response.length(),
+                    response.substring(0, Math.min(200, response.length())));
         }
 
         // 记录Prompt合规率指标
         log.info("OpenLovable响应分析: 文件数={}, 响应长度={}, 包含未标记代码={}",
-            blocks.size(), response.length(), blocks.isEmpty() && looksLikeCode(response));
+                blocks.size(), response.length(), blocks.isEmpty() && looksLikeCode(response));
 
         return blocks;
     }
@@ -235,14 +225,14 @@ public final class OpenLovableResponseSanitizer {
 
         // 检查常见的代码关键词
         return response.contains("import ") ||
-               response.contains("export ") ||
-               response.contains("function ") ||
-               response.contains("const ") ||
-               response.contains("class ") ||
-               response.contains("interface ") ||
-               response.contains("return (") ||
-               response.contains("useState") ||
-               response.contains("useEffect");
+                response.contains("export ") ||
+                response.contains("function ") ||
+                response.contains("const ") ||
+                response.contains("class ") ||
+                response.contains("interface ") ||
+                response.contains("return (") ||
+                response.contains("useState") ||
+                response.contains("useEffect");
     }
 
     /**
@@ -277,17 +267,19 @@ public final class OpenLovableResponseSanitizer {
         try {
             Map<String, Object> template = objectMapper.readValue(
                     SANDBOX_TEMPLATE_PACKAGE_JSON,
-                    new TypeReference<LinkedHashMap<String, Object>>() {}
-            );
+                    new TypeReference<LinkedHashMap<String, Object>>() {
+                    });
 
             Map<String, Object> aiPackage = objectMapper.readValue(
                     aiContent.trim(),
-                    new TypeReference<LinkedHashMap<String, Object>>() {}
-            );
+                    new TypeReference<LinkedHashMap<String, Object>>() {
+                    });
 
             // 合并 dependencies
-            Map<String, String> templateDeps = (Map<String, String>) template.getOrDefault("dependencies", new LinkedHashMap<>());
-            Map<String, String> aiDeps = (Map<String, String>) aiPackage.getOrDefault("dependencies", new LinkedHashMap<>());
+            Map<String, String> templateDeps = (Map<String, String>) template.getOrDefault("dependencies",
+                    new LinkedHashMap<>());
+            Map<String, String> aiDeps = (Map<String, String>) aiPackage.getOrDefault("dependencies",
+                    new LinkedHashMap<>());
 
             Map<String, String> mergedDeps = new LinkedHashMap<>(templateDeps);
             for (Map.Entry<String, String> entry : aiDeps.entrySet()) {
@@ -301,8 +293,10 @@ public final class OpenLovableResponseSanitizer {
             template.put("dependencies", mergedDeps);
 
             // 合并 devDependencies（同样只添加新的）
-            Map<String, String> templateDevDeps = (Map<String, String>) template.getOrDefault("devDependencies", new LinkedHashMap<>());
-            Map<String, String> aiDevDeps = (Map<String, String>) aiPackage.getOrDefault("devDependencies", new LinkedHashMap<>());
+            Map<String, String> templateDevDeps = (Map<String, String>) template.getOrDefault("devDependencies",
+                    new LinkedHashMap<>());
+            Map<String, String> aiDevDeps = (Map<String, String>) aiPackage.getOrDefault("devDependencies",
+                    new LinkedHashMap<>());
 
             Map<String, String> mergedDevDeps = new LinkedHashMap<>(templateDevDeps);
             for (Map.Entry<String, String> entry : aiDevDeps.entrySet()) {
@@ -338,7 +332,8 @@ public final class OpenLovableResponseSanitizer {
     }
 
     private static String getFileName(String normalizedPath) {
-        if (normalizedPath == null) return "";
+        if (normalizedPath == null)
+            return "";
         int lastSlash = normalizedPath.lastIndexOf('/');
         return (lastSlash >= 0 && lastSlash + 1 < normalizedPath.length())
                 ? normalizedPath.substring(lastSlash + 1)
@@ -346,10 +341,13 @@ public final class OpenLovableResponseSanitizer {
     }
 
     private static String normalizePath(String rawPath) {
-        if (rawPath == null) return "";
+        if (rawPath == null)
+            return "";
         String normalized = rawPath.trim().replace('\\', '/');
-        while (normalized.startsWith("./")) normalized = normalized.substring(2);
-        while (normalized.startsWith("/")) normalized = normalized.substring(1);
+        while (normalized.startsWith("./"))
+            normalized = normalized.substring(2);
+        while (normalized.startsWith("/"))
+            normalized = normalized.substring(1);
         return normalized;
     }
 
@@ -358,7 +356,7 @@ public final class OpenLovableResponseSanitizer {
      * 解决Vite无法解析.js文件中JSX语法的问题
      *
      * @param filePath 文件路径
-     * @param content 文件内容
+     * @param content  文件内容
      * @return 修正后的文件路径（如果包含JSX则改为.jsx）
      */
     private static String correctJsxExtension(String filePath, String content) {
@@ -387,9 +385,9 @@ public final class OpenLovableResponseSanitizer {
         // JSX标签模式：<ComponentName 或 </ComponentName 或 <tag>
         // 匹配React组件标签（大写开头）或HTML标签
         Pattern jsxPattern = Pattern.compile(
-            "</?[A-Z][a-zA-Z0-9]*[\\s/>]|" +  // React组件: <Component> </Component>
-            "<[a-z]+[\\s/>]|" +                // HTML标签: <div> <span>
-            "\\{[^}]*<[^>]+>[^}]*\\}"          // JSX表达式: {<Component />}
+                "</?[A-Z][a-zA-Z0-9]*[\\s/>]|" + // React组件: <Component> </Component>
+                        "<[a-z]+[\\s/>]|" + // HTML标签: <div> <span>
+                        "\\{[^}]*<[^>]+>[^}]*\\}" // JSX表达式: {<Component />}
         );
 
         return jsxPattern.matcher(content).find();
@@ -403,6 +401,8 @@ public final class OpenLovableResponseSanitizer {
      * 2. 行尾的注释省略号
      * 3. 注释块中的省略号
      * 4. 文件末尾的省略号
+     * 5. JSX/HTML 标签不匹配（括号未闭合）
+     * 6. JavaScript 括号不匹配（花括号/圆括号/方括号）
      */
     private static boolean isTruncated(String content) {
         if (content == null || content.isBlank()) {
@@ -433,15 +433,145 @@ public final class OpenLovableResponseSanitizer {
             }
         }
 
+        // 检测 JSX/TSX 文件的括号匹配（V2.1 增强）
+        if (isJsxOrTsxContent(content)) {
+            if (!areBracketsBalanced(content)) {
+                log.warn("检测到括号不匹配，可能是 JSX 截断");
+                return true;
+            }
+        }
+
         return false;
     }
 
     /**
-     * 清洗结果
-     * @param sanitizedResponse 清洗后的输出
-     * @param removedPaths 被完全移除的文件路径
-     * @param mergedPaths 被智能合并的文件路径
-     * @param truncatedPaths 被截断的文件路径
+     * 检测内容是否是 JSX/TSX 代码
      */
-    public record SanitizeResult(String sanitizedResponse, List<String> removedPaths, List<String> mergedPaths, List<String> truncatedPaths) {}
+    private static boolean isJsxOrTsxContent(String content) {
+        if (content == null || content.isBlank()) {
+            return false;
+        }
+        // 检测 React 特征
+        return content.contains("import React") ||
+                content.contains("from 'react'") ||
+                content.contains("from \"react\"") ||
+                content.contains("useState") ||
+                content.contains("useEffect") ||
+                content.contains("export default function") ||
+                content.contains("export function") ||
+                containsJsxSyntax(content);
+    }
+
+    /**
+     * 检测括号是否平衡（花括号/圆括号/方括号/JSX标签）
+     * 
+     * 注意：这是一个简化版检测，主要用于识别明显的截断问题
+     * 不处理字符串内的括号（可能导致误判，但可以容忍）
+     */
+    private static boolean areBracketsBalanced(String content) {
+        if (content == null || content.isBlank()) {
+            return true;
+        }
+
+        int curlyBraces = 0; // {}
+        int parentheses = 0; // ()
+        int brackets = 0; // []
+        int angleBrackets = 0; // <> for JSX
+
+        boolean inString = false;
+        boolean inTemplate = false;
+        char stringChar = 0;
+
+        char[] chars = content.toCharArray();
+        for (int i = 0; i < chars.length; i++) {
+            char c = chars[i];
+            char prev = i > 0 ? chars[i - 1] : 0;
+
+            // 跳过转义字符
+            if (prev == '\\') {
+                continue;
+            }
+
+            // 字符串处理
+            if (!inString && !inTemplate && (c == '"' || c == '\'')) {
+                inString = true;
+                stringChar = c;
+                continue;
+            }
+            if (inString && c == stringChar) {
+                inString = false;
+                continue;
+            }
+
+            // 模板字符串处理
+            if (!inString && !inTemplate && c == '`') {
+                inTemplate = true;
+                continue;
+            }
+            if (inTemplate && c == '`') {
+                inTemplate = false;
+                continue;
+            }
+
+            // 跳过字符串和模板内的内容
+            if (inString || inTemplate) {
+                continue;
+            }
+
+            // 计数括号
+            switch (c) {
+                case '{' -> curlyBraces++;
+                case '}' -> curlyBraces--;
+                case '(' -> parentheses++;
+                case ')' -> parentheses--;
+                case '[' -> brackets++;
+                case ']' -> brackets--;
+                case '<' -> {
+                    // 只计算看起来像 JSX 标签的 <
+                    if (i + 1 < chars.length) {
+                        char next = chars[i + 1];
+                        if (Character.isLetter(next) || next == '/' || next == '>') {
+                            angleBrackets++;
+                        }
+                    }
+                }
+                case '>' -> {
+                    // 减少 JSX 标签计数
+                    if (angleBrackets > 0 && (prev == '/' || Character.isLetter(prev) || prev == '"' || prev == '\'')) {
+                        angleBrackets--;
+                    }
+                }
+            }
+
+            // 早期退出：如果计数变成负数，说明有未匹配的闭合括号
+            if (curlyBraces < 0 || parentheses < 0 || brackets < 0) {
+                return false;
+            }
+        }
+
+        // 检查是否所有括号都匹配
+        // 对于花括号和圆括号，必须严格匹配
+        // 对于 JSX 标签，允许一定的容差（因为简化版检测可能不准确）
+        boolean basicBalanced = curlyBraces == 0 && parentheses == 0 && brackets == 0;
+
+        // 如果基础括号不平衡，记录日志
+        if (!basicBalanced) {
+            log.debug("括号不平衡: curly={}, paren={}, bracket={}, angle={}",
+                    curlyBraces, parentheses, brackets, angleBrackets);
+        }
+
+        return basicBalanced;
+    }
+
+    /**
+     * 清洗结果
+     * 
+     * @param sanitizedResponse 清洗后的输出
+     * @param removedPaths      被完全移除的文件路径
+     * @param mergedPaths       被智能合并的文件路径
+     * @param truncatedPaths    被截断的文件路径
+     */
+    public record SanitizeResult(String sanitizedResponse, List<String> removedPaths, List<String> mergedPaths,
+            List<String> truncatedPaths) {
+    }
 }

@@ -56,18 +56,18 @@ test.describe('首页功能测试', () => {
     await expect(page.getByText('社团小店')).toBeVisible();
   });
 
-  test('点击案例卡片应该导航到预览页面', async ({ page }) => {
+  test('点击案例卡片应该导航到结果页面', async ({ page }) => {
     // 滚动到案例区域
     await page.locator('#usecases').scrollIntoViewIfNeeded();
 
     // 点击"问卷表单"卡片
     await page.getByText('问卷表单').click();
 
-    // 验证导航到预览页面
-    await expect(page).toHaveURL('/preview/demo-survey');
+    // 验证导航到结果页面
+    await expect(page).toHaveURL('/wizard/demo-survey');
 
-    // 验证预览页面已加载 - 使用heading角色更精确
-    await expect(page.getByRole('heading', { name: '应用预览' })).toBeVisible({ timeout: 10000 });
+    // 验证结果页面已加载
+    await expect(page.getByRole('heading', { name: 'AppSpec 生成向导' })).toBeVisible({ timeout: 10000 });
   });
 
   test('页面应该响应式布局', async ({ page }) => {

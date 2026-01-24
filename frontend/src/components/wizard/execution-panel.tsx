@@ -403,8 +403,8 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
         />
       </div>
 
-      {/* 内容区域 - 确保日志有足够展示空间 */}
-      <div className="flex-1 min-h-[400px] overflow-hidden">
+      {/* 内容区域 - 移除固定高度限制，让日志区域充分利用可用空间 */}
+      <div className="flex-1 min-h-0 overflow-hidden">
         <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
           {/* 标签页导航 */}
           <div className="border-b bg-background px-4 py-2">
@@ -424,8 +424,8 @@ export const ExecutionPanel: React.FC<ExecutionPanelProps> = ({
             </TabsList>
           </div>
 
-          {/* 标签页内容 - 增加高度确保内容可见 */}
-          <div className="flex-1 overflow-hidden min-h-[300px]">
+          {/* 标签页内容 - 增加最小高度确保内容可见 */}
+          <div className="flex-1 overflow-hidden min-h-[500px]">
             <TabsContent value="timeline" className="h-full m-0">
               <ScrollArea className="h-full">
                 <div className="p-4">

@@ -43,6 +43,9 @@ describe('InteractionPanel', () => {
       </LanguageProvider>
     );
 
+    // 历史记录默认收起：先展开再断言内容
+    fireEvent.click(screen.getByTitle('展开历史记录'));
+
     expect(screen.getByText('历史记录')).toBeInTheDocument();
     expect(screen.getByText('基础需求')).toBeInTheDocument();
     expect(screen.getByText('修改记录')).toBeInTheDocument();

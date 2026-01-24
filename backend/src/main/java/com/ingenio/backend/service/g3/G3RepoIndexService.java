@@ -14,6 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.HashMap;
@@ -22,17 +23,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+
+import org.springframework.data.redis.core.RedisTemplate;
 
 /**
  * G3 仓库索引服务（Repo Index）。
  *
- * <p>职责：</p>
+ * <p>
+ * 职责：
+ * </p>
  * <ul>
- *   <li>扫描指定仓库目录并过滤可索引文件；</li>
- *   <li>构建向量文档并写入 VectorStore；</li>
- *   <li>提供“自动索引/手动索引”的统一入口。</li>
+ * <li>扫描指定仓库目录并过滤可索引文件；</li>
+ * <li>构建向量文档并写入 VectorStore；</li>
+ * <li>提供“自动索引/手动索引”的统一入口。</li>
  * </ul>
  */
 @Service
@@ -52,16 +56,23 @@ public class G3RepoIndexService {
 
     private final G3KnowledgeStorePort knowledgeStore;
     private final G3RagProperties ragProperties;
+    private final RedisTemplate<String, String> redisTemplate;
 
     /**
-     * 运行期索引记录（避免重复索引）。
-     * Key: projectId/tenantId
+     * Redis Key 前缀（仓库索引快照）
      */
-    private final Map<String, RepoIndexSnapshot> indexSnapshots = new ConcurrentHashMap<>();
+    private static final String INDEX_SNAPSHOT_PREFIX = "g3:repo-index:";
 
-    public G3RepoIndexService(G3KnowledgeStorePort knowledgeStore, G3RagProperties ragProperties) {
+    /**
+     * 索引快照过期时间（小时）
+     */
+    private static final int INDEX_SNAPSHOT_TTL_HOURS = 2;
+
+    public G3RepoIndexService(G3KnowledgeStorePort knowledgeStore, G3RagProperties ragProperties,
+            RedisTemplate<String, String> redisTemplate) {
         this.knowledgeStore = knowledgeStore;
         this.ragProperties = ragProperties;
+        this.redisTemplate = redisTemplate;
     }
 
     /**
@@ -86,8 +97,9 @@ public class G3RepoIndexService {
             return RepoIndexResult.skipped("缺少 projectId/tenantId，跳过索引");
         }
 
-        if (indexSnapshots.containsKey(key)) {
-            return RepoIndexResult.skipped("Repo Index 已存在，跳过重复索引");
+        // 检查 Redis 中是否已有索引记录
+        if (existsIndexSnapshot(key)) {
+            return RepoIndexResult.skipped("Repo Index 已存在（Redis），跳过重复索引");
         }
 
         RepoIndexRequest request = new RepoIndexRequest();
@@ -97,7 +109,8 @@ public class G3RepoIndexService {
         RepoIndexResult result = indexRepo(request, logConsumer);
 
         if (result.success()) {
-            indexSnapshots.put(key, new RepoIndexSnapshot(System.currentTimeMillis(), result.chunkCount()));
+            // 保存索引快照到 Redis
+            saveIndexSnapshot(key, result.chunkCount());
         }
 
         return result;
@@ -115,7 +128,8 @@ public class G3RepoIndexService {
             return RepoIndexResult.skipped("Repo Index 功能未启用");
         }
 
-        Consumer<G3LogEntry> safeLogConsumer = logConsumer != null ? logConsumer : entry -> {};
+        Consumer<G3LogEntry> safeLogConsumer = logConsumer != null ? logConsumer : entry -> {
+        };
 
         Path root = resolveRoot(request.getRootPath());
         if (root == null || !Files.exists(root)) {
@@ -123,8 +137,10 @@ public class G3RepoIndexService {
         }
 
         int maxFiles = request.getMaxFiles() != null ? request.getMaxFiles() : ragProperties.getMaxFiles();
-        long maxFileBytes = request.getMaxFileBytes() != null ? request.getMaxFileBytes() : ragProperties.getMaxFileBytes();
-        List<String> includeExt = normalizeExtensions(request.getIncludeExtensions(), ragProperties.getIncludeExtensions());
+        long maxFileBytes = request.getMaxFileBytes() != null ? request.getMaxFileBytes()
+                : ragProperties.getMaxFileBytes();
+        List<String> includeExt = normalizeExtensions(request.getIncludeExtensions(),
+                ragProperties.getIncludeExtensions());
         Set<String> excludeDirs = new HashSet<>(ragProperties.getExcludeDirs());
 
         safeLogConsumer.accept(G3LogEntry.info(G3LogEntry.Role.EXECUTOR,
@@ -480,24 +496,33 @@ public class G3RepoIndexService {
         }
     }
 
+    // ========== Redis 缓存辅助方法 ==========
+
     /**
-     * 索引快照（仅在运行期用于去重）。
+     * 保存索引快照到 Redis
      */
-    private static class RepoIndexSnapshot {
-        private final long indexedAt;
-        private final int chunkCount;
-
-        RepoIndexSnapshot(long indexedAt, int chunkCount) {
-            this.indexedAt = indexedAt;
-            this.chunkCount = chunkCount;
+    private void saveIndexSnapshot(String key, int chunkCount) {
+        try {
+            String redisKey = INDEX_SNAPSHOT_PREFIX + key;
+            String value = String.valueOf(chunkCount);
+            redisTemplate.opsForValue().set(redisKey, value, Duration.ofHours(INDEX_SNAPSHOT_TTL_HOURS));
+            log.info("[G3RepoIndex] 索引快照已保存到 Redis: key={}, chunks={}", key, chunkCount);
+        } catch (Exception e) {
+            log.warn("[G3RepoIndex] 保存索引快照到 Redis 失败: {}", e.getMessage());
         }
+    }
 
-        public long getIndexedAt() {
-            return indexedAt;
-        }
-
-        public int getChunkCount() {
-            return chunkCount;
+    /**
+     * 检查索引快照是否存在
+     */
+    private boolean existsIndexSnapshot(String key) {
+        try {
+            String redisKey = INDEX_SNAPSHOT_PREFIX + key;
+            Boolean exists = redisTemplate.hasKey(redisKey);
+            return Boolean.TRUE.equals(exists);
+        } catch (Exception e) {
+            log.warn("[G3RepoIndex] 检查 Redis 索引快照失败: {}", e.getMessage());
+            return false;
         }
     }
 }

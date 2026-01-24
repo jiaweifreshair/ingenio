@@ -133,13 +133,13 @@ export function AppCard({
    */
   const handleShare = useCallback(() => {
     // 临时实现：复制分享链接到剪贴板
-    const shareUrl = `${window.location.origin}/preview/${project.id}`;
+    const shareUrl = `${window.location.origin}/wizard/${project.appSpecId || project.id}`;
     navigator.clipboard.writeText(shareUrl).then(() => {
       alert('分享链接已复制到剪贴板');
     }).catch(() => {
       alert('复制失败，请手动复制链接');
     });
-  }, [project.id]);
+  }, [project.appSpecId, project.id]);
 
   /**
    * 处理执行历史导航
@@ -189,9 +189,9 @@ export function AppCard({
                 <Edit className="mr-2 h-4 w-4" />
                 继续编辑
               </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onView(project.id)}>
+              <DropdownMenuItem onClick={() => onView(project.appSpecId || project.id)}>
                 <Eye className="mr-2 h-4 w-4" />
-                预览应用
+                查看结果
               </DropdownMenuItem>
 
               {/* 新增菜单项 - 解决孤岛页面问题 */}
@@ -290,7 +290,7 @@ export function AppCard({
           size="sm"
           variant="ghost"
           className="h-7 text-xs"
-          onClick={() => onView(project.id)}
+          onClick={() => onView(project.appSpecId || project.id)}
         >
           查看
           <ExternalLink className="ml-1 h-3 w-3" />

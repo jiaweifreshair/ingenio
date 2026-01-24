@@ -2,8 +2,9 @@ package com.ingenio.backend.langchain4j;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
-import org.springframework.boot.test.context.SpringBootTest;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -12,7 +13,7 @@ import static org.mockito.Mockito.*;
 /**
  * LangChain4jRepairService单元测试
  */
-@SpringBootTest
+@ExtendWith(MockitoExtension.class)
 class LangChain4jRepairServiceTest {
 
     @Mock

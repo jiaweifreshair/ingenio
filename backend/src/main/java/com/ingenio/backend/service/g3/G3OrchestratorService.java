@@ -26,7 +26,6 @@ import com.ingenio.backend.service.VersionSnapshotService;
 import com.ingenio.backend.service.blueprint.BlueprintComplianceResult;
 import com.ingenio.backend.service.blueprint.BlueprintValidator;
 import com.ingenio.backend.websocket.G3WebSocketBroadcaster;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
@@ -34,7 +33,6 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import reactor.core.publisher.Flux;
-import reactor.core.publisher.Sinks;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -44,7 +42,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -75,8 +72,7 @@ public class G3OrchestratorService {
      * 做什么：在 userId 为空时填充 generation_tasks.user_id。
      * 为什么：generation_tasks 表 user_id 不允许为空。
      */
-    private static final UUID DEFAULT_ANONYMOUS_USER_ID =
-            UUID.fromString("00000000-0000-0000-0000-000000000000");
+    private static final UUID DEFAULT_ANONYMOUS_USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
 
     /**
      * 自引用，用于通过Spring代理调用@Async方法
@@ -108,22 +104,15 @@ public class G3OrchestratorService {
     private final G3WebSocketBroadcaster g3WebSocketBroadcaster;
     private final G3MemoryPersistenceService memoryPersistenceService;
     private final G3CodeArchiveService codeArchiveService;
+    private final FrontendApiClientGenerator frontendApiClientGenerator;
+    private final com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer;
+    private final G3LogStreamService g3LogStreamService;
 
     /**
      * 最大修复轮次
      */
     @Value("${ingenio.g3.sandbox.max-rounds:3}")
     private int maxRounds;
-
-    /**
-     * 活跃的日志流
-     * Key: jobId, Value: Sinks.Many用于发送日志
-     */
-    /**
-     * 活跃的日志流
-     * Key: jobId, Value: Sinks.Many用于发送日志
-     */
-    private final Map<UUID, Sinks.Many<G3LogEntry>> activeLogStreams = new ConcurrentHashMap<>();
 
     // Manual Constructor to replace @RequiredArgsConstructor
     public G3OrchestratorService(
@@ -147,7 +136,10 @@ public class G3OrchestratorService {
             G3PlanningFileService planningFileService,
             G3WebSocketBroadcaster g3WebSocketBroadcaster,
             G3MemoryPersistenceService memoryPersistenceService,
-            G3CodeArchiveService codeArchiveService) {
+            G3CodeArchiveService codeArchiveService,
+            FrontendApiClientGenerator frontendApiClientGenerator,
+            com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer,
+            G3LogStreamService g3LogStreamService) {
         this.jobMapper = jobMapper;
         this.artifactMapper = artifactMapper;
         this.validationResultMapper = validationResultMapper;
@@ -169,6 +161,9 @@ public class G3OrchestratorService {
         this.g3WebSocketBroadcaster = g3WebSocketBroadcaster;
         this.memoryPersistenceService = memoryPersistenceService;
         this.codeArchiveService = codeArchiveService;
+        this.frontendApiClientGenerator = frontendApiClientGenerator;
+        this.nlRequirementAnalyzer = nlRequirementAnalyzer;
+        this.g3LogStreamService = g3LogStreamService;
     }
 
     /**
@@ -304,6 +299,23 @@ public class G3OrchestratorService {
                 resolvedTemplateId = templateId;
                 if (resolvedBlueprintSpec == null || resolvedBlueprintSpec.isEmpty()) {
                     resolvedBlueprintSpec = template.getBlueprintSpec();
+                }
+            }
+        }
+
+        // M3: 增强 - 检测并注入 AI 能力（防止分析阶段未正确传递）
+        if (resolvedBlueprintSpec != null && !resolvedBlueprintSpec.isEmpty()) {
+            @SuppressWarnings("unchecked")
+            List<String> caps = (List<String>) resolvedBlueprintSpec.get("aiCapabilities");
+            if (caps == null || caps.isEmpty()) {
+                List<String> detected = nlRequirementAnalyzer.detectAiCapabilities(resolvedRequirement);
+                if (!detected.isEmpty()) {
+                    // 必须使用可变Map
+                    if (!(resolvedBlueprintSpec instanceof java.util.HashMap)) {
+                        resolvedBlueprintSpec = new java.util.HashMap<>(resolvedBlueprintSpec);
+                    }
+                    resolvedBlueprintSpec.put("aiCapabilities", detected);
+                    log.info("[G3] 自动注入 AI 能力: {}", detected);
                 }
             }
         }
@@ -445,6 +457,25 @@ public class G3OrchestratorService {
 
             // M6: 构建向量索引 (RAG)
             knowledgeStore.ingest(job, artifacts);
+
+            // M2: 生成前端 API Client (基于 OpenAPI 契约)
+            if (job.getContractYaml() != null && !job.getContractYaml().isBlank()) {
+                try {
+                    logConsumer.accept(G3LogEntry.info(G3LogEntry.Role.PLAYER,
+                            "正在生成前端 API Client (TypeScript)..."));
+                    List<G3ArtifactEntity> apiClientArtifacts = frontendApiClientGenerator.generate(job, "/api");
+                    for (G3ArtifactEntity artifact : apiClientArtifacts) {
+                        artifactMapper.insert(artifact);
+                    }
+                    artifacts.addAll(apiClientArtifacts);
+                    logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.PLAYER,
+                            "前端 API Client 生成完成: " + apiClientArtifacts.size() + " 个文件"));
+                } catch (Exception e) {
+                    logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.PLAYER,
+                            "前端 API Client 生成失败 (非阻塞): " + e.getMessage()));
+                    log.warn("FrontendApiClientGenerator failed for job {}: {}", job.getId(), e.getMessage());
+                }
+            }
 
             // ========== Phase 3: 编译验证 + 自修复循环 (M3 & M5 Refactored) ==========
             updateJobStatus(job, G3JobEntity.Status.TESTING);
@@ -987,22 +1018,15 @@ public class G3OrchestratorService {
      * 1. 每 30 秒发送一次心跳事件
      * 2. 当任务完成（COMPLETED/FAILED）时停止心跳
      * 3. 前端应过滤掉心跳消息（level=heartbeat）
+     * 4. 使用 Redis Pub/Sub 支持分布式节点订阅
      */
     public Flux<G3LogEntry> subscribeToLogs(UUID jobId) {
-        Sinks.Many<G3LogEntry> sink = activeLogStreams.computeIfAbsent(
-                jobId,
-                k -> Sinks.many().multicast().onBackpressureBuffer());
-
-        // 创建心跳 Flux（每 30 秒发送一次）
+        // 创建心跳 Flux（每 15 秒发送一次）
         Flux<G3LogEntry> heartbeatFlux = Flux.interval(Duration.ofSeconds(HEARTBEAT_INTERVAL_SECONDS))
                 .map(tick -> G3LogEntry.heartbeat())
                 .takeUntil(entry -> isJobCompleted(jobId));
 
         // 历史日志：直接从数据库读取并输出到当前订阅者
-        //
-        // 注意：不能通过 multicast sink 在订阅前 tryEmitNext 历史日志：
-        // - multicast sink 在无订阅者时会丢弃事件（FAIL_ZERO_SUBSCRIBER）
-        // - 这会导致“页面订阅到 SSE 但看不到任何执行日志”的问题
         Flux<G3LogEntry> historyFlux = Flux.defer(() -> {
             G3JobEntity job = jobMapper.selectById(jobId);
             if (job == null || job.getLogs() == null || job.getLogs().isEmpty()) {
@@ -1011,8 +1035,8 @@ public class G3OrchestratorService {
             return Flux.fromIterable(job.getLogs());
         });
 
-        // 实时日志：仅包含订阅之后产生的日志
-        Flux<G3LogEntry> liveFlux = sink.asFlux();
+        // 实时日志：通过 Redis Pub/Sub 订阅（支持分布式）
+        Flux<G3LogEntry> liveFlux = g3LogStreamService.subscribeLog(jobId);
 
         return Flux.merge(historyFlux, liveFlux, heartbeatFlux)
                 .doOnCancel(() -> log.debug("[G3] SSE 连接已取消: jobId={}", jobId))
@@ -1046,25 +1070,20 @@ public class G3OrchestratorService {
     }
 
     /**
-     * 发送日志到SSE流
+     * 发送日志到SSE流（通过 Redis Pub/Sub 分布式广播）
      */
     private void emitLog(UUID jobId, G3LogEntry entry) {
-        Sinks.Many<G3LogEntry> sink = activeLogStreams.get(jobId);
-        if (sink != null) {
-            sink.tryEmitNext(entry);
-        }
+        // 通过 Redis Pub/Sub 发布（支持分布式节点）
+        g3LogStreamService.publishLog(jobId, entry);
         // WebSocket 广播（MVP：先推日志，后续升级为结构化事件）
         g3WebSocketBroadcaster.broadcast(jobId, "log", entry);
     }
 
     /**
-     * 关闭日志流
+     * 关闭日志流（清理 Redis 订阅资源）
      */
     private void closeLogStream(UUID jobId) {
-        Sinks.Many<G3LogEntry> sink = activeLogStreams.remove(jobId);
-        if (sink != null) {
-            sink.tryEmitComplete();
-        }
+        g3LogStreamService.cleanup(jobId);
     }
 
     /**
@@ -1174,7 +1193,7 @@ public class G3OrchestratorService {
     /**
      * 同步generation_tasks状态
      *
-     * @param job G3任务
+     * @param job    G3任务
      * @param status G3状态
      */
     private void syncGenerationTaskStatus(G3JobEntity job, G3JobEntity.Status status) {
@@ -1208,7 +1227,7 @@ public class G3OrchestratorService {
     /**
      * 同步generation_tasks失败信息
      *
-     * @param job G3任务
+     * @param job          G3任务
      * @param errorMessage 错误信息
      */
     private void syncGenerationTaskFailure(G3JobEntity job, String errorMessage) {
@@ -1291,7 +1310,7 @@ public class G3OrchestratorService {
     /**
      * 归档产物并写入时光机快照
      *
-     * @param job G3任务
+     * @param job         G3任务
      * @param logConsumer 日志回调
      */
     private void archiveAndSnapshot(G3JobEntity job, Consumer<G3LogEntry> logConsumer) {
@@ -1317,23 +1336,20 @@ public class G3OrchestratorService {
         snapshot.put("total_size_bytes", totalSizeBytes);
         snapshot.put("archive", new HashMap<>(Map.of(
                 "status", "uploading",
-                "started_at", Instant.now().toString()
-        )));
+                "started_at", Instant.now().toString())));
 
         GenerationVersionEntity version = snapshotService.createSnapshot(
                 job.getId(),
                 job.getTenantId(),
                 VersionType.CODE,
-                snapshot
-        );
+                snapshot);
 
         G3CodeArchiveService.ArchiveBuildResult archiveResult = codeArchiveService.buildAndUploadArchive(
                 job.getTenantId(),
                 job.getUserId(),
                 job.getId(),
                 version.getVersionNumber(),
-                artifacts
-        );
+                artifacts);
 
         Map<String, Object> updatedSnapshot = version.getSnapshot() != null
                 ? new HashMap<>(version.getSnapshot())
@@ -1359,8 +1375,8 @@ public class G3OrchestratorService {
     /**
      * 更新AppSpec的最新归档元数据
      *
-     * @param job G3任务
-     * @param version 版本快照
+     * @param job           G3任务
+     * @param version       版本快照
      * @param archiveResult 归档结果
      */
     private void updateAppSpecArchiveMetadata(G3JobEntity job, GenerationVersionEntity version,

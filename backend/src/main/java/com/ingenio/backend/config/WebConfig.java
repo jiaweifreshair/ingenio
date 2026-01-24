@@ -25,21 +25,20 @@ public class WebConfig implements WebMvcConfigurer {
 
     /**
      * 配置CORS跨域
-     * 允许前端应用（localhost:3000）访问后端API
+     * 允许前端应用（本地/局域网）访问后端API
      */
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/**")
-            .allowedOrigins(
-                "http://localhost:3000",
-                "http://localhost:3001",
-                "http://localhost:3002",
-                "http://127.0.0.1:3000",
-                "http://127.0.0.1:3001",
-                "http://127.0.0.1:3002",
-                "http://192.168.110.168:3000",
-                "http://192.168.110.168:3001",
-                "http://192.168.110.168:3002"
+            // 说明：
+            // - 使用 allowedOriginPatterns 兼容“不同端口/IPv6/局域网 IP”访问前端页面；
+            // - 避免因端口变化导致浏览器报错 “Failed to fetch”（典型为 CORS 拦截）。
+            .allowedOriginPatterns(
+                "http://localhost:*",
+                "http://127.0.0.1:*",
+                "http://0.0.0.0:*",
+                "http://[::1]:*",
+                "http://192.168.*.*:*"
             )
             .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")
             .allowedHeaders("*")

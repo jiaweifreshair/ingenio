@@ -1,14 +1,12 @@
 package com.ingenio.backend.langchain4j;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.boot.test.context.SpringBootTest;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * FrontendErrorParser单元测试
  */
-@SpringBootTest
 class FrontendErrorParserTest {
 
     private final FrontendErrorParser parser = new FrontendErrorParser();

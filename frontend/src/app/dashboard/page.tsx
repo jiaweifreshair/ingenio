@@ -148,10 +148,10 @@ export default function DashboardPage(): React.ReactElement {
   };
 
   /**
-   * 处理查看详情
+   * 处理查看结果
    */
   const handleView = (id: string) => {
-    router.push(`/preview/${id}`);
+    router.push(`/wizard/${id}`);
   };
 
   /**

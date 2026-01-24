@@ -18,6 +18,55 @@ export interface InteractiveAnalysisState {
   error: string | null;
 }
 
+/**
+ * 规范化交互式分析的网络错误提示
+ *
+ * 是什么：交互式分析（含 SSE）请求的错误提示映射。
+ * 做什么：将“Failed to fetch”等浏览器原始错误转换为更可读、可定位的中文提示。
+ * 为什么：SSE 场景下浏览器通常只给出泛化错误，用户难以判断是后端未启动、跨域/CORS 还是网络代理问题。
+ */
+function normalizeInteractiveAnalysisErrorMessage(message: string): string {
+  const normalized = message.toLowerCase();
+
+  if (
+    normalized.includes('failed to fetch') ||
+    normalized.includes('networkerror') ||
+    normalized.includes('econnrefused')
+  ) {
+    return '网络连接失败：请检查后端服务是否可访问（默认 http://localhost:8080），以及当前访问地址是否在后端 CORS 白名单中';
+  }
+
+  if (normalized.includes('timeout')) {
+    return '网络请求超时，请稍后重试';
+  }
+
+  return message;
+}
+
+/**
+ * 从后端返回中提取可展示的错误信息
+ *
+ * 说明：
+ * - 兼容 Spring Result（message/error）与 Sa-Token 风格（msg）等不同返回结构；
+ * - 在响应体结构异常时，提供兜底错误信息，避免继续用 undefined sessionId 发起后续请求。
+ */
+function extractBackendErrorMessage(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null;
+  const record = data as Record<string, unknown>;
+
+  const code = record.code;
+  const isErrorCode = typeof code === 'number' ? code >= 400 : typeof code === 'string' ? code !== '0000' && code !== '0' : false;
+  if (!isErrorCode) return null;
+
+  const message =
+    (typeof record.error === 'string' && record.error) ||
+    (typeof record.message === 'string' && record.message) ||
+    (typeof record.msg === 'string' && record.msg) ||
+    null;
+
+  return message || '请求失败，请稍后重试';
+}
+
 export function useInteractiveAnalysisSse() {
   const [state, setState] = useState<InteractiveAnalysisState>({
     sessionId: null,
@@ -50,21 +99,43 @@ export function useInteractiveAnalysisSse() {
         throw new Error(`启动会话失败: ${response.status}`);
       }
 
-      const data = await response.json();
+      const rawText = await response.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(rawText);
+      } catch (e) {
+        console.error('[InteractiveAnalysis] 启动会话返回非JSON:', e);
+        throw new Error('启动会话失败：后端返回了无效响应');
+      }
+
+      const backendError = extractBackendErrorMessage(data);
+      if (backendError) {
+        throw new Error(backendError);
+      }
+
+      const record = data as Record<string, unknown>;
+      const sessionId = typeof record.sessionId === 'string' ? record.sessionId : null;
+      const currentStep = typeof record.currentStep === 'number' ? record.currentStep : null;
+
+      if (!sessionId || currentStep == null) {
+        throw new Error('启动会话失败：后端未返回有效的 sessionId/currentStep');
+      }
+
       setState(prev => ({
         ...prev,
-        sessionId: data.sessionId,
-        currentStep: data.currentStep,
+        sessionId,
+        currentStep,
         status: 'RUNNING'
       }));
 
       // 自动开始执行第一步
-      executeCurrentStep(data.sessionId);
+      executeCurrentStep(sessionId);
     } catch (error) {
+      const message = normalizeInteractiveAnalysisErrorMessage(error instanceof Error ? error.message : '启动会话失败');
       setState(prev => ({
         ...prev,
         status: 'FAILED',
-        error: error instanceof Error ? error.message : '启动会话失败'
+        error: message
       }));
     }
   }, []);
@@ -86,6 +157,24 @@ export function useInteractiveAnalysisSse() {
     }).then(response => {
       if (!response.ok) {
         throw new Error(`SSE请求失败: ${response.status}`);
+      }
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('text/event-stream')) {
+        return response.text().then(text => {
+          let backendError: string | null = null;
+          try {
+            const parsed = JSON.parse(text) as unknown;
+            backendError = extractBackendErrorMessage(parsed);
+          } catch {
+            // ignore：保持兜底错误文案
+          }
+          if (backendError) {
+            throw new Error(backendError);
+          }
+          const preview = text.length > 200 ? `${text.slice(0, 200)}...` : text;
+          throw new Error(`SSE响应异常（非event-stream）：${preview || '空响应'}`);
+        });
       }
 
       if (!response.body) {
@@ -163,10 +252,11 @@ export function useInteractiveAnalysisSse() {
           readStream();
         }).catch(error => {
           if (error.name === 'AbortError') return;
+          const message = normalizeInteractiveAnalysisErrorMessage(error instanceof Error ? error.message : String(error));
           setState(prev => ({
             ...prev,
             status: 'FAILED',
-            error: error.message
+            error: message
           }));
         });
       };
@@ -174,10 +264,11 @@ export function useInteractiveAnalysisSse() {
       readStream();
     }).catch(error => {
       if (error.name === 'AbortError') return;
+      const message = normalizeInteractiveAnalysisErrorMessage(error instanceof Error ? error.message : String(error));
       setState(prev => ({
         ...prev,
         status: 'FAILED',
-        error: error.message
+        error: message
       }));
     });
   }, []);
@@ -202,28 +293,53 @@ export function useInteractiveAnalysisSse() {
         throw new Error(`确认步骤失败: ${response.status}`);
       }
 
-      const data = await response.json();
+      const rawText = await response.text();
+      let data: unknown;
+      try {
+        data = JSON.parse(rawText);
+      } catch (e) {
+        console.error('[InteractiveAnalysis] 确认步骤返回非JSON:', e);
+        throw new Error('确认步骤失败：后端返回了无效响应');
+      }
 
-      if (data.isCompleted) {
+      const backendError = extractBackendErrorMessage(data);
+      if (backendError) {
+        throw new Error(backendError);
+      }
+
+      const record = data as Record<string, unknown>;
+      const isCompleted = record.isCompleted === true;
+      const nextStep = typeof record.currentStep === 'number' ? record.currentStep : null;
+
+      if (isCompleted) {
         setState(prev => ({ ...prev, status: 'COMPLETED' }));
       } else {
+        if (nextStep == null) {
+          throw new Error('确认步骤失败：后端未返回有效的 currentStep');
+        }
         setState(prev => ({
           ...prev,
-          currentStep: data.currentStep,
+          currentStep: nextStep,
           status: 'RUNNING'
         }));
         executeCurrentStep(state.sessionId!);
       }
     } catch (error) {
+      const message = normalizeInteractiveAnalysisErrorMessage(error instanceof Error ? error.message : '确认步骤失败');
       setState(prev => ({
         ...prev,
-        error: error instanceof Error ? error.message : '确认步骤失败'
+        error: message
       }));
     }
   }, [state.sessionId, executeCurrentStep]);
 
   const modifyStep = useCallback(async (step: number, feedback: string) => {
     if (!state.sessionId) return;
+    const trimmedFeedback = feedback.trim();
+    if (!trimmedFeedback) {
+      setState(prev => ({ ...prev, error: '修改建议不能为空' }));
+      return;
+    }
 
     const baseUrl = getApiBaseUrl();
     const token = getToken();
@@ -235,19 +351,34 @@ export function useInteractiveAnalysisSse() {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': token } : {})
         },
-        body: JSON.stringify({ step, feedback })
+        body: JSON.stringify({ step, feedback: trimmedFeedback })
       });
 
       if (!response.ok) {
         throw new Error(`修改步骤失败: ${response.status}`);
       }
 
+      const rawText = await response.text();
+      if (rawText) {
+        let backendError: string | null = null;
+        try {
+          const parsed = JSON.parse(rawText) as unknown;
+          backendError = extractBackendErrorMessage(parsed);
+        } catch {
+          // ignore：后端也可能返回空体或非标准字段，这里只做防御性判断
+        }
+        if (backendError) {
+          throw new Error(backendError);
+        }
+      }
+
       setState(prev => ({ ...prev, status: 'RUNNING' }));
       executeCurrentStep(state.sessionId!);
     } catch (error) {
+      const message = normalizeInteractiveAnalysisErrorMessage(error instanceof Error ? error.message : '修改步骤失败');
       setState(prev => ({
         ...prev,
-        error: error instanceof Error ? error.message : '修改步骤失败'
+        error: message
       }));
     }
   }, [state.sessionId, executeCurrentStep]);

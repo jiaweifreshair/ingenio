@@ -14,6 +14,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * RequirementRefiner E2E验证测试 - 10个典型失败/边界场景
  *
+ * <p>注意：此测试需要真实的AI API Key才能运行。</p>
+ * <p>在本地开发环境中，由于application-test.yml中的API Key是占位符，这些测试会被禁用。</p>
+ * <p>要运行这些测试，请在application-test.yml中配置有效的AI API Key。</p>
+ *
  * <p>测试目标：</p>
  * <ul>
  *   <li>验证RequirementRefiner对异常输入的健壮性</li>
@@ -37,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Slf4j
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @DisplayName("RequirementRefiner E2E验证测试")
+@Disabled("需要真实AI API Key才能运行。在application-test.yml中配置有效的API Key后移除此注解。")
 class RequirementRefinerE2ETest extends BaseE2ETest {
 
     @Autowired

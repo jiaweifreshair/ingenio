@@ -31,4 +31,21 @@ public class LangChain4jModelConfiguration {
     public LangChain4jModelFactory langChain4jModelFactory(LangChain4jProperties properties) {
         return new LangChain4jModelFactoryImpl(properties);
     }
+
+    /**
+     * 默认的 ChatLanguageModel Bean。
+     *
+     * 是什么：ChatLanguageModel 实例，用于直接注入的场景。
+     * 做什么：创建代码生成场景的默认模型（Claude）。
+     * 为什么：支持不使用工厂模式直接注入 ChatLanguageModel 的组件（如 FrontendApiClientGenerator）。
+     *
+     * @param factory 模型工厂
+     * @return ChatLanguageModel 实例
+     */
+    @Bean
+    public dev.langchain4j.model.chat.ChatLanguageModel chatLanguageModel(
+            LangChain4jModelFactory factory) {
+        // 使用 claude 作为默认提供商，null 表示使用提供商的默认模型
+        return factory.chatModel("claude", null);
+    }
 }

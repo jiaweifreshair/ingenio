@@ -7,6 +7,7 @@ import com.ingenio.backend.codegen.ai.model.BusinessRule;
 import com.ingenio.backend.codegen.ai.model.Constraint;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -19,6 +20,10 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * RequirementAnalyzer单元测试（V2.0 Phase 4.1）
+ *
+ * <p>注意：此测试需要真实的AI API Key才能运行。</p>
+ * <p>在本地开发环境中，由于application-test.yml中的API Key是占位符，这些测试会被禁用。</p>
+ * <p>要运行这些测试，请在application-test.yml中配置有效的AI API Key。</p>
  *
  * <p>测试范围：</p>
  * <ul>
@@ -46,6 +51,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @Slf4j
 @SpringBootTest
 @ActiveProfiles("test")
+@Disabled("需要真实AI API Key才能运行。在application-test.yml中配置有效的API Key后移除此注解。")
 class RequirementAnalyzerTest {
 
     @Autowired

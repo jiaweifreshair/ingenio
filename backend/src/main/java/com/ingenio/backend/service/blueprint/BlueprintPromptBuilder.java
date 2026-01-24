@@ -182,6 +182,26 @@ public class BlueprintPromptBuilder {
             }
         }
 
+        if (spec.getAiCapabilities() != null && !spec.getAiCapabilities().isEmpty()) {
+            sb.append("\n### AI Capability Injection (Must Implement)\n");
+            sb.append("This application requires AI features. You MUST inject and use `AIProviderFactory`.\n");
+            sb.append("Capabilities required: ").append(String.join(", ", spec.getAiCapabilities())).append("\n\n");
+            sb.append("#### Implementation Rules:\n");
+            sb.append("1. Inject `AIProviderFactory` into your Service.\n");
+            sb.append("2. Use `aiProviderFactory.getProvider()` to get an `AIProvider` instance.\n");
+            sb.append("3. Call `provider.generate(prompt)` to execute AI tasks.\n");
+            sb.append("4. Handle `AIException` gracefully.\n");
+            sb.append("\n#### Example Usage:\n");
+            sb.append("```java\n");
+            sb.append("private final AIProviderFactory aiProviderFactory;\n\n");
+            sb.append("public String summarize(String content) {\n");
+            sb.append("    AIProvider provider = aiProviderFactory.getProvider();\n");
+            sb.append("    String prompt = \"Summarize this: \" + content;\n");
+            sb.append("    return provider.generate(prompt).content();\n");
+            sb.append("}\n");
+            sb.append("```\n");
+        }
+
         return sb.toString();
     }
 
@@ -205,4 +225,3 @@ public class BlueprintPromptBuilder {
         return list != null ? list : List.of();
     }
 }
-

@@ -3,6 +3,7 @@ package com.ingenio.backend.controller;
 import com.ingenio.backend.common.response.Result;
 import com.ingenio.backend.dto.request.PlanRoutingRequest;
 import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.mapper.UserMapper;
 import com.ingenio.backend.service.AppSpecService;
 import com.ingenio.backend.service.BillingService;
 import com.ingenio.backend.service.OpenLovableService;
@@ -50,11 +51,14 @@ class PlanRoutingControllerTest {
     @Mock
     private OpenLovableService openLovableService;
 
+    @Mock
+    private UserMapper userMapper;
+
     private PlanRoutingController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new PlanRoutingController(appSpecService, billingService, openLovableService);
+        controller = new PlanRoutingController(appSpecService, billingService, openLovableService, userMapper);
     }
 
     @Test

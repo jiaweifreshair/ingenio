@@ -52,6 +52,9 @@ class BackendCoderAgentImplTest {
     private G3HookPipeline hookPipeline;
 
     @Mock
+    private com.ingenio.backend.service.g3.G3ContextBuilder contextBuilder;
+
+    @Mock
     private Consumer<G3LogEntry> logConsumer;
 
     @InjectMocks

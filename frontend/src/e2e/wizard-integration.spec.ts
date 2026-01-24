@@ -153,18 +153,18 @@ test.describe('向导页面集成测试', () => {
       console.log('✅ 功能模块列表可见');
     }
 
-    // 检查操作按钮/链接（Day 16 Phase 16.1）
+    // 检查操作卡片/按钮（Day 16 Phase 16.1）
     // 实际页面结构：
-    // 1. "接下来做什么？"区域：link（预览应用、SuperDesign方案、配置发布等）
-    // 2. "探索更多功能"区域：button（AI能力选择、SuperDesign、时光机版本）
-    const actionButtons = page.locator('a:has-text("预览应用")').or(
-      page.locator('button:has-text("AI能力选择")')
+    // 1. "接下来做什么？"区域：卡片（下载代码、SuperDesign方案、配置发布等）
+    // 2. "探索更多功能"区域：按钮（AI能力选择、SuperDesign、时光机版本）
+    const actionEntries = page.locator('text=下载代码').or(
+      page.locator('text=SuperDesign方案')
     ).or(
-      page.locator('button:has-text("SuperDesign")')
+      page.locator('text=配置发布')
     );
 
-    const buttonCount = await actionButtons.count();
-    expect(buttonCount).toBeGreaterThanOrEqual(1);
+    const entryCount = await actionEntries.count();
+    expect(entryCount).toBeGreaterThanOrEqual(1);
 
     console.log('✅ 生成结果展示测试完成');
   });

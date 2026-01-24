@@ -167,13 +167,13 @@ public class LangChain4jBackendCoderAgentImpl implements ICoderAgent {
      * 做什么：注入模型路由、工具、Prompt 与上下文依赖。
      * 为什么：保证编码生成流程可用。
      *
-     * @param modelRouter 模型路由器
-     * @param modelFactory 模型工厂
-     * @param toolRegistry 工具注册表
-     * @param promptTemplateService Prompt 模板服务
+     * @param modelRouter            模型路由器
+     * @param modelFactory           模型工厂
+     * @param toolRegistry           工具注册表
+     * @param promptTemplateService  Prompt 模板服务
      * @param blueprintPromptBuilder Blueprint Prompt 构建器
-     * @param contextBuilder 上下文构建器
-     * @param objectMapper JSON 解析器
+     * @param contextBuilder         上下文构建器
+     * @param objectMapper           JSON 解析器
      */
     public LangChain4jBackendCoderAgentImpl(
             LangChain4jModelRouter modelRouter,
@@ -282,13 +282,21 @@ public class LangChain4jBackendCoderAgentImpl implements ICoderAgent {
         LangChain4jModelRouter.FailureContext failureContext = null;
         Exception lastError = null;
         for (int attempt = 0; attempt < MAX_ROUTE_ATTEMPTS; attempt++) {
-            LangChain4jModelRouter.ModelSelection selection =
-                    modelRouter.select(LangChain4jModelRouter.TaskType.CODEGEN, attempt, failureContext);
+            LangChain4jModelRouter.ModelSelection selection = modelRouter
+                    .select(LangChain4jModelRouter.TaskType.CODEGEN, attempt, failureContext);
             try {
                 ChatLanguageModel model = modelFactory.chatModel(selection.provider(), selection.model());
                 BackendCoderService service = buildService(model, buildSystemMessage(selection.provider()));
 
                 String prompt = buildCoderPrompt(job);
+
+                // 输出完整 Prompt 到控制台（便于调试）
+                log.info("[{}] ========== 完整 Prompt (开始) ==========", AGENT_NAME);
+                log.info("[{}] Provider: {}, Model: {}", AGENT_NAME, selection.provider(), selection.model());
+                log.info("[{}] Prompt 长度: {} 字符", AGENT_NAME, prompt.length());
+                log.info("[{}] Prompt 内容:\n{}", AGENT_NAME, prompt);
+                log.info("[{}] ========== 完整 Prompt (结束) ==========", AGENT_NAME);
+
                 String response = service.generate(prompt);
                 ArtifactPayload payload = parseArtifacts(response);
                 if (payload == null || payload.artifacts() == null || payload.artifacts().isEmpty()) {
@@ -382,8 +390,8 @@ public class LangChain4jBackendCoderAgentImpl implements ICoderAgent {
      * 做什么：对非 JSON 输出进行修复并重新解析。
      * 为什么：提高 Gemini/DeepSeek 输出的可解析率。
      *
-     * @param raw 原始输出
-     * @param model Chat 模型
+     * @param raw         原始输出
+     * @param model       Chat 模型
      * @param providerKey 提供商标识
      * @return 修复后的产物载荷
      */
@@ -514,7 +522,8 @@ public class LangChain4jBackendCoderAgentImpl implements ICoderAgent {
         String json = extractJson(cleaned);
         try {
             if (json.trim().startsWith("[")) {
-                List<ArtifactItem> items = objectMapper.readValue(json, new TypeReference<List<ArtifactItem>>() {});
+                List<ArtifactItem> items = objectMapper.readValue(json, new TypeReference<List<ArtifactItem>>() {
+                });
                 return new ArtifactPayload(items);
             }
             return objectMapper.readValue(json, ArtifactPayload.class);

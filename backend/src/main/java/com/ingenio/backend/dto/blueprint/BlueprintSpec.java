@@ -18,6 +18,7 @@ public class BlueprintSpec {
     private Constraints constraints;
     private List<SchemaTable> schema;
     private List<String> features;
+    private List<String> aiCapabilities;
 
     @Data
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -133,5 +134,9 @@ public class BlueprintSpec {
 
     public List<String> getFeatures() {
         return features;
+    }
+
+    public List<String> getAiCapabilities() {
+        return aiCapabilities;
     }
 }

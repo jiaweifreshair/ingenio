@@ -14,10 +14,9 @@ import { SmartWizard } from "@/components/home/smart-wizard";
 import { FloatingActionBar } from "@/components/home/floating-action-bar";
 import { GEOSnippet } from "@/components/home/geo-snippet";
 
-// Smart Builder Components & Types
-import { AppComplexitySelector } from "@/components/home/app-complexity-selector";
-import { IndustrySelection } from "@/components/home/industry-selection";
-import { AICapabilitySelector } from "@/components/home/ai-capability-selector";
+// import { AppComplexitySelector } from "@/components/home/app-complexity-selector";
+// import { IndustrySelection } from "@/components/home/industry-selection";
+// import { AICapabilitySelector } from "@/components/home/ai-capability-selector";
 import {
   type IndustryType,
   type AppComplexityMode,
@@ -80,24 +79,6 @@ function HomePageContent(): React.ReactElement {
     setIsWizardActive(isActive);
   };
 
-  // Handler for Industry Selection
-  const handleIndustrySelect = (id: IndustryType) => {
-    setSelectedIndustry(prev => (prev === id ? null : id));
-  };
-
-  // Handler for App Mode Selection
-  const handleModeSelect = (id: AppComplexityMode) => {
-    setSelectedMode(prev => (prev === id ? null : id));
-  };
-
-  // Handler for AI Capabilities
-  const handleCapabilityToggle = (id: AICapabilityType) => {
-    setSelectedCapabilities(prev => {
-      const exists = prev.includes(id);
-      return exists ? prev.filter(c => c !== id) : [...prev, id];
-    });
-  };
-
   /**
    * Hero 输入框内下拉选择的直设回调
    * 用于与首页下方三个选择区块保持状态一致
@@ -122,6 +103,25 @@ function HomePageContent(): React.ReactElement {
       setSelectedCapabilities(prev => prev.filter(c => c !== id));
     }
   };
+  
+  /*
+  // Handler for Industry Selection
+  const handleIndustrySelect = (id: IndustryType) => {
+    setSelectedIndustry(prev => (prev === id ? null : id));
+  };
+
+  // Handler for App Mode Selection
+  const handleModeSelect = (id: AppComplexityMode) => {
+    setSelectedMode(prev => (prev === id ? null : id));
+  };
+
+  // Handler for AI Capabilities
+  const handleCapabilityToggle = (id: AICapabilityType) => {
+    setSelectedCapabilities(prev => {
+      const exists = prev.includes(id);
+      return exists ? prev.filter(c => c !== id) : [...prev, id];
+    });
+  };
 
   // Handler for Example Selection (Clicking "示例" in complexity card)
   const handleExampleSelect = (mode: AppComplexityMode, prompt: string) => {
@@ -130,8 +130,7 @@ function HomePageContent(): React.ReactElement {
     // Scroll to top to show Hero Banner input
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-  
-  // Handler for Launching Wizard from HeroBanner
+  */
   const handleLaunchWizard = (prompt: string, context: { industry: IndustryType | null, mode: AppComplexityMode | null, capabilities: AICapabilityType[] }) => {
     setWizardPrompt(prompt);
     setWizardContext(context);
@@ -221,24 +220,25 @@ function HomePageContent(): React.ReactElement {
             {/* GEO 核心摘要 (Machine & Human Friendly) */}
             <GEOSnippet />
 
-            {/* 1. 应用复杂度选择 (New) */}
-            <AppComplexitySelector
+            {/* 简化首页：隐藏复杂的独立选择器，聚焦 Hero Banner 交互 */}
+            {/* 1. 应用复杂度选择 (Hidden) */}
+            {/* <AppComplexitySelector
               selectedMode={selectedMode}
               onSelect={handleModeSelect}
               onSelectExample={handleExampleSelect}
-            />
+            /> */}
 
-            {/* 2. 行业场景选择 (Replaces ScenarioSelection) */}
-            <IndustrySelection
+            {/* 2. 行业场景选择 (Hidden) */}
+            {/* <IndustrySelection
               selectedIndustry={selectedIndustry}
               onSelect={handleIndustrySelect}
-            />
+            /> */}
 
-            {/* 3. AI 能力矩阵 (New) */}
-            <AICapabilitySelector
+            {/* 3. AI 能力矩阵 (Hidden) */}
+            {/* <AICapabilitySelector
               selectedCapabilities={selectedCapabilities}
               onToggle={handleCapabilityToggle}
-            />
+            /> */}
 
             {/* 三Agent智能工作流 (Keep) */}
             <ThreeAgentWorkflow />

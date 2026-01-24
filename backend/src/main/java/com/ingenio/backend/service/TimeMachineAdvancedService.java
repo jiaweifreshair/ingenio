@@ -31,13 +31,16 @@ public class TimeMachineAdvancedService {
     private final GenerationTaskMapper taskMapper;
     private final VersionSnapshotService snapshotService;
     private final MinioService minioService;
+    private final com.ingenio.backend.mapper.g3.G3ArtifactMapper artifactMapper;
 
     public TimeMachineAdvancedService(GenerationVersionMapper versionMapper, GenerationTaskMapper taskMapper,
-            VersionSnapshotService snapshotService, MinioService minioService) {
+            VersionSnapshotService snapshotService, MinioService minioService,
+            com.ingenio.backend.mapper.g3.G3ArtifactMapper artifactMapper) {
         this.versionMapper = versionMapper;
         this.taskMapper = taskMapper;
         this.snapshotService = snapshotService;
         this.minioService = minioService;
+        this.artifactMapper = artifactMapper;
     }
 
     @Transactional
@@ -1172,6 +1175,19 @@ public class TimeMachineAdvancedService {
         extractFilesFromMap(snapshot, "components", files);
         extractFilesFromMap(snapshot, "pages", files);
 
+        // Add missing keys for full stack support
+        extractFilesFromMap(snapshot, "repositories", files);
+        extractFilesFromMap(snapshot, "viewmodels", files);
+        extractFilesFromMap(snapshot, "mappers", files);
+        extractFilesFromMap(snapshot, "configuration", files);
+        extractFilesFromMap(snapshot, "config", files); // Alias
+        extractFilesFromMap(snapshot, "documents", files);
+        extractFilesFromMap(snapshot, "ai_integration", files);
+        extractFilesFromMap(snapshot, "frontend", files);
+        extractFilesFromMap(snapshot, "ui_screens", files); // Alias
+        extractFilesFromMap(snapshot, "utils", files);
+        extractFilesFromMap(snapshot, "scripts", files);
+
         if (snapshot.containsKey("migration_sql")) {
             files.put("migration.sql", String.valueOf(snapshot.get("migration_sql")));
         }
@@ -1289,8 +1305,23 @@ public class TimeMachineAdvancedService {
         }
 
         Map<String, String> files = extractCodeFiles(snapshot);
+
+        // Fallback: If snapshot code extraction yields nothing (e.g., new format
+        // snapshots without legacy keys),
+        // try to fetch artifacts directly from DB for this task.
         if (files.isEmpty()) {
-            throw new RuntimeException("Version snapshot does not contain code files");
+            log.info("[TimeMachine] Snapshot code empty, falling back to DB artifacts: taskId={}", version.getTaskId());
+            List<com.ingenio.backend.entity.g3.G3ArtifactEntity> artifacts = artifactMapper
+                    .selectLatestByJobId(version.getTaskId());
+            for (com.ingenio.backend.entity.g3.G3ArtifactEntity artifact : artifacts) {
+                if (artifact.getFilePath() != null && artifact.getContent() != null) {
+                    files.put(artifact.getFilePath(), artifact.getContent());
+                }
+            }
+        }
+
+        if (files.isEmpty()) {
+            throw new RuntimeException("Version snapshot does not contain code files and no artifacts found in DB");
         }
 
         try (java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
@@ -1300,15 +1331,39 @@ public class TimeMachineAdvancedService {
                 String filePath = entry.getKey();
                 String content = entry.getValue();
 
-                // Simple heuristic to organize files
                 String fullPath = filePath;
-                if (filePath.startsWith("entities/") || filePath.startsWith("services/")
-                        || filePath.startsWith("controllers/") || filePath.startsWith("mappers/")
-                        || filePath.startsWith("dto/") || filePath.endsWith(".java")) {
-                    fullPath = "backend/src/main/java/com/ingenio/backend/" + filePath;
-                } else if (filePath.startsWith("components/") || filePath.startsWith("pages/")
-                        || filePath.endsWith(".tsx") || filePath.endsWith(".ts") || filePath.endsWith(".css")) {
-                    fullPath = "frontend/src/" + filePath;
+
+                // Enhanced path mapping for full stack structure
+                if (filePath.startsWith("/")) {
+                    fullPath = filePath.substring(1); // Remove leading slash
+                }
+
+                // If path already contains explicit structure (e.g. from G3ArtifactEntity), use
+                // it.
+                // Otherwise, try to infer heuristic placement for legacy snapshots.
+                boolean hasExplicitPath = fullPath.startsWith("backend/") || fullPath.startsWith("frontend/")
+                        || fullPath.equals("pom.xml") || fullPath.equals("package.json") || fullPath.startsWith("src/");
+
+                if (!hasExplicitPath) {
+                    if (filePath.startsWith("entities/") || filePath.startsWith("services/")
+                            || filePath.startsWith("controllers/") || filePath.startsWith("repositories/")
+                            || filePath.startsWith("mappers/") || filePath.startsWith("viewmodels/")
+                            || filePath.startsWith("ai_integration/")
+                            || filePath.startsWith("dto/") || filePath.endsWith(".java")) {
+                        fullPath = "backend/src/main/java/com/ingenio/backend/" + filePath;
+                    } else if (filePath.startsWith("components/") || filePath.startsWith("pages/")
+                            || filePath.startsWith("frontend/") || filePath.startsWith("ui_screens/")
+                            || filePath.endsWith(".tsx") || filePath.endsWith(".ts") || filePath.endsWith(".css")) {
+                        // Fix double prefix if any
+                        String cleanPath = filePath;
+                        if (cleanPath.startsWith("frontend/"))
+                            cleanPath = cleanPath.substring(9);
+                        fullPath = "frontend/src/" + cleanPath;
+                    } else if (filePath.startsWith("configuration/") || filePath.startsWith("config/")) {
+                        fullPath = "backend/src/main/resources/" + filePath;
+                    } else if (filePath.startsWith("documents/")) {
+                        fullPath = "docs/" + filePath.substring(10);
+                    }
                 }
 
                 java.util.zip.ZipEntry zipEntry = new java.util.zip.ZipEntry(fullPath);

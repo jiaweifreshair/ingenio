@@ -4,7 +4,9 @@
 
 INSERT INTO industry_templates (
     id, name, description, category, subcategory,
-    keywords, reference_url, complexity_score,
+    keywords, reference_url,
+    entities, features, workflows,
+    complexity_score,
     is_active, usage_count, rating,
     created_at, updated_at,
     blueprint_spec
@@ -16,6 +18,21 @@ INSERT INTO industry_templates (
     'AI Tools',
     '["AI", "Image Generation", "Product Photography", "Replicate", "SaaS"]',
     'https://replicate.com',
+    '[
+      {"name":"ProductShot","description":"ProductShot实体","attributes":[]},
+      {"name":"User","description":"User实体","attributes":[]},
+      {"name":"Image","description":"Image实体","attributes":[]}
+    ]',
+    '[
+      "Product Image Upload",
+      "Background Removal",
+      "Scene Generation",
+      "Generated Gallery"
+    ]',
+    '[
+      {"name":"上传图片","description":"上传商品图片","steps":["上传图片","校验格式","保存文件"]},
+      {"name":"生成场景","description":"生成AI场景图","steps":["去背处理","生成场景","结果预览"]}
+    ]',
     8,
     true,
     0,

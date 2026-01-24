@@ -1,5 +1,6 @@
 package com.ingenio.backend.controller;
 
+import cn.dev33.satoken.secure.BCrypt;
 import cn.dev33.satoken.stp.StpUtil;
 import com.ingenio.backend.agent.dto.RequirementIntent;
 import com.ingenio.backend.common.response.Result;
@@ -7,7 +8,9 @@ import com.ingenio.backend.dto.request.PlanRoutingRequest;
 import com.ingenio.backend.dto.request.OpenLovableGenerateRequest;
 import com.ingenio.backend.dto.response.OpenLovableGenerateResponse;
 import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.entity.UserEntity;
 import com.ingenio.backend.enums.DesignStyle;
+import com.ingenio.backend.mapper.UserMapper;
 import com.ingenio.backend.service.AppSpecService;
 import com.ingenio.backend.service.BillingService;
 import com.ingenio.backend.service.OpenLovableService;
@@ -60,6 +63,13 @@ public class PlanRoutingController {
      * 用于本地未登录/Session缺失时的兜底，避免写入空租户导致数据库约束失败。
      */
     private static final UUID DEFAULT_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
+    /**
+     * 默认系统用户名前缀
+     *
+     * 作用：为无登录态的路由请求生成占位用户，避免 app_specs 外键约束失败。
+     * 说明：前缀稳定且与真实用户区分，便于后续排查与清理。
+     */
+    private static final String DEFAULT_USER_PREFIX = "system_user";
 
     private static final Pattern URL_PATTERN = Pattern.compile("https?://\\S+", Pattern.CASE_INSENSITIVE);
     private static final Pattern DOMAIN_PATTERN = Pattern.compile("\\b([a-zA-Z0-9.-]+\\.[a-zA-Z]{2,})(?:/[^\\s]*)?\\b");
@@ -67,6 +77,7 @@ public class PlanRoutingController {
     private final AppSpecService appSpecService;
     private final BillingService billingService;
     private final OpenLovableService openLovableService;
+    private final UserMapper userMapper;
 
     /**
      * 路由用户需求（意图识别 + 分支决策 + 生成 AppSpec）
@@ -105,11 +116,17 @@ public class PlanRoutingController {
         if (tenantId == null) {
             tenantId = getSessionTenantIdOrNull();
         }
+        boolean isFallbackUser = false;
         if (tenantId == null) {
             tenantId = DEFAULT_TENANT_ID;
         }
         if (userId == null) {
             userId = tenantId;
+            isFallbackUser = true;
+        }
+
+        if (isFallbackUser) {
+            ensureFallbackUserExists(userId, tenantId);
         }
 
         RoutingDecision decision = decideRouting(requirement);
@@ -609,6 +626,44 @@ public class PlanRoutingController {
             return tenantId != null ? UUID.fromString(tenantId.toString()) : null;
         } catch (Exception ignore) {
             return null;
+        }
+    }
+
+    /**
+     * 确保默认占位用户存在
+     *
+     * 场景：未登录情况下创建 AppSpec，会触发 app_specs.created_by_user_id 外键约束。
+     * 处理：创建与默认 tenant/user 对应的系统用户，保证路由流程可继续。
+     */
+    private void ensureFallbackUserExists(UUID userId, UUID tenantId) {
+        if (userId == null || tenantId == null) {
+            return;
+        }
+
+        try {
+            if (userMapper.findByIdWithCast(userId.toString()).isPresent()) {
+                return;
+            }
+        } catch (Exception e) {
+            log.warn("检查默认用户失败，将尝试创建: userId={}", userId, e);
+        }
+
+        try {
+            String suffix = userId.toString().replace("-", "").substring(0, 8);
+            UserEntity user = new UserEntity();
+            user.setId(userId);
+            user.setTenantId(tenantId);
+            user.setUsername(DEFAULT_USER_PREFIX + "_" + suffix);
+            user.setEmail(DEFAULT_USER_PREFIX + "_" + suffix + "@local.invalid");
+            user.setPasswordHash(BCrypt.hashpw(UUID.randomUUID().toString()));
+            user.setRole(UserEntity.Role.USER.getValue());
+            user.setStatus(UserEntity.Status.ACTIVE.getValue());
+            user.setCreatedAt(Instant.now());
+            user.setUpdatedAt(Instant.now());
+            userMapper.insert(user);
+            log.info("已创建默认占位用户: userId={}", userId);
+        } catch (Exception e) {
+            log.warn("创建默认占位用户失败: userId={}", userId, e);
         }
     }
 

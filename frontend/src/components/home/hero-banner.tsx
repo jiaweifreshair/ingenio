@@ -8,9 +8,6 @@ import { Button } from "@/components/ui/button";
 
 import { Textarea } from "@/components/ui/textarea";
 
-import { Badge } from "@/components/ui/badge";
-
-
 
 import { LoginDialog } from "@/components/auth/login-dialog";
 
@@ -29,21 +26,7 @@ import {
   // FileText,
 
   Link as LinkIcon,
-
-  Layout,
-
-  Zap,
-
-  Briefcase,
-
-  Wand2,
-
-  ChevronDown,
-
-  X,
-
-  Plus
-
+  Wand2
 } from "lucide-react";
 
 import {
@@ -53,12 +36,6 @@ import {
   type AppComplexityMode,
 
   type AICapabilityType,
-
-  INDUSTRIES,
-
-  APP_MODES,
-
-  AI_CAPABILITIES
 
 } from "@/types/smart-builder";
 
@@ -70,23 +47,16 @@ import { useLanguage } from "@/contexts/LanguageContext";
 
 // Removed unused Select imports
 
-import {
+// import {
 
-  DropdownMenu,
-
-  DropdownMenuCheckboxItem,
-
-  DropdownMenuContent,
-
-  // DropdownMenuItem, // Removed as it is unused
-
-  DropdownMenuLabel,
-
-  DropdownMenuSeparator,
-
-  DropdownMenuTrigger,
-
-} from "@/components/ui/dropdown-menu";
+//   DropdownMenu,
+//   DropdownMenuCheckboxItem,
+//   DropdownMenuContent,
+//   // DropdownMenuItem, // Removed as it is unused
+//   DropdownMenuLabel,
+//   DropdownMenuSeparator,
+//   DropdownMenuTrigger,
+// } from "@/components/ui/dropdown-menu";
 
 
 
@@ -222,11 +192,11 @@ export function HeroBanner({
 
     // --- State: Internal Selections (if not controlled externally, though props suggest they might be) ---
 
-    const [localIndustry, setLocalIndustry] = useState<IndustryType | null>(selectedIndustry || null);
+    // const [localIndustry, setLocalIndustry] = useState<IndustryType | null>(selectedIndustry || null);
 
-    const [localMode, setLocalMode] = useState<AppComplexityMode | null>(externalSelectedMode || null);
+    // const [localMode, setLocalMode] = useState<AppComplexityMode | null>(externalSelectedMode || null);
 
-    const [localCapabilities, setLocalCapabilities] = useState<AICapabilityType[]>(externalSelectedCapabilities || []);
+    // const [localCapabilities, setLocalCapabilities] = useState<AICapabilityType[]>(externalSelectedCapabilities || []);
 
   
 
@@ -234,11 +204,11 @@ export function HeroBanner({
 
     useEffect(() => {
 
-      if (selectedIndustry !== undefined) setLocalIndustry(selectedIndustry);
+      // if (selectedIndustry !== undefined) setLocalIndustry(selectedIndustry);
 
-      if (externalSelectedMode !== undefined) setLocalMode(externalSelectedMode);
+      // if (externalSelectedMode !== undefined) setLocalMode(externalSelectedMode);
 
-      if (externalSelectedCapabilities !== undefined) setLocalCapabilities(externalSelectedCapabilities);
+      // if (externalSelectedCapabilities !== undefined) setLocalCapabilities(externalSelectedCapabilities);
 
     }, [selectedIndustry, externalSelectedMode, externalSelectedCapabilities]);
 
@@ -355,36 +325,10 @@ export function HeroBanner({
 
   
 
-      // 1. Tags Context (Use local state)
-
-      if (localIndustry) {
-
-        const industry = INDUSTRIES.find(i => i.id === localIndustry);
-
-        if (industry) parts.push(`Industry: ${industry.label} (${industry.promptContext}).`);
-
-      }
-
-      if (localMode) {
-
-        const mode = APP_MODES.find(m => m.id === localMode);
-
-        if (mode) parts.push(`App Mode: ${mode.title} (${mode.techStack}).`);
-
-      }
-
-      if (localCapabilities && localCapabilities.length > 0) {
-
-        const caps = localCapabilities.map(id => AI_CAPABILITIES.find(c => c.id === id)?.label).join(", ");
-
-        const capsDetail = localCapabilities.map(id => AI_CAPABILITIES.find(c => c.id === id)?.promptDetail).join("; ");
-
-        parts.push(`AI Capabilities: ${caps}. Features: ${capsDetail}.`);
-
-      }
-
+      // 1. Tags Context (Simplified: Don't inject tags here, rely on Wizard to ask or infer)
+      // We removed the selectors, so we just pass the requirement.
+      // If we want to keep them as hidden state or default, we can, but for now let's keep it simple.
   
-
       // 2. User Text
 
       if (requirement.trim()) {
@@ -419,7 +363,7 @@ export function HeroBanner({
 
         if (!url) {
 
-          toast({ title: t('hero.toast_input_url'), description: t('hero.toast_input_url_desc'), variant: "destructive" });
+          toast({ title: "请输入网址", description: "重构模式需要输入目标网站的 URL", variant: "destructive" });
 
           return;
 
@@ -429,7 +373,7 @@ export function HeroBanner({
 
         if (!currentPrompt.trim()) {
 
-          toast({ title: t('hero.toast_input_req'), description: t('hero.toast_input_req_desc'), variant: "destructive" });
+          toast({ title: "请输入需求", description: "请描述您想要构建的应用", variant: "destructive" });
 
           return;
 
@@ -446,11 +390,14 @@ export function HeroBanner({
 
         onLaunchWizard(currentPrompt, {
 
-          industry: localIndustry,
+          // industry: localIndustry,
 
-          mode: localMode,
+          // mode: localMode,
 
-          capabilities: localCapabilities
+          // capabilities: localCapabilities
+          industry: null,
+          mode: null,
+          capabilities: []
 
         });
 
@@ -471,10 +418,9 @@ export function HeroBanner({
         params.set('q', fullPrompt);
 
         
+        // if (localIndustry) params.set('industry', localIndustry);
 
-        if (localIndustry) params.set('industry', localIndustry);
-
-        if (localMode) params.set('mode', localMode);
+        // if (localMode) params.set('mode', localMode);
 
         
 
@@ -496,261 +442,52 @@ export function HeroBanner({
 
    */
 
+  /*
   const toggleLocalCapability = (capId: AICapabilityType) => {
     setLocalCapabilities(prev => {
       const exists = prev.includes(capId);
       return exists ? prev.filter(c => c !== capId) : [...prev, capId];
     });
   };
+  */
 
   // 使用 useEffect 同步 capabilities 变化到父组件，避免渲染期间 setState
   // 只有当本地状态与外部状态不同时才同步，避免无限循环
-  useEffect(() => {
-    const externalStr = JSON.stringify(externalSelectedCapabilities || []);
-    const localStr = JSON.stringify(localCapabilities);
-    if (localStr !== externalStr) {
-      onCapabilitiesChange?.(localCapabilities);
-    }
-  }, [localCapabilities, externalSelectedCapabilities, onCapabilitiesChange]);
+  // useEffect(() => {
+  //   const externalStr = JSON.stringify(externalSelectedCapabilities || []);
+  //   const localStr = JSON.stringify(localCapabilities);
+  //   if (localStr !== externalStr) {
+  //     onCapabilitiesChange?.(localCapabilities);
+  //   }
+  // }, [localCapabilities, externalSelectedCapabilities, onCapabilitiesChange]);
 
 
 
   /**
-
    * 阻止 DropdownMenuTrigger 在点击清除按钮时误触发
-
    */
+  // const stopDropdownTrigger = (e: React.PointerEvent<HTMLButtonElement>) => {
+  //   e.preventDefault();
+  //   e.stopPropagation();
+  // };
 
-  const stopDropdownTrigger = (e: React.PointerEvent<HTMLButtonElement>) => {
 
-    e.preventDefault();
-
-    e.stopPropagation();
-
+  /**
+   * 随机创意生成器
+   */
+  const handleSurpriseMe = () => {
+    const ideas = [
+        "在这个快速发展的时代，打造一款能够一键生成创意海报的工具。",
+        "为城市忙碌的白领，设计一个极简的冥想与放松应用。",
+        "创建一个基于地理位置的社区旧物交换平台。",
+        "开发一个能够智能规划周末亲子游路线的助手。",
+        "构建一个帮助独立开发者管理订阅收入的仪表盘。"
+    ];
+    const randomIdea = ideas[Math.floor(Math.random() * ideas.length)];
+    setRequirement(randomIdea);
   };
+  
 
-  // --- Helper: Render the 3 Selectors (Dropdown inside input) ---
-  const renderSelectors = () => {
-    const selectedModeConfig = localMode ? APP_MODES.find(m => m.id === localMode) : null;
-    const selectedIndustryConfig = localIndustry ? INDUSTRIES.find(i => i.id === localIndustry) : null;
-
-    return (
-      <div className="flex flex-wrap items-center gap-3 animate-in fade-in duration-300">
-
-        {/* 1. 技术选型 / 模式 */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <div
-              role="button"
-              tabIndex={0}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all duration-300 h-9 group outline-none cursor-pointer",
-                localMode
-                  ? "bg-white dark:bg-slate-800 border-blue-200 dark:border-blue-800 shadow-sm text-foreground pr-2"
-                  : "bg-white/60 dark:bg-white/5 border-transparent hover:bg-white hover:shadow-sm text-muted-foreground"
-              )}
-            >
-              <div
-                className={cn(
-                  "p-1.5 rounded-full text-white shrink-0",
-                  selectedModeConfig?.colorClass ?? "bg-slate-300"
-                )}
-              >
-                <Layout className="w-3 h-3" />
-              </div>
-              <span className="text-sm font-medium whitespace-nowrap">
-                {selectedModeConfig ? t(`const.mode.${selectedModeConfig.id}.title`) : t('hero.selector_tech')}
-              </span>
-
-              {localMode ? (
-                <button
-                  type="button"
-                  aria-label="清除技术选型"
-                  className="ml-1 p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-muted-foreground transition-colors cursor-pointer"
-                  onPointerDown={stopDropdownTrigger}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setLocalMode(null);
-                    onModeChange?.(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setLocalMode(null);
-                      onModeChange?.(null);
-                    }
-                  }}
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5 opacity-60" />
-              )}
-            </div>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuLabel>{t('hero.selector_tech')}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {APP_MODES.map(mode => (
-              <DropdownMenuCheckboxItem
-                key={mode.id}
-                checked={localMode === mode.id}
-                disabled={mode.disabled}
-                onCheckedChange={() => {
-                  if (mode.disabled) return;
-                  const next = mode.id;
-                  setLocalMode(next);
-                  onModeChange?.(next);
-                }}
-              >
-                {t(`const.mode.${mode.id}.title`)} · {mode.techStack}
-              </DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {/* 2. 应用场景 / 行业 */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <div
-              role="button"
-              tabIndex={0}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all duration-300 h-9 group outline-none cursor-pointer",
-                localIndustry
-                  ? "bg-white dark:bg-slate-800 border-emerald-200 dark:border-emerald-800 shadow-sm text-foreground pr-2"
-                  : "bg-white/60 dark:bg-white/5 border-transparent hover:bg-white hover:shadow-sm text-muted-foreground"
-              )}
-            >
-              <div
-                className={cn(
-                  "p-1.5 rounded-full text-white shrink-0",
-                  localIndustry ? "bg-emerald-500" : "bg-slate-300"
-                )}
-              >
-                <Briefcase className="w-3 h-3" />
-              </div>
-              <span className="text-sm font-medium whitespace-nowrap">
-                {selectedIndustryConfig ? (t(`const.industry.${selectedIndustryConfig.id}.label`) || t('hero.more_scenarios')) : t('hero.selector_scenario')}
-              </span>
-
-              {localIndustry ? (
-                <button
-                  type="button"
-                  aria-label="清除应用场景"
-                  className="ml-1 p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 text-muted-foreground transition-colors cursor-pointer"
-                  onPointerDown={stopDropdownTrigger}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setLocalIndustry(null);
-                    onIndustryChange?.(null);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setLocalIndustry(null);
-                      onIndustryChange?.(null);
-                    }
-                  }}
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              ) : (
-                <ChevronDown className="w-3.5 h-3.5 opacity-60" />
-              )}
-            </div>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="h-64 overflow-y-auto">
-            <DropdownMenuLabel>{t('hero.selector_scenario')}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {INDUSTRIES.map(industry => (
-              <DropdownMenuCheckboxItem
-                key={industry.id}
-                checked={localIndustry === industry.id}
-                onCheckedChange={() => {
-                  const next = industry.id;
-                  setLocalIndustry(next);
-                  onIndustryChange?.(next);
-                }}
-              >
-                {t(`const.industry.${industry.id}.label`)}
-              </DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {/* 3. AI 能力 (多选) - 展示为标签列表 */}
-        {localCapabilities.map((capId) => {
-            // const cap = AI_CAPABILITIES.find(c => c.id === capId);
-            return (
-                <Badge 
-                    key={capId} 
-                    variant="secondary"
-                    className="h-9 px-3 py-1.5 flex items-center gap-1.5 whitespace-nowrap bg-purple-50 text-purple-700 border border-purple-200 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-300 dark:border-purple-800 rounded-full text-sm font-medium"
-                >
-                    {t(`const.ai.${capId}.label`)}
-                    <div 
-                        role="button"
-                        onClick={(e) => {
-                            e.stopPropagation();
-                            toggleLocalCapability(capId);
-                        }}
-                        className="ml-0.5 hover:bg-purple-200 dark:hover:bg-purple-800 rounded-full p-0.5 transition-colors cursor-pointer"
-                    >
-                        <X className="w-3 h-3" />
-                    </div>
-                </Badge>
-            );
-        })}
-
-        {/* AI 能力 Dropdown Trigger (Plus Button or Label) */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <div
-              role="button"
-              tabIndex={0}
-              className={cn(
-                "flex items-center gap-2 px-3 py-1.5 rounded-full border transition-all duration-300 h-9 group outline-none cursor-pointer",
-                localCapabilities.length > 0
-                  ? "bg-slate-100 dark:bg-slate-800 border-transparent text-muted-foreground w-9 px-0 justify-center" // Compact plus button
-                  : "bg-white/60 dark:bg-white/5 border-transparent hover:bg-white hover:shadow-sm text-muted-foreground" // Full label
-              )}
-            >
-              {localCapabilities.length > 0 ? (
-                 <Plus className="w-4 h-4" />
-              ) : (
-                <>
-                    <div className="p-1.5 rounded-full text-white shrink-0 bg-slate-300">
-                        <Zap className="w-3 h-3" />
-                    </div>
-                    <span className="text-sm font-medium whitespace-nowrap">{t('hero.selector_ai')}</span>
-                    <ChevronDown className="w-3.5 h-3.5 opacity-60" />
-                </>
-              )}
-            </div>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64">
-            <DropdownMenuLabel>{t('hero.selector_ai')}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            {AI_CAPABILITIES.map(cap => (
-              <DropdownMenuCheckboxItem
-                key={cap.id}
-                checked={localCapabilities.includes(cap.id)}
-                onCheckedChange={() => toggleLocalCapability(cap.id)}
-              >
-                {t(`const.ai.${cap.id}.label`)}
-              </DropdownMenuCheckboxItem>
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-      </div>
-    );
-  };
 
   // --- Step Rendering (Legacy removed - only IDLE state remains) ---
 
@@ -771,9 +508,9 @@ export function HeroBanner({
         {/* Main Title */}
         <h1 className="text-3xl md:text-5xl font-bold text-center tracking-tight text-slate-900 dark:text-slate-50 mb-6 bg-clip-text text-transparent bg-gradient-to-r from-slate-900 to-slate-600 dark:from-white dark:to-slate-400">
           {t('hero.title_part1')}{t('hero.title_part2')}
-          <span className="text-xl md:text-3xl font-normal text-slate-500 dark:text-slate-400 mt-4 block">
-            {t('hero.subtitle')}
-          </span>
+          <p className="text-lg md:text-xl text-purple-600 dark:text-purple-400 mb-10 max-w-2xl mx-auto leading-relaxed font-medium">
+            Vibe Coding · 融入 AI 引擎
+          </p>
         </h1>
 
         {/* --- Main Interaction Card --- */}
@@ -801,7 +538,7 @@ export function HeroBanner({
                   : "text-muted-foreground hover:text-foreground hover:bg-white/50 dark:hover:bg-white/10"
               )}
             >
-              <Wand2 className="w-4 h-4 text-purple-500" /> {t('hero.mode_redesign')}
+              <Wand2 className="w-4 h-4 text-purple-500" /> 重构旧站
             </button>
           </div>
 
@@ -814,9 +551,17 @@ export function HeroBanner({
                 {/* 模式特定的顶部控件 */}
                 <div className="mb-4 space-y-4">
                   
-                  {/* NEW_IDEA 模式：显示标签选择器 */}
+                  {/* NEW_IDEA 模式：显示创意生成按钮 */}
                   {generationMode === 'NEW_IDEA' && (
-                    renderSelectors()
+                     <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleSurpriseMe}
+                        className="rounded-full text-xs font-medium border-slate-200 dark:border-slate-800 text-slate-500 hover:text-purple-600 hover:border-purple-200 hover:bg-purple-50 dark:hover:bg-purple-900/20 dark:text-slate-400 transition-all"
+                     >
+                       <Sparkles className="w-3.5 h-3.5 mr-1.5 text-purple-500" />
+                       随机创意
+                     </Button>
                   )}
 
                   {/* REDESIGN_SITE 模式：显示 URL 输入框 */}
@@ -828,7 +573,7 @@ export function HeroBanner({
                       <input
                         ref={cloneUrlInputRef}
                         type="url"
-                        placeholder={t('hero.placeholder_redesign')}
+                        placeholder="输入现有网站 URL 进行重构..."
                         className="w-full pl-9 pr-4 py-2.5 rounded-xl border bg-slate-50 dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all cursor-text font-mono text-sm"
                       />
                     </div>
@@ -850,34 +595,9 @@ export function HeroBanner({
                   className="flex-1 w-full resize-none border-none bg-transparent text-sm placeholder:text-slate-300 dark:placeholder:text-slate-600 focus-visible:ring-0 p-0 leading-relaxed font-light min-h-[120px]"
                 />
 
-                {/* Input Tools - 暂时隐藏输入模式切换按钮，只显示字符计数 */}
-                <div className="flex items-center justify-end mt-4 md:mt-0 pt-4 border-t border-slate-100 dark:border-slate-800/50">
-                  {/* TODO: 后续添加上传图片、语音输入、链接、上传文档功能按钮
-                  <div className="flex items-center gap-1 text-slate-400">
-                    <TooltipProvider>
-                      {inputModes.map((modeConfig) => (
-                        <Tooltip key={modeConfig.mode}>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className={cn(
-                                "h-9 w-9 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors",
-                                inputMode === modeConfig.mode && "bg-slate-100 dark:bg-slate-800 text-primary"
-                              )}
-                              onClick={() => setInputMode(modeConfig.mode)}
-                            >
-                              {modeConfig.icon}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{modeConfig.label}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      ))}
-                    </TooltipProvider>
-                  </div>
-                  */}
+                  {/* Input Tools - 暂时隐藏输入模式切换按钮，只显示字符计数 */}
+                  <div className="flex items-center justify-end mt-4 md:mt-0 pt-4 border-t border-slate-100 dark:border-slate-800/50">
+                    {/* Placeholder for future tools */}
 
                   <span className="text-xs text-slate-300 dark:text-slate-600 font-mono">
                     {requirement.length}/500

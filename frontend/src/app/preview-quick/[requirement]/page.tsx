@@ -236,6 +236,9 @@ export default function QuickPreviewPage() {
   const [currentFile, setCurrentFile] = useState<GeneratedFile | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
+  // 🆕 运行时错误捕获
+  const [runtimeError, setRuntimeError] = useState<any>(null);
+
   // 🆕 计时器状态
   const [startTime, setStartTime] = useState<number | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -247,6 +250,8 @@ export default function QuickPreviewPage() {
   const hasStartedRef = useRef(false);
   const scoutContextRef = useRef<string>('');
   const codeContainerRef = useRef<HTMLDivElement>(null);
+  const codeScrollRef = useRef<HTMLDivElement>(null);
+  const isUserScrollingRef = useRef(false);
   const { toast } = useToast();
 
   /**
@@ -295,13 +300,37 @@ export default function QuickPreviewPage() {
   }, []);
 
   /**
-   * 自动滚动代码容器到底部
+   * 自动滚动代码容器到底部（用户手动滚动后暂停自动滚动）
    */
   useEffect(() => {
-    if (codeContainerRef.current && (currentFile || streamedCode)) {
-      codeContainerRef.current.scrollTop = codeContainerRef.current.scrollHeight;
+    if (codeScrollRef.current && (currentFile || streamedCode) && !isUserScrollingRef.current) {
+      codeScrollRef.current.scrollTop = codeScrollRef.current.scrollHeight;
     }
-  }, [currentFile, streamedCode]);
+  }, [currentFile, streamedCode, generatedFiles]);
+
+  /**
+   * 检测用户手动滚动：如果用户向上滚动则暂停自动滚动
+   */
+  const handleCodeScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    const isAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+    // 如果用户滚动到底部附近，恢复自动滚动
+    if (isAtBottom) {
+      isUserScrollingRef.current = false;
+    } else {
+      // 用户向上滚动，暂停自动滚动
+      isUserScrollingRef.current = true;
+    }
+  }, []);
+
+  /**
+   * 当代码生成完成时，重置滚动状态
+   */
+  useEffect(() => {
+    if (stage === 'complete' || stage === 'error') {
+      isUserScrollingRef.current = false;
+    }
+  }, [stage]);
 
   /**
    * 🆕 实时计时器：在生成过程中每秒更新
@@ -332,23 +361,83 @@ export default function QuickPreviewPage() {
   }, [stage, startTime, totalTime]);
 
   /**
-   * 🆕 重新加载预览（重启Vite服务器）
-   * LivePreviewIframe 会处理 UI 刷新，这里只负责后端重启逻辑
+   * 🆕 重新加载预览（智能修复 + 重启Vite服务器）
+   * 1. 调用 smart-refresh API 检测并自动修复代码错误
+   * 2. 重启 Vite 服务器
+   * LivePreviewIframe 会处理 UI 刷新
    */
   const reloadPreview = async (): Promise<boolean> => {
     try {
       const currentSandboxId = sandboxInfo?.sandboxId;
-      addLog(`🔄 正在重启开发服务器... (sandbox: ${currentSandboxId || 'unknown'})`);
-
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
       const token = getToken();
+
+      // Step 1: 智能修复（自动检测并修复代码错误）
+      addLog(`🔍 正在检测代码错误... (sandbox: ${currentSandboxId || 'unknown'})`);
+      
+      try {
+        const smartRefreshResponse = await fetch(`${API_BASE_URL}/v1/openlovable/sandbox/smart-refresh`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': token } : {}),
+          },
+          body: JSON.stringify({
+            sandboxId: currentSandboxId,
+            model: 'deepseek-v3',  // 使用稳定模型
+            errorLog: runtimeError, // 🆕 将捕获的错误日志传给后端
+            url: sandboxInfo?.url,  // 🆕 传递当前沙箱 URL 供后端读取文件
+          }),
+        });
+
+        if (smartRefreshResponse.ok) {
+          const smartRefreshResult = await smartRefreshResponse.json();
+          
+          if (smartRefreshResult.success && smartRefreshResult.data) {
+            // 如果修复成功，清除错误状态
+            if (smartRefreshResult.data.fixed) {
+               setRuntimeError(null);
+            }
+            const { fixed, filesCreated, filesUpdated, message } = smartRefreshResult.data;
+            
+            if (fixed) {
+              const createdCount = Array.isArray(filesCreated) ? filesCreated.length : 0;
+              const updatedCount = Array.isArray(filesUpdated) ? filesUpdated.length : 0;
+              
+              addLog(`🛠️ AI 自动修复完成: ${createdCount} 个文件创建, ${updatedCount} 个文件更新`);
+              
+              if (createdCount > 0) {
+                addLog(`   📁 创建: ${(filesCreated as string[]).join(', ')}`);
+              }
+              if (updatedCount > 0) {
+                addLog(`   ✏️ 更新: ${(filesUpdated as string[]).join(', ')}`);
+              }
+              
+              toast({
+                title: 'AI 自动修复',
+                description: message || `已修复 ${createdCount + updatedCount} 个文件`,
+              });
+            } else {
+              addLog('✅ 代码检测通过，无需修复');
+            }
+          }
+        } else {
+          addLog('⚠️ 智能修复跳过（服务不可用）');
+        }
+      } catch (smartRefreshErr) {
+        // 智能修复失败不阻塞后续流程
+        addLog(`⚠️ 智能修复跳过: ${smartRefreshErr instanceof Error ? smartRefreshErr.message : '未知错误'}`);
+      }
+
+      // Step 2: 重启 Vite 服务器
+      addLog(`🔄 正在重启开发服务器...`);
+      
       const response = await fetch(`${API_BASE_URL}/v1/openlovable/restart-vite`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': token } : {}),
         },
-        // 传递sandboxId确保重启正确的sandbox
         body: JSON.stringify({
           sandboxId: currentSandboxId,
         }),
@@ -365,12 +454,12 @@ export default function QuickPreviewPage() {
 
       toast({
         title: '刷新成功',
-        description: '开发服务器已重启',
+        description: '代码已检查并刷新预览',
       });
       return true;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : '未知错误';
-      addLog(`❌ 重启失败: ${errorMsg}`);
+      addLog(`❌ 刷新失败: ${errorMsg}`);
       toast({
         title: '刷新失败',
         description: errorMsg,
@@ -657,7 +746,14 @@ export default function QuickPreviewPage() {
                   }
 
                   const applyResult = await applyResponse.json();
-                  addLog(`✅ 代码已成功写入Sandbox: ${applyResult.data?.filesWritten || 0} 个文件`);
+                  const filesWritten = applyResult.data?.filesWritten || 0;
+                  addLog(`✅ 代码已成功写入Sandbox: ${filesWritten} 个文件`);
+
+                  // V2.5增强：显示被过滤的文件（如 lock files）
+                  const filteredFiles = applyResult.data?.filteredFiles as string[] | undefined;
+                  if (filteredFiles && filteredFiles.length > 0) {
+                     addLog(`⚠️ 已过滤 ${filteredFiles.length} 个不安全/锁文件: ${filteredFiles.join(', ')}`);
+                  }
 
                   // 上游可能替换 sandboxId（例如传入的 sandboxId 不存在），需要同步到预览 URL
                   const appliedSandboxId = typeof applyResult.data?.sandboxId === 'string' ? applyResult.data.sandboxId : null;
@@ -769,10 +865,19 @@ export default function QuickPreviewPage() {
 
     try {
       addLog(`💬 用户: ${currentMessage}`);
-      const userMsg = currentMessage;
+      let userMsg = currentMessage;
+
+      // Intent Recognition: 如果处于错误状态，自动注入错误上下文
+      if (stage === 'error' && error) {
+        addLog(`🤖 意图识别: 修复模式 (已自动注入错误上下文)`);
+        userMsg = `Context: The previous code generation or application failed with the following error: "${error}".\n\nUser Request: ${currentMessage}\n\nPlease fix the code based on the error and the user's request. Ensure the code is complete and correct.`;
+      }
+
       setCurrentMessage('');
       setStreamedCode('');
       setCurrentFile(null);
+      setError(null);
+      setStage('generating');
 
       await generateCodeStream(userMsg, sandboxInfo.sandboxId);
 
@@ -795,9 +900,81 @@ export default function QuickPreviewPage() {
   };
 
   /**
-   * 下载代码
+   * 下载代码（从沙箱获取完整项目ZIP）
    */
-  const downloadCode = () => {
+  const [isDownloading, setIsDownloading] = useState(false);
+  
+  const downloadCode = async () => {
+    // 优先从沙箱下载完整项目
+    if (sandboxInfo?.sandboxId) {
+      setIsDownloading(true);
+      try {
+        const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
+        const token = getToken();
+        
+        addLog('📦 正在打包项目代码...');
+        
+        const response = await fetch(`${API_BASE_URL}/v1/openlovable/sandbox/create-zip`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { 'Authorization': token } : {}),
+          },
+          body: JSON.stringify({ sandboxId: sandboxInfo.sandboxId }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`下载失败: ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        
+        if (!result.success || !result.data?.dataUrl) {
+          throw new Error(result.message || '生成ZIP包失败');
+        }
+
+        // base64 data URL 转 Blob 并下载
+        const dataUrl = result.data.dataUrl as string;
+        const fileName = (result.data.fileName as string) || 'project.zip';
+        
+        // 创建下载链接
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        addLog('✅ 项目代码下载成功');
+        toast({
+          title: '下载成功',
+          description: `已下载 ${fileName}`,
+        });
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : '未知错误';
+        addLog(`❌ 下载失败: ${errorMsg}`);
+        toast({
+          title: '下载失败',
+          description: errorMsg,
+          variant: 'destructive',
+        });
+        
+        // 降级：下载解析出的文件
+        downloadParsedFiles();
+      } finally {
+        setIsDownloading(false);
+      }
+      return;
+    }
+
+    // 没有沙箱时，下载解析出的文件
+    downloadParsedFiles();
+  };
+
+  /**
+   * 下载解析出的文件（降级方案）
+   */
+  const downloadParsedFiles = () => {
     if (generatedFiles.length === 0) {
       toast({
         title: '无代码可下载',
@@ -888,10 +1065,14 @@ export default function QuickPreviewPage() {
               size="sm"
               variant="outline"
               onClick={downloadCode}
-              disabled={generatedFiles.length === 0}
+              disabled={stage !== 'complete' || isDownloading}
             >
-              <Download className="w-4 h-4 mr-2" />
-              下载代码
+              {isDownloading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Download className="w-4 h-4 mr-2" />
+              )}
+              {isDownloading ? '下载中...' : '下载源码'}
             </Button>
             
             <FeedbackDialog taskId={sandboxInfo?.sandboxId} />
@@ -961,6 +1142,7 @@ export default function QuickPreviewPage() {
                       '正在加载预览...'
                     }
                     onRefresh={reloadPreview}
+                    onRuntimeError={setRuntimeError}
                     className="h-full border-0 rounded-none"
                     title="应用预览"
                     showDeviceSwitcher={true}
@@ -1035,8 +1217,13 @@ export default function QuickPreviewPage() {
                             </div>
                           </div>
 
-                          {/* 代码内容 */}
-                          <div className="flex-1 overflow-auto">
+                          {/* 代码内容 - 支持流式滚动 */}
+                          <div 
+                            ref={codeScrollRef}
+                            className="flex-1 overflow-y-auto scroll-smooth"
+                            onScroll={handleCodeScroll}
+                            style={{ maxHeight: 'calc(100% - 36px)' }}
+                          >
                             <SyntaxHighlighter
                               language={getSyntaxLanguage(displayFile.type)}
                               style={vscDarkPlus}
@@ -1053,17 +1240,27 @@ export default function QuickPreviewPage() {
                               {displayFile.content || '// 等待代码生成...'}
                             </SyntaxHighlighter>
                             {!displayFile.completed && (
-                              <span className="inline-block w-3 h-4 bg-orange-400 ml-4 mb-4 animate-pulse" />
+                              <div className="flex items-center px-4 pb-4">
+                                <span className="inline-block w-3 h-4 bg-orange-400 animate-pulse" />
+                                <span className="ml-2 text-xs text-orange-400 animate-pulse">正在生成...</span>
+                              </div>
                             )}
                           </div>
                         </div>
                       ) : (
-                        // 显示原始流式输出
-                        <div className="h-full overflow-auto p-4">
+                        // 显示原始流式输出 - 支持流式滚动
+                        <div 
+                          ref={codeScrollRef}
+                          className="h-full overflow-y-auto scroll-smooth p-4"
+                          onScroll={handleCodeScroll}
+                        >
                           {streamedCode ? (
                             <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap">
                               {streamedCode}
-                              <span className="inline-block w-2 h-4 bg-orange-400 ml-1 animate-pulse" />
+                              <div className="flex items-center mt-2">
+                                <span className="inline-block w-2 h-4 bg-orange-400 animate-pulse" />
+                                <span className="ml-2 text-xs text-orange-400 animate-pulse">正在生成...</span>
+                              </div>
                             </pre>
                           ) : (
                             <div className="flex items-center justify-center h-full text-gray-500">
@@ -1107,7 +1304,7 @@ export default function QuickPreviewPage() {
             </Card>
 
             {/* 聊天输入（迭代修改） */}
-            {stage === 'complete' && (
+            {(stage === 'complete' || (stage === 'error' && sandboxInfo)) && (
               <Card>
                 <CardHeader className="pb-3">
                   <CardTitle className="text-sm font-medium text-gray-500">
@@ -1125,7 +1322,7 @@ export default function QuickPreviewPage() {
                           sendMessage();
                         }
                       }}
-                      placeholder="输入修改需求，例如：把标题改成蓝色"
+                      placeholder={stage === 'error' ? "输入修改建议以修复错误..." : "输入修改需求，例如：把标题改成蓝色"}
                       className="flex-1"
                     />
                     <Button
@@ -1147,3 +1344,10 @@ export default function QuickPreviewPage() {
     </div>
   );
 }
+          // ... existing code ...
+        // 查找 <LivePreviewIframe ... /> 并添加 onRuntimeError={setRuntimeError}
+        // 由于无法确定 render 部分的行号，这里可能通过 MultiReplace 比较困难。
+        // 将尝试使用宽泛的上下文匹配。
+        // 鉴于 page.tsx 通常很大，我先不在此处替换 render，而是先确保逻辑部分正确。
+        // 实际上 LivePreviewIframe 的调用在 JSX 中。
+        // 我需要再读取一次 page.tsx 的后半部分来定位 JSX。

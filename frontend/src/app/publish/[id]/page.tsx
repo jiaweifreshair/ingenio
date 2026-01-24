@@ -278,8 +278,8 @@ export default function PublishPage() {
     }
   };
 
-  const handlePreview = () => {
-    router.push(`/preview/${appSpecId}`);
+  const handleViewResult = () => {
+    router.push(`/wizard/${appSpecId}`);
   };
 
   if (loading) {
@@ -340,10 +340,10 @@ export default function PublishPage() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handlePreview}
+                onClick={handleViewResult}
               >
                 <ExternalLink className="w-4 h-4 mr-2" />
-                预览
+                查看结果
               </Button>
 
               {publishStatus === 'published' && publishedUrl && (

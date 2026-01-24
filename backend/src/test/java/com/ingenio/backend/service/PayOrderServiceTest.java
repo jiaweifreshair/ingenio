@@ -2,6 +2,7 @@ package com.ingenio.backend.service;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.ingenio.backend.client.JeecgPayClient;
+import com.ingenio.backend.common.exception.BusinessException;
 import com.ingenio.backend.dto.billing.CreateOrderRequest;
 import com.ingenio.backend.dto.billing.CreateOrderResponse;
 import com.ingenio.backend.dto.billing.PayOrderDTO;
@@ -104,6 +105,26 @@ class PayOrderServiceTest {
         assertThrows(IllegalArgumentException.class, () ->
                 payOrderService.createOrder(testUserId, request)
         );
+    }
+
+    @Test
+    void createOrder_payServiceFailure_throwsBusinessException() {
+        // Given
+        CreateOrderRequest request = new CreateOrderRequest();
+        request.setPackageCode("PACK_10");
+        request.setPayChannel("ALIPAY_PC");
+
+        when(payOrderMapper.insert(any(PayOrderEntity.class))).thenReturn(1);
+        when(jeecgPayClient.getAlipayParams(anyString(), any(BigDecimal.class), anyString(), anyString()))
+                .thenThrow(new RuntimeException("mock-error"));
+
+        // When & Then
+        BusinessException ex = assertThrows(BusinessException.class, () ->
+                payOrderService.createOrder(testUserId, request)
+        );
+        assertEquals("503", ex.getCode());
+        assertTrue(ex.getMessage().contains("支付服务暂不可用"));
+        verify(payOrderMapper, never()).updateById(any(PayOrderEntity.class));
     }
 
     // ========== getOrder 测试 ==========

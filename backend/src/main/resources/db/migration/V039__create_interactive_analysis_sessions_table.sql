@@ -2,19 +2,19 @@
 -- 用于管理AI深度思考的交互式分析流程
 
 CREATE TABLE IF NOT EXISTS interactive_analysis_sessions (
-    session_id VARCHAR(36) PRIMARY KEY COMMENT '会话ID (UUID)',
-    user_id BIGINT COMMENT '用户ID',
-    requirement TEXT NOT NULL COMMENT '原始需求描述',
-    current_step INT NOT NULL DEFAULT 1 COMMENT '当前执行的步骤 (1-6)',
-    status VARCHAR(50) NOT NULL DEFAULT 'RUNNING' COMMENT '会话状态: RUNNING/WAITING_CONFIRMATION/COMPLETED/FAILED/CANCELLED',
-    step_results JSONB COMMENT '每个步骤的执行结果 (JSON格式)',
-    step_feedback JSONB COMMENT '每个步骤的用户反馈 (JSON格式)',
-    step_retries JSONB COMMENT '每个步骤的重试次数 (JSON格式)',
-    final_result JSONB COMMENT '最终分析结果 (JSON格式)',
-    error_message TEXT COMMENT '错误信息',
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间',
-    completed_at TIMESTAMP COMMENT '完成时间'
+    session_id VARCHAR(36) PRIMARY KEY,
+    user_id BIGINT,
+    requirement TEXT NOT NULL,
+    current_step INT NOT NULL DEFAULT 1,
+    status VARCHAR(50) NOT NULL DEFAULT 'RUNNING',
+    step_results JSONB,
+    step_feedback JSONB,
+    step_retries JSONB,
+    final_result JSONB,
+    error_message TEXT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    completed_at TIMESTAMP
 );
 
 -- 创建索引

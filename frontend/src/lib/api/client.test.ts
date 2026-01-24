@@ -540,10 +540,11 @@ describe("API Client - client.ts", () => {
 
   describe("错误处理 - 网络错误", () => {
     it("应该处理网络连接失败", async () => {
-      mockFetch.mockRejectedValueOnce(new Error("Failed to fetch"));
+      // 注意：本用例会调用两次 get()（分别用于两个断言），因此必须使用 mockRejectedValue
+      mockFetch.mockRejectedValue(new Error("Failed to fetch"));
 
       await expect(get(TEST_ENDPOINT)).rejects.toThrow(APIError);
-      await expect(get(TEST_ENDPOINT)).rejects.toThrow("网络请求失败");
+      await expect(get(TEST_ENDPOINT)).rejects.toThrow("网络连接失败");
     });
 
     it("应该处理JSON解析错误", async () => {
@@ -573,7 +574,7 @@ describe("API Client - client.ts", () => {
       mockFetch.mockRejectedValue(new Error("Request timeout"));
 
       await expect(get(TEST_ENDPOINT)).rejects.toThrow(APIError);
-      await expect(get(TEST_ENDPOINT)).rejects.toThrow(/网络请求失败.*timeout/i);
+      await expect(get(TEST_ENDPOINT)).rejects.toThrow(/网络请求超时/i);
     });
   });
 

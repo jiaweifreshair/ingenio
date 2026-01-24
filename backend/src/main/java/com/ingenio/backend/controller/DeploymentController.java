@@ -100,8 +100,15 @@ public class DeploymentController {
             @PathVariable String deploymentId,
             @RequestParam String targetVersion
     ) {
-        DeploymentTask task = deploymentService.rollback(deploymentId, targetVersion);
-        return Result.success(task);
+        try {
+            DeploymentTask task = deploymentService.rollback(deploymentId, targetVersion);
+            return Result.success(task);
+        } catch (RuntimeException e) {
+            if (e.getMessage() != null && e.getMessage().contains("部署任务不存在")) {
+                return Result.error("部署任务不存在: " + deploymentId);
+            }
+            throw e;
+        }
     }
 
     /**

@@ -55,17 +55,28 @@ CREATE TABLE IF NOT EXISTS g3_jobs (
 );
 
 -- G3 Jobs 索引
-CREATE INDEX idx_g3_jobs_app_spec ON g3_jobs(app_spec_id);
-CREATE INDEX idx_g3_jobs_tenant ON g3_jobs(tenant_id);
-CREATE INDEX idx_g3_jobs_user ON g3_jobs(user_id);
-CREATE INDEX idx_g3_jobs_status ON g3_jobs(status);
-CREATE INDEX idx_g3_jobs_created_at ON g3_jobs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_g3_jobs_app_spec ON g3_jobs(app_spec_id);
+CREATE INDEX IF NOT EXISTS idx_g3_jobs_tenant ON g3_jobs(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_g3_jobs_user ON g3_jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_g3_jobs_status ON g3_jobs(status);
+CREATE INDEX IF NOT EXISTS idx_g3_jobs_created_at ON g3_jobs(created_at DESC);
 
 -- G3 Jobs 触发器：自动更新updated_at
-CREATE TRIGGER update_g3_jobs_updated_at
-    BEFORE UPDATE ON g3_jobs
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+-- 说明：兼容旧版初始化脚本已创建触发器的场景，避免重复创建失败
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'update_g3_jobs_updated_at'
+          AND tgrelid = 'g3_jobs'::regclass
+    ) THEN
+        CREATE TRIGGER update_g3_jobs_updated_at
+            BEFORE UPDATE ON g3_jobs
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
 COMMENT ON TABLE g3_jobs IS 'G3引擎任务主表 - 存储代码生成任务的状态、配置和日志';
 COMMENT ON COLUMN g3_jobs.status IS '任务状态：QUEUED(排队)/PLANNING(规划)/CODING(编码)/TESTING(测试)/COMPLETED(完成)/FAILED(失败)';
@@ -115,17 +126,28 @@ CREATE TABLE IF NOT EXISTS g3_artifacts (
 );
 
 -- G3 Artifacts 索引
-CREATE INDEX idx_g3_artifacts_job ON g3_artifacts(job_id);
-CREATE INDEX idx_g3_artifacts_type ON g3_artifacts(artifact_type);
-CREATE INDEX idx_g3_artifacts_has_errors ON g3_artifacts(has_errors);
-CREATE INDEX idx_g3_artifacts_file_path ON g3_artifacts(file_path);
-CREATE INDEX idx_g3_artifacts_generation_round ON g3_artifacts(generation_round);
+CREATE INDEX IF NOT EXISTS idx_g3_artifacts_job ON g3_artifacts(job_id);
+CREATE INDEX IF NOT EXISTS idx_g3_artifacts_type ON g3_artifacts(artifact_type);
+CREATE INDEX IF NOT EXISTS idx_g3_artifacts_has_errors ON g3_artifacts(has_errors);
+CREATE INDEX IF NOT EXISTS idx_g3_artifacts_file_path ON g3_artifacts(file_path);
+CREATE INDEX IF NOT EXISTS idx_g3_artifacts_generation_round ON g3_artifacts(generation_round);
 
 -- G3 Artifacts 触发器
-CREATE TRIGGER update_g3_artifacts_updated_at
-    BEFORE UPDATE ON g3_artifacts
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+-- 说明：兼容旧版初始化脚本已创建触发器的场景，避免重复创建失败
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'update_g3_artifacts_updated_at'
+          AND tgrelid = 'g3_artifacts'::regclass
+    ) THEN
+        CREATE TRIGGER update_g3_artifacts_updated_at
+            BEFORE UPDATE ON g3_artifacts
+            FOR EACH ROW
+            EXECUTE FUNCTION update_updated_at_column();
+    END IF;
+END $$;
 
 COMMENT ON TABLE g3_artifacts IS 'G3引擎产物表 - 存储每轮生成的代码文件';
 COMMENT ON COLUMN g3_artifacts.artifact_type IS '产物类型：CONTRACT(契约)/ENTITY(实体)/MAPPER(映射)/SERVICE(服务)/CONTROLLER(控制器)/CONFIG(配置)/TEST(测试)/FRONTEND(前端)';
@@ -169,10 +191,10 @@ CREATE TABLE IF NOT EXISTS g3_validation_results (
 );
 
 -- G3 Validation Results 索引
-CREATE INDEX idx_g3_validation_results_job ON g3_validation_results(job_id);
-CREATE INDEX idx_g3_validation_results_round ON g3_validation_results(round);
-CREATE INDEX idx_g3_validation_results_type ON g3_validation_results(validation_type);
-CREATE INDEX idx_g3_validation_results_passed ON g3_validation_results(passed);
+CREATE INDEX IF NOT EXISTS idx_g3_validation_results_job ON g3_validation_results(job_id);
+CREATE INDEX IF NOT EXISTS idx_g3_validation_results_round ON g3_validation_results(round);
+CREATE INDEX IF NOT EXISTS idx_g3_validation_results_type ON g3_validation_results(validation_type);
+CREATE INDEX IF NOT EXISTS idx_g3_validation_results_passed ON g3_validation_results(passed);
 
 COMMENT ON TABLE g3_validation_results IS 'G3引擎验证结果表 - 存储每次沙箱验证的详细结果';
 COMMENT ON COLUMN g3_validation_results.validation_type IS '验证类型：COMPILE(编译)/UNIT_TEST(单元测试)/INTEGRATION_TEST(集成测试)/RUNTIME(运行时)';

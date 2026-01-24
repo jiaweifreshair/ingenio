@@ -131,8 +131,7 @@ export function TopNav(): React.ReactElement {
     { href: "/templates", label: t('nav.templates') },
     ...(process.env.NODE_ENV === "development"
       ? [
-          { href: "/benchmarks", label: "Benchmarks 对照" },
-          { href: "/examples", label: "TSX 示例" },
+          { href: "/benchmarks", label: "挑战赛示例" },
         ]
       : []),
   ];
@@ -144,7 +143,9 @@ export function TopNav(): React.ReactElement {
         <div className="mr-8 flex">
           <Link href="/" className="flex items-center space-x-2">
             <NextImage src="/logo.png" alt="Ingenio Logo" width={40} height={40} className="h-10 w-10" />
-            <span className="hidden font-semibold sm:inline-block text-foreground tracking-tight">Ingenio 妙构</span>
+            <span className="hidden sm:inline-block text-foreground tracking-tight">
+              <span className="font-extrabold text-lg">Ingenio</span> <span className="font-medium text-lg">妙构</span>
+            </span>
           </Link>
         </div>
 

@@ -47,6 +47,15 @@ spring:
       # 初始化失败快速失败：连接池初始化失败时立即抛出异常
       initialization-fail-timeout: 1
 
+  # Flyway数据库迁移配置
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+    # 迁移脚本包含 ${role} 等占位符文本，关闭替换避免解析失败
+    placeholder-replacement: false
+
   # Spring AI OpenAI配置（UniAix，替代原DashScope）
   ai:
     openai:
@@ -373,20 +382,20 @@ ingenio:
         - deepseek
     providers:
       claude:
-        base-url: ${INGENIO_LC4J_CLAUDE_BASE_URL:http://127.0.0.1:8045/v1}
+        base-url: ${INGENIO_LC4J_CLAUDE_BASE_URL:https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01}
         api-key: ${INGENIO_LC4J_CLAUDE_API_KEY:}
-        model: ${INGENIO_LC4J_CLAUDE_MODEL:claude-opus-4-5-thinking}
+        model: ${INGENIO_LC4J_CLAUDE_MODEL:claude-opus-4-5-20251101}
         temperature: 0.2
         max-tokens: ${INGENIO_LC4J_CLAUDE_MAX_TOKENS:12000}
-        timeout-seconds: 90
+        timeout-seconds: 180
         max-retries: 2
       gemini:
-        base-url: ${INGENIO_LC4J_GEMINI_BASE_URL:http://127.0.0.1:8045/v1}
+        base-url: ${INGENIO_LC4J_GEMINI_BASE_URL:https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01}
         api-key: ${INGENIO_LC4J_GEMINI_API_KEY:}
         model: ${INGENIO_LC4J_GEMINI_MODEL:gemini-3-pro-high}
         temperature: 0.2
         max-tokens: 6000
-        timeout-seconds: 90
+        timeout-seconds: 180
         max-retries: 2
       deepseek:
         base-url: ${INGENIO_LC4J_DEEPSEEK_BASE_URL:https://api.qnaigc.com/v1}
@@ -394,7 +403,7 @@ ingenio:
         model: ${INGENIO_LC4J_DEEPSEEK_MODEL:deepseek-r1-0528}
         temperature: 0.2
         max-tokens: 6000
-        timeout-seconds: 90
+        timeout-seconds: 150
         max-retries: 2
       uniaix:
         # Uniaix OpenAI 兼容网关（支持自动补齐 /v1）

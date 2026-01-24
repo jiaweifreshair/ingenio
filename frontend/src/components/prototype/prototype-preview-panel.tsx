@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -233,13 +233,13 @@ export function PrototypePreviewPanel({
     prevIsGenerating.current = isGenerating;
   }, [isGenerating, sandboxUrl]);
 
-  // 自动滚动思考过程到底部
+  // 自动滚动思考过程到底部 - 已禁用，允许用户自由滚动
   const thinkingRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (thinkingRef.current) {
-      thinkingRef.current.scrollTop = thinkingRef.current.scrollHeight;
-    }
-  }, [thinking]);
+  // useEffect(() => {
+  //   if (thinkingRef.current) {
+  //     thinkingRef.current.scrollTop = thinkingRef.current.scrollHeight;
+  //   }
+  // }, [thinking]);
 
   return (
     <div className="flex flex-col min-h-screen h-full">

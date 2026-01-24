@@ -28,10 +28,10 @@ CREATE TABLE IF NOT EXISTS g3_planning_files (
 );
 
 -- 2. 创建索引
-CREATE INDEX idx_g3_planning_files_job
+CREATE INDEX IF NOT EXISTS idx_g3_planning_files_job
     ON g3_planning_files(job_id);
 
-CREATE INDEX idx_g3_planning_files_type
+CREATE INDEX IF NOT EXISTS idx_g3_planning_files_type
     ON g3_planning_files(file_type);
 
 -- 3. 创建触发器（自动更新 updated_at 和 version）
@@ -44,10 +44,21 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER update_g3_planning_files_version
-    BEFORE UPDATE ON g3_planning_files
-    FOR EACH ROW
-    EXECUTE FUNCTION update_g3_planning_file_version();
+-- 说明：兼容旧版初始化脚本已创建触发器的场景，避免重复创建失败
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'update_g3_planning_files_version'
+          AND tgrelid = 'g3_planning_files'::regclass
+    ) THEN
+        CREATE TRIGGER update_g3_planning_files_version
+            BEFORE UPDATE ON g3_planning_files
+            FOR EACH ROW
+            EXECUTE FUNCTION update_g3_planning_file_version();
+    END IF;
+END $$;
 
 -- 4. 添加表和列注释
 COMMENT ON TABLE g3_planning_files IS 'G3规划文件 - 基于Manus工作流的三文件模式';

@@ -100,6 +100,7 @@ export function AnalysisPanel({
         {/* ==================== 右侧：根据阶段显示不同内容 ==================== */}
         <div className="rounded-2xl border border-border/50 bg-card/30 p-6 backdrop-blur-xl h-[600px]">
           <AnalysisProgressPanel
+            requirement={requirement}
             messages={messages}
             isConnected={isConnected}
             isCompleted={isCompleted}

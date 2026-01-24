@@ -13,6 +13,7 @@ import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { SmartWizard } from '../smart-wizard';
+import { LanguageProvider } from '@/contexts/LanguageContext';
 
 // ========== Mocks ==========
 
@@ -26,7 +27,7 @@ type RouteRequirementCall = {
 
 const mockPush = vi.fn();
 const mockToast = vi.fn();
-const mockStartAnalysis = vi.fn();
+const mockStartSession = vi.fn();
 const mockRouteRequirement = vi.fn();
 
 vi.mock('next/navigation', () => ({
@@ -37,13 +38,19 @@ vi.mock('@/hooks/use-toast', () => ({
   useToast: () => ({ toast: mockToast }),
 }));
 
-vi.mock('@/hooks/use-analysis-sse', () => ({
-  useAnalysisSse: () => ({
-    connect: mockStartAnalysis,
-    messages: [],
-    isConnected: true,
-    isCompleted: false,
-    error: null,
+vi.mock('@/hooks/use-interactive-analysis-sse', () => ({
+  useInteractiveAnalysisSse: () => ({
+    state: {
+      sessionId: 'session-1',
+      currentStep: 1,
+      status: 'RUNNING',
+      messages: [],
+      stepResults: {},
+      error: null,
+    },
+    startSession: mockStartSession,
+    confirmStep: vi.fn(),
+    modifyStep: vi.fn(),
   }),
 }));
 
@@ -86,7 +93,7 @@ describe('SmartWizard', () => {
   beforeEach(() => {
     mockPush.mockReset();
     mockToast.mockReset();
-    mockStartAnalysis.mockReset();
+    mockStartSession.mockReset();
     mockRouteRequirement.mockReset();
 
     mockRouteRequirement.mockResolvedValue({
@@ -105,15 +112,17 @@ describe('SmartWizard', () => {
 
   it('修改方案时应复用 appSpecId 并重启分析', async () => {
     render(
-      <SmartWizard
-        initialRequirement="创建一个安全事故管理应用，包含上报/审核/整改闭环/统计看板"
-        onBack={() => {}}
-      />
+      <LanguageProvider>
+        <SmartWizard
+          initialRequirement="创建一个安全事故管理应用，包含上报/审核/整改闭环/统计看板"
+          onBack={() => {}}
+        />
+      </LanguageProvider>
     );
 
     // 初次启动：应触发一次分析 + 一次路由
     await waitFor(() => {
-      expect(mockStartAnalysis.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(mockStartSession.mock.calls.length).toBeGreaterThanOrEqual(1);
       expect(mockRouteRequirement.mock.calls.length).toBeGreaterThanOrEqual(1);
     });
 
@@ -127,7 +136,7 @@ describe('SmartWizard', () => {
 
     await waitFor(() => {
       // 修改后应再次启动分析
-      expect(mockStartAnalysis.mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(mockStartSession.mock.calls.length).toBeGreaterThanOrEqual(2);
       // 修改后应再次路由
       expect(mockRouteRequirement.mock.calls.length).toBeGreaterThanOrEqual(2);
     });

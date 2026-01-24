@@ -8,6 +8,7 @@ import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -50,9 +51,15 @@ public class G3SandboxService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final G3ValidationAdapter g3ValidationAdapter;
+    private final RedisTemplate<String, String> redisTemplate;
 
     // Phase 5: ValidationService集成（可选，用于统一结果存储）
     private final com.ingenio.backend.service.ValidationService validationService;
+
+    /**
+     * Redis Key 前缀（沙箱缓存）
+     */
+    private static final String SANDBOX_CACHE_PREFIX = "g3:sandbox:";
 
     /**
      * Open-Lovable-CN服务基础URL
@@ -91,15 +98,20 @@ public class G3SandboxService {
     /**
      * Goose 编译命令（本地执行）。
      *
-     * <p>说明：</p>
+     * <p>
+     * 说明：
+     * </p>
      * <ul>
-     *   <li>当 `ingenio.g3.sandbox.provider=goose` 时生效；</li>
-     *   <li>用于将“编译/验证执行器”替换为外部 Goose 执行器（或任意兼容命令），以便在不改动核心逻辑的前提下
-     *       复用 Goose 的沙箱/执行/观测能力；</li>
-     *   <li>若为空，将自动回退到本地 Maven 编译（保持可用性）。</li>
+     * <li>当 `ingenio.g3.sandbox.provider=goose` 时生效；</li>
+     * <li>用于将“编译/验证执行器”替换为外部 Goose 执行器（或任意兼容命令），以便在不改动核心逻辑的前提下
+     * 复用 Goose 的沙箱/执行/观测能力；</li>
+     * <li>若为空，将自动回退到本地 Maven 编译（保持可用性）。</li>
      * </ul>
      *
-     * <p>示例：</p>
+     * <p>
+     * 示例：
+     * </p>
+     * 
      * <pre>{@code
      * ingenio:
      *   g3:
@@ -129,23 +141,20 @@ public class G3SandboxService {
      * - 采用 backend/target 下的目录，避免写入系统目录引发权限问题
      * - 保留文件便于定位编译失败原因（可按需手动清理）
      */
-    private static final Path LOCAL_SANDBOX_ROOT =
-            Paths.get(System.getProperty("user.dir"), "target", "g3-local-sandbox");
-
-    /**
-     * 沙箱信息缓存
-     */
-    private final Map<UUID, SandboxInfo> sandboxCache = new HashMap<>();
+    private static final Path LOCAL_SANDBOX_ROOT = Paths.get(System.getProperty("user.dir"), "target",
+            "g3-local-sandbox");
 
     public G3SandboxService(
             RestTemplate restTemplate,
             ObjectMapper objectMapper,
             G3ValidationAdapter g3ValidationAdapter,
-            com.ingenio.backend.service.ValidationService validationService) {
+            com.ingenio.backend.service.ValidationService validationService,
+            RedisTemplate<String, String> redisTemplate) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.g3ValidationAdapter = g3ValidationAdapter;
         this.validationService = validationService;
+        this.redisTemplate = redisTemplate;
     }
 
     /**
@@ -155,8 +164,8 @@ public class G3SandboxService {
             String sandboxId,
             String provider,
             String url,
-            Instant createdAt
-    ) {}
+            Instant createdAt) {
+    }
 
     /**
      * 错误类型枚举
@@ -183,17 +192,18 @@ public class G3SandboxService {
             String stderr,
             int durationMs,
             List<CompileError> errors,
-            ErrorType errorType
-    ) {
+            ErrorType errorType) {
         public static CompileResult success(String stdout, int durationMs) {
             return new CompileResult(true, 0, stdout, "", durationMs, List.of(), ErrorType.NONE);
         }
 
-        public static CompileResult failure(int exitCode, String stdout, String stderr, int durationMs, List<CompileError> errors) {
+        public static CompileResult failure(int exitCode, String stdout, String stderr, int durationMs,
+                List<CompileError> errors) {
             return new CompileResult(false, exitCode, stdout, stderr, durationMs, errors, ErrorType.CODE_ERROR);
         }
 
-        public static CompileResult environmentFailure(int exitCode, String stdout, String stderr, int durationMs, String reason) {
+        public static CompileResult environmentFailure(int exitCode, String stdout, String stderr, int durationMs,
+                String reason) {
             List<CompileError> errors = List.of(new CompileError("pom.xml", 0, 0, reason, "environment"));
             return new CompileResult(false, exitCode, stdout, stderr, durationMs, errors, ErrorType.ENVIRONMENT_ERROR);
         }
@@ -211,8 +221,8 @@ public class G3SandboxService {
             int exitCode,
             String stdout,
             String stderr,
-            int durationMs
-    ) {}
+            int durationMs) {
+    }
 
     /**
      * 编译错误记录
@@ -222,8 +232,8 @@ public class G3SandboxService {
             int line,
             int column,
             String message,
-            String severity
-    ) {}
+            String severity) {
+    }
 
     /**
      * 创建新的E2B沙箱
@@ -252,14 +262,13 @@ public class G3SandboxService {
                     url,
                     HttpMethod.POST,
                     entity,
-                    String.class
-            );
+                    String.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> result = objectMapper.readValue(
                         response.getBody(),
-                        new TypeReference<Map<String, Object>>() {}
-                );
+                        new TypeReference<Map<String, Object>>() {
+                        });
 
                 String sandboxId = (String) result.get("sandboxId");
                 String sandboxUrl = (String) result.get("url");
@@ -267,8 +276,8 @@ public class G3SandboxService {
 
                 SandboxInfo info = new SandboxInfo(sandboxId, provider, sandboxUrl, Instant.now());
 
-                // 缓存沙箱信息
-                sandboxCache.put(job.getId(), info);
+                // 缓存沙箱信息到 Redis（支持分布式）
+                saveSandboxToRedis(job.getId(), info);
 
                 // 更新Job的沙箱信息
                 job.setSandboxId(sandboxId);
@@ -327,8 +336,7 @@ public class G3SandboxService {
                     url,
                     HttpMethod.POST,
                     entity,
-                    String.class
-            );
+                    String.class);
 
             if (response.getStatusCode().is2xxSuccessful()) {
                 logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.EXECUTOR,
@@ -364,8 +372,10 @@ public class G3SandboxService {
             // 使用 -e 显示完整错误堆栈，使用 -B 批处理模式
             //
             // 注意：
-            // OpenLovable 的 E2BProvider.runCommand 使用 subprocess.run(command.split(" "), shell=false) 执行，
-            // 因此不能传入包含 `cd`/`&&`/`2>&1` 等 shell 语法的命令，否则会触发 “Command failed” 且无法拿到 Maven 输出。
+            // OpenLovable 的 E2BProvider.runCommand 使用 subprocess.run(command.split(" "),
+            // shell=false) 执行，
+            // 因此不能传入包含 `cd`/`&&`/`2>&1` 等 shell 语法的命令，否则会触发 “Command failed” 且无法拿到 Maven
+            // 输出。
             // 其内部已固定切换到 /home/user/app（WORKING_DIR），这里直接执行 mvn 即可。
             String compileCommand = "mvn compile -e -B --no-transfer-progress";
 
@@ -383,16 +393,15 @@ public class G3SandboxService {
                     url,
                     HttpMethod.POST,
                     entity,
-                    String.class
-            );
+                    String.class);
 
             int durationMs = (int) (System.currentTimeMillis() - startTime);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> result = objectMapper.readValue(
                         response.getBody(),
-                        new TypeReference<Map<String, Object>>() {}
-                );
+                        new TypeReference<Map<String, Object>>() {
+                        });
 
                 int exitCode = toInt(result.getOrDefault("exitCode", -1), -1);
                 String stdout = toString(result.getOrDefault("stdout", ""));
@@ -470,17 +479,16 @@ public class G3SandboxService {
                     "",
                     e.getMessage() == null ? "" : e.getMessage(),
                     durationMs,
-                    "沙箱执行命令异常（OpenLovable 调用失败）"
-            );
+                    "沙箱执行命令异常（OpenLovable 调用失败）");
         }
     }
 
     /**
      * 在沙箱内执行通用命令（只读/诊断）。
      *
-     * @param sandboxId   沙箱ID
-     * @param command     执行命令
-     * @param timeoutSec  超时（秒）
+     * @param sandboxId  沙箱ID
+     * @param command    执行命令
+     * @param timeoutSec 超时（秒）
      * @return 执行结果
      */
     public SandboxCommandResult executeCommand(String sandboxId, String command, int timeoutSec) {
@@ -510,16 +518,15 @@ public class G3SandboxService {
                     url,
                     HttpMethod.POST,
                     entity,
-                    String.class
-            );
+                    String.class);
 
             int durationMs = (int) (System.currentTimeMillis() - startTime);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> result = objectMapper.readValue(
                         response.getBody(),
-                        new TypeReference<Map<String, Object>>() {}
-                );
+                        new TypeReference<Map<String, Object>>() {
+                        });
 
                 int exitCode = toInt(result.getOrDefault("exitCode", -1), -1);
                 String stdout = toString(result.getOrDefault("stdout", ""));
@@ -647,8 +654,10 @@ public class G3SandboxService {
      * 将任意对象转换为 int（兼容 Number / String）
      */
     private static int toInt(Object value, int defaultValue) {
-        if (value == null) return defaultValue;
-        if (value instanceof Number n) return n.intValue();
+        if (value == null)
+            return defaultValue;
+        if (value instanceof Number n)
+            return n.intValue();
         try {
             return Integer.parseInt(String.valueOf(value).trim());
         } catch (Exception ignored) {
@@ -662,8 +671,10 @@ public class G3SandboxService {
     private static String combineOutput(String stdout, String stderr) {
         String out = stdout == null ? "" : stdout;
         String err = stderr == null ? "" : stderr;
-        if (out.isBlank()) return err;
-        if (err.isBlank()) return out;
+        if (out.isBlank())
+            return err;
+        if (err.isBlank())
+            return out;
         return out + "\n" + err;
     }
 
@@ -674,9 +685,11 @@ public class G3SandboxService {
      * @return 解析到的 returncode；解析失败返回 null
      */
     private static Integer parseReturnCodeFromOutput(String output) {
-        if (output == null || output.isBlank()) return null;
+        if (output == null || output.isBlank())
+            return null;
         Matcher matcher = Pattern.compile("(?m)^Return\\s+code:\\s*(\\d+)\\s*$").matcher(output);
-        if (!matcher.find()) return null;
+        if (!matcher.find())
+            return null;
         try {
             return Integer.parseInt(matcher.group(1));
         } catch (Exception ignored) {
@@ -712,9 +725,11 @@ public class G3SandboxService {
 
         String[] lines = output.split("\n");
         for (String raw : lines) {
-            if (raw == null) continue;
+            if (raw == null)
+                continue;
             String line = raw.replace("\r", "").trim();
-            if (line.isEmpty()) continue;
+            if (line.isEmpty())
+                continue;
 
             allLines.add(line);
             if (line.startsWith("[ERROR]")) {
@@ -733,7 +748,8 @@ public class G3SandboxService {
         int maxLines = 80;
         int emitted = 0;
         for (String line : chosen) {
-            if (emitted >= maxLines) break;
+            if (emitted >= maxLines)
+                break;
             String oneLine = line.length() > 420 ? line.substring(0, 420) + "..." : line;
             logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR, "Maven输出: " + oneLine));
             emitted++;
@@ -844,8 +860,7 @@ public class G3SandboxService {
                 compileResult.exitCode(),
                 compileResult.stdout(),
                 compileResult.stderr(),
-                compileResult.durationMs()
-        );
+                compileResult.durationMs());
 
         // 添加解析后的错误
         for (CompileError error : compileResult.errors()) {
@@ -854,8 +869,7 @@ public class G3SandboxService {
                     error.line(),
                     error.column(),
                     error.message(),
-                    error.severity()
-            );
+                    error.severity());
         }
 
         // 5. 更新产物的编译状态
@@ -870,16 +884,15 @@ public class G3SandboxService {
         if (appSpecId != null && job.getTenantId() != null) {
             try {
                 // 使用G3ValidationAdapter将CompileResult转换为ValidationResponse
-                com.ingenio.backend.dto.response.validation.ValidationResponse validationResponse =
-                        g3ValidationAdapter.toValidationResponse(compileResult, job.getId());
+                com.ingenio.backend.dto.response.validation.ValidationResponse validationResponse = g3ValidationAdapter
+                        .toValidationResponse(compileResult, job.getId());
 
                 // 保存到ValidationService的统一结果表
                 validationService.saveExternalValidationResult(
                         appSpecId,
                         job.getTenantId(),
                         validationResponse,
-                        com.ingenio.backend.entity.ValidationResultEntity.ValidationType.COMPILE
-                );
+                        com.ingenio.backend.entity.ValidationResultEntity.ValidationType.COMPILE);
 
                 log.debug("G3验证结果已同步到ValidationService - jobId: {}, appSpecId: {}, tenantId: {}, passed: {}",
                         job.getId(), appSpecId, job.getTenantId(), validationResponse.getPassed());
@@ -899,18 +912,19 @@ public class G3SandboxService {
     /**
      * 使用 Goose（或任意外部命令）执行本地编译（带环境错误自动重试）。
      *
-     * <p>当前实现定位：</p>
+     * <p>
+     * 当前实现定位：
+     * </p>
      * <ul>
-     *   <li>“融合点”：复用现有本地沙箱落盘逻辑 + 编译输出解析逻辑；</li>
-     *   <li>“可插拔”：通过配置注入具体 Goose 命令，避免在代码中硬编码 Goose CLI 细节；</li>
-     *   <li>“可回退”：命令未配置或执行失败时，回退到本地 Maven 编译以保证闭环可用。</li>
+     * <li>“融合点”：复用现有本地沙箱落盘逻辑 + 编译输出解析逻辑；</li>
+     * <li>“可插拔”：通过配置注入具体 Goose 命令，避免在代码中硬编码 Goose CLI 细节；</li>
+     * <li>“可回退”：命令未配置或执行失败时，回退到本地 Maven 编译以保证闭环可用。</li>
      * </ul>
      */
     private CompileResult runLocalGooseBuildWithRetry(
             G3JobEntity job,
             List<G3ArtifactEntity> artifacts,
-            Consumer<G3LogEntry> logConsumer
-    ) {
+            Consumer<G3LogEntry> logConsumer) {
         CompileResult result = null;
 
         for (int attempt = 1; attempt <= ENV_ERROR_MAX_RETRIES; attempt++) {
@@ -944,18 +958,19 @@ public class G3SandboxService {
     /**
      * 使用 Goose（或任意外部命令）执行本地编译。
      *
-     * <p>注意：</p>
+     * <p>
+     * 注意：
+     * </p>
      * <ul>
-     *   <li>该方法会将 artifacts 落盘为本地 Maven 工程目录；</li>
-     *   <li>默认通过 `bash -lc` 执行配置的 compile-command，以支持复杂命令（如 Goose 包装执行）；</li>
-     *   <li>若未配置 compile-command，则直接回退到本地 Maven 编译。</li>
+     * <li>该方法会将 artifacts 落盘为本地 Maven 工程目录；</li>
+     * <li>默认通过 `bash -lc` 执行配置的 compile-command，以支持复杂命令（如 Goose 包装执行）；</li>
+     * <li>若未配置 compile-command，则直接回退到本地 Maven 编译。</li>
      * </ul>
      */
     private CompileResult runLocalGooseBuild(
             G3JobEntity job,
             List<G3ArtifactEntity> artifacts,
-            Consumer<G3LogEntry> logConsumer
-    ) {
+            Consumer<G3LogEntry> logConsumer) {
         if (gooseCompileCommand == null || gooseCompileCommand.isBlank()) {
             logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR,
                     "未配置 ingenio.g3.sandbox.goose.compile-command，回退到本地 Maven 编译验证"));
@@ -1074,8 +1089,7 @@ public class G3SandboxService {
     private CompileResult runRemoteMavenBuildWithResetRetry(
             G3JobEntity job,
             List<G3ArtifactEntity> artifacts,
-            Consumer<G3LogEntry> logConsumer
-    ) {
+            Consumer<G3LogEntry> logConsumer) {
         CompileResult result = null;
 
         for (int attempt = 1; attempt <= ENV_ERROR_MAX_RETRIES; attempt++) {
@@ -1192,7 +1206,42 @@ public class G3SandboxService {
         job.setSandboxId(null);
         job.setSandboxUrl(null);
         job.setSandboxProvider(null);
-        sandboxCache.remove(job.getId());
+        // 从 Redis 清理沙箱缓存
+        removeSandboxFromRedis(job.getId());
+    }
+
+    // ========== Redis 缓存辅助方法 ==========
+
+    /**
+     * 保存沙箱信息到 Redis
+     */
+    private void saveSandboxToRedis(UUID jobId, SandboxInfo info) {
+        try {
+            String key = SANDBOX_CACHE_PREFIX + jobId.toString();
+            Map<String, String> data = new HashMap<>();
+            data.put("sandboxId", info.sandboxId());
+            data.put("provider", info.provider());
+            data.put("url", info.url());
+            data.put("createdAt", info.createdAt().toString());
+            String json = objectMapper.writeValueAsString(data);
+            redisTemplate.opsForValue().set(key, json, java.time.Duration.ofHours(2));
+            log.debug("[G3SandboxService] 沙箱信息已缓存到 Redis: jobId={}", jobId);
+        } catch (Exception e) {
+            log.warn("[G3SandboxService] 缓存沙箱信息到 Redis 失败: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 从 Redis 移除沙箱缓存
+     */
+    private void removeSandboxFromRedis(UUID jobId) {
+        try {
+            String key = SANDBOX_CACHE_PREFIX + jobId.toString();
+            redisTemplate.delete(key);
+            log.debug("[G3SandboxService] Redis 沙箱缓存已清理: jobId={}", jobId);
+        } catch (Exception e) {
+            log.warn("[G3SandboxService] 清理 Redis 沙箱缓存失败: {}", e.getMessage());
+        }
     }
 
     /**
@@ -1210,8 +1259,7 @@ public class G3SandboxService {
     private CompileResult runLocalMavenBuild(
             G3JobEntity job,
             List<G3ArtifactEntity> artifacts,
-            Consumer<G3LogEntry> logConsumer
-    ) {
+            Consumer<G3LogEntry> logConsumer) {
         long start = System.currentTimeMillis();
 
         Path workDir = LOCAL_SANDBOX_ROOT
@@ -1293,13 +1341,15 @@ public class G3SandboxService {
      */
     private void materializeArtifactsToLocal(Path workDir, List<G3ArtifactEntity> artifacts) throws IOException {
         for (G3ArtifactEntity artifact : artifacts) {
-            if (artifact == null || artifact.getFilePath() == null) continue;
+            if (artifact == null || artifact.getFilePath() == null)
+                continue;
             Path filePath = workDir.resolve(artifact.getFilePath());
             Path parent = filePath.getParent();
             if (parent != null) {
                 Files.createDirectories(parent);
             }
-            Files.writeString(filePath, artifact.getContent() == null ? "" : artifact.getContent(), StandardCharsets.UTF_8);
+            Files.writeString(filePath, artifact.getContent() == null ? "" : artifact.getContent(),
+                    StandardCharsets.UTF_8);
         }
     }
 
@@ -1307,7 +1357,8 @@ public class G3SandboxService {
      * 生成 BeanConverter 工具类（最小可用版）
      *
      * 背景：
-     * - 模型在生成 Service/Controller 时，容易引用 `com.ingenio.backend.util.BeanConverter` 做对象转换
+     * - 模型在生成 Service/Controller 时，容易引用 `com.ingenio.backend.util.BeanConverter`
+     * 做对象转换
      * - 该类若不存在会导致编译失败，影响“一次性生成可交付”的成功率
      *
      * 设计原则：
@@ -1400,7 +1451,8 @@ public class G3SandboxService {
 
         public void start(InputStream inputStream) {
             thread = new Thread(() -> {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         sb.append(line).append('\n');
@@ -1441,20 +1493,19 @@ public class G3SandboxService {
         // Maven/javac错误格式：[ERROR] /path/to/File.java:[line,column] error: message
         // 兼容 Windows 路径（C:\path\to\File.java）
         Pattern mavenPattern = Pattern.compile(
-                "\\[ERROR\\]\\s+(.+?\\.java):\\[(\\d+),(\\d+)\\]\\s*(error|warning)?:?\\s*(.+)"
-        );
+                "\\[ERROR\\]\\s+(.+?\\.java):\\[(\\d+),(\\d+)\\]\\s*(error|warning)?:?\\s*(.+)");
 
         // javac直接输出格式：File.java:line: error: message
         Pattern javacPattern = Pattern.compile(
-                "(.+?\\.java):(\\d+):\\s*(error|warning)?:?\\s*(.+)"
-        );
+                "(.+?\\.java):(\\d+):\\s*(error|warning)?:?\\s*(.+)");
 
         // 去重：Maven 输出通常会重复打印同一错误（例如汇总段落），避免错误数量被放大
         Set<String> seen = new LinkedHashSet<>();
         String[] lines = output.split("\n");
 
         for (String line : lines) {
-            if (line == null) continue;
+            if (line == null)
+                continue;
             line = line.replace("\r", "");
             Matcher mavenMatcher = mavenPattern.matcher(line);
             if (mavenMatcher.find()) {
@@ -1520,18 +1571,18 @@ public class G3SandboxService {
 
         // 依赖下载失败
         if (normalized.contains("could not resolve dependencies") ||
-            normalized.contains("could not transfer artifact") ||
-            normalized.contains("failed to read artifact descriptor") ||
-            normalized.contains("cannot access central") ||
-            normalized.contains("could not find artifact")) {
+                normalized.contains("could not transfer artifact") ||
+                normalized.contains("failed to read artifact descriptor") ||
+                normalized.contains("cannot access central") ||
+                normalized.contains("could not find artifact")) {
             return "Maven依赖下载失败（网络问题或仓库不可用）";
         }
 
         // 网络超时
         if (normalized.contains("connection timed out") ||
-            normalized.contains("read timed out") ||
-            normalized.contains("connect timed out") ||
-            normalized.contains("sockettimeoutexception")) {
+                normalized.contains("read timed out") ||
+                normalized.contains("connect timed out") ||
+                normalized.contains("sockettimeoutexception")) {
             return "网络连接超时";
         }
 
@@ -1542,15 +1593,15 @@ public class G3SandboxService {
 
         // Maven仓库认证/访问问题
         if (normalized.contains("not authorized") ||
-            normalized.contains("access denied") ||
-            normalized.contains("transfer failed")) {
+                normalized.contains("access denied") ||
+                normalized.contains("transfer failed")) {
             return "Maven仓库访问失败";
         }
 
         // 未知构建失败但无Java编译错误（很可能是环境问题）
         if (normalized.contains("build failure") &&
-            !normalized.contains(".java:") &&
-            !normalized.contains("error:")) {
+                !normalized.contains(".java:") &&
+                !normalized.contains("error:")) {
             return "构建失败（可能是环境问题）";
         }
 
@@ -1619,22 +1670,28 @@ public class G3SandboxService {
         int limit = 80;
         int count = 0;
         for (String raw : lines) {
-            if (raw == null) continue;
+            if (raw == null)
+                continue;
             String line = raw.trim();
-            if (line.isEmpty()) continue;
-            if (line.startsWith("[ERROR]") || line.contains("BUILD FAILURE") || line.contains("Failed to execute goal")) {
+            if (line.isEmpty())
+                continue;
+            if (line.startsWith("[ERROR]") || line.contains("BUILD FAILURE")
+                    || line.contains("Failed to execute goal")) {
                 sb.append(line).append("\n");
                 count++;
-                if (count >= limit) break;
+                if (count >= limit)
+                    break;
             }
         }
         if (sb.isEmpty()) {
             // 没有明显错误行则取末尾
             int tail = Math.min(60, lines.length);
             for (int i = lines.length - tail; i < lines.length; i++) {
-                if (i < 0) continue;
+                if (i < 0)
+                    continue;
                 String line = lines[i].trim();
-                if (line.isEmpty()) continue;
+                if (line.isEmpty())
+                    continue;
                 sb.append(line).append("\n");
             }
         }
@@ -1685,7 +1742,8 @@ public class G3SandboxService {
 
         try {
             // 说明：
-            // - OpenLovable-CN 的 /api/sandbox-status 当前返回字段为 { active, healthy, sandboxData }
+            // - OpenLovable-CN 的 /api/sandbox-status 当前返回字段为 { active, healthy, sandboxData
+            // }
             // - 不支持通过 query 参数精准查询某个 sandboxId，因此这里只能“查询当前活跃沙箱”的健康状态
             String url = openLovableBaseUrl + "/api/sandbox-status";
 
@@ -1694,8 +1752,8 @@ public class G3SandboxService {
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> result = objectMapper.readValue(
                         response.getBody(),
-                        new TypeReference<Map<String, Object>>() {}
-                );
+                        new TypeReference<Map<String, Object>>() {
+                        });
 
                 boolean active = Boolean.TRUE.equals(result.get("active"));
                 boolean healthy = Boolean.TRUE.equals(result.get("healthy"));
@@ -1752,11 +1810,10 @@ public class G3SandboxService {
 
             G3ArtifactEntity pomArtifact = G3ArtifactEntity.create(
                     job.getId(),
-                    "pom.xml",  // 放在项目根目录
+                    "pom.xml", // 放在项目根目录
                     pomContent,
                     G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
-                    job.getCurrentRound()
-            );
+                    job.getCurrentRound());
 
             allArtifacts.add(pomArtifact);
             logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.EXECUTOR, "pom.xml生成完成"));
@@ -1773,8 +1830,7 @@ public class G3SandboxService {
                     "src/main/java/com/ingenio/backend/config/UUIDv8TypeHandler.java",
                     typeHandlerContent,
                     G3ArtifactEntity.GeneratedBy.BACKEND_CODER,
-                    job.getCurrentRound()
-            );
+                    job.getCurrentRound());
             allArtifacts.add(typeHandlerArtifact);
         }
 
