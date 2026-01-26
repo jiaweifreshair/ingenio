@@ -33,12 +33,17 @@ class PlanRoutingServiceTest {
         BillingService billingService = Mockito.mock(BillingService.class);
         OpenLovableService openLovableService = Mockito.mock(OpenLovableService.class);
         UserMapper userMapper = Mockito.mock(UserMapper.class);
+        ProjectService projectService = Mockito.mock(ProjectService.class);
+        com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer = Mockito
+                .mock(com.ingenio.backend.service.NLRequirementAnalyzer.class);
 
         PlanRoutingController controller = new PlanRoutingController(
                 appSpecService,
                 billingService,
                 openLovableService,
-                userMapper);
+                userMapper,
+                projectService,
+                nlRequirementAnalyzer);
 
         Mockito.when(appSpecService.getById(Mockito.any())).thenReturn(null);
 

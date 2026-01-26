@@ -50,7 +50,7 @@ public class UniaixAIProvider implements AIProvider {
 
     public UniaixAIProvider(
             @Value("${ingenio.ai.uniaix.base-url:https://api.uniaix.com}") String baseUrl,
-            @Value("${ingenio.ai.uniaix.api-key}") String apiKey,
+            @Value("${ingenio.ai.uniaix.api-key:sk-placeholder}") String apiKey,
             @Value("${ingenio.ai.uniaix.default-model:claude-3-5-sonnet-20241022}") String defaultModel,
             @Value("${ingenio.ai.uniaix.timeout:180000}") int timeout
     ) {

@@ -10,14 +10,14 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  CheckCircle2,
-  Edit2,
   ArrowRight,
+  Edit2,
+  CheckCircle2,
   FileText,
   Database,
   Cpu,
   Layout,
-  AlertTriangle
+  Palette
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type {
@@ -46,6 +46,38 @@ export interface StepResultDisplayProps {
   showConfirmButton?: boolean;
   /** 是否显示修改按钮（默认显示） */
   showModifyButton?: boolean;
+}
+
+/**
+ * 提取 Step1「关键实体」的展示文本
+ *
+ * 是什么：面向 UI 的实体展示文本提取器。
+ * 做什么：当实体是 JSON/类 JSON 字符串时，优先提取 `description` 字段用于页面展示。
+ * 为什么：上下文需要保留完整 JSON 以便后续推理，但页面仅展示中文描述以提升可读性。
+ */
+function getStep1EntityDisplayText(entity: string): string {
+  const trimmed = entity.trim();
+  if (!trimmed) return '';
+
+  // 1) 优先尝试解析严格 JSON（若后端直接返回可解析对象字符串）
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        const description = typeof record.description === 'string' ? record.description.trim() : '';
+        if (description) return description;
+      }
+    } catch {
+      // 忽略：很多模型会返回“类 JSON”（例如 attributes 使用 {a,b,c}），无法直接 JSON.parse
+    }
+
+    // 2) 兼容“类 JSON”兜底：用正则提取 description 字段
+    const match = trimmed.match(/"description"\s*:\s*"([^"]+)"/);
+    if (match?.[1]) return match[1].trim();
+  }
+
+  return trimmed;
 }
 
 /**
@@ -89,7 +121,7 @@ function Step1Display({
         <div className="flex flex-wrap gap-2">
           {data.entities.map((entity, index) => (
             <Badge key={index} variant="secondary" className="text-sm">
-              {entity}
+              {getStep1EntityDisplayText(entity)}
             </Badge>
           ))}
         </div>
@@ -495,6 +527,12 @@ function Step4Display({
 /**
  * Step 5: 复杂度与风险评估结果展示
  */
+/**
+ * Step 5: 交互设计与体验评估结果展示
+ */
+/**
+ * Step 5: 交互设计与体验评估结果展示
+ */
 function Step5Display({
   data,
   onConfirm,
@@ -514,50 +552,127 @@ function Step5Display({
   showConfirmButton?: boolean;
   showModifyButton?: boolean;
 }) {
+  const [selectedStyleId, setSelectedStyleId] = React.useState<string | null>(
+    data.styleVariants?.[0]?.styleId ?? null
+  );
+
+  // 如果有设计风格变体，展示风格选择界面
+  if (data.styleVariants && data.styleVariants.length > 0) {
+    return (
+      <Card className="p-6 space-y-6 border-2 border-purple-200 dark:border-purple-800 bg-purple-50/30 dark:bg-purple-900/10">
+        <div className="flex items-center gap-3 pb-4 border-b border-purple-200 dark:border-purple-800">
+          <Palette className="h-6 w-6 text-purple-600" />
+          <div>
+            <h3 className="text-xl font-semibold">交互设计与风格决策</h3>
+            {data.designConfidence && (
+              <div className="text-xs text-muted-foreground mt-1">
+                AI 置信度: {Math.round(data.designConfidence * 100)}% | 意图: {data.designIntent}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {data.styleVariants.map((variant) => {
+            const isSelected = selectedStyleId === variant.styleId;
+            return (
+              <div
+                key={variant.styleId}
+                onClick={() => setSelectedStyleId(variant.styleId)}
+                className={cn(
+                  "cursor-pointer rounded-lg border-2 p-4 transition-all hover:scale-105",
+                  isSelected
+                    ? "border-purple-600 bg-purple-100/50 dark:bg-purple-900/30 shadow-md"
+                    : "border-transparent bg-background/50 hover:border-purple-300"
+                )}
+              >
+                <div className="aspect-video w-full rounded-md bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-900 mb-3 flex items-center justify-center overflow-hidden relative">
+                   {/* 简单的色块模拟预览 */}
+                   <div className={cn("w-full h-full opacity-60", 
+                      variant.styleCode.includes('minimal') ? "bg-slate-200" :
+                      variant.styleCode.includes('vibrant') ? "bg-orange-200" :
+                      "bg-blue-200"
+                   )} />
+                   <div className="absolute inset-0 flex items-center justify-center font-mono text-xs opacity-50">
+                      {variant.styleCode}
+                   </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <h4 className="font-semibold text-sm">{variant.styleName}</h4>
+                  {isSelected && <CheckCircle2 className="w-4 h-4 text-purple-600" />}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-3 pt-4 border-t border-purple-200 dark:border-purple-800">
+           {showModifyButton && (
+            <Button variant="ghost" onClick={onModify} disabled={loading}>
+              <Edit2 className="w-4 h-4 mr-2" />
+              调整需求
+            </Button>
+          )}
+          {showConfirmButton && (
+            <Button onClick={onConfirm} disabled={loading} className="flex-1 bg-purple-600 hover:bg-purple-700">
+              <CheckCircle2 className="w-4 h-4 mr-2" />
+              确认使用此风格
+            </Button>
+          )}
+        </div>
+      </Card>
+    );
+  }
+
+  // 默认 fallback：原有体验评估视图
   const getRiskColor = (level: 'HIGH' | 'MEDIUM' | 'LOW') => {
     switch (level) {
-      case 'HIGH': return 'text-red-600 dark:text-red-400';
-      case 'MEDIUM': return 'text-yellow-600 dark:text-yellow-400';
-      case 'LOW': return 'text-green-600 dark:text-green-400';
+      case 'HIGH': return 'text-purple-600 dark:text-purple-400';
+      case 'MEDIUM': return 'text-pink-600 dark:text-pink-400';
+      case 'LOW': return 'text-blue-600 dark:text-blue-400';
     }
   };
 
   const getRiskIcon = (level: 'HIGH' | 'MEDIUM' | 'LOW') => {
     switch (level) {
-      case 'HIGH': return '🔴';
-      case 'MEDIUM': return '🟡';
-      case 'LOW': return '🟢';
+      case 'HIGH': return '⚡';
+      case 'MEDIUM': return '🎨';
+      case 'LOW': return '✨';
     }
   };
 
   return (
-    <Card className="p-6 space-y-6 border-2 border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-900/10">
-      <div className="flex items-center gap-3 pb-4 border-b border-red-200 dark:border-red-800">
-        <AlertTriangle className="h-6 w-6 text-red-600" />
-        <h3 className="text-xl font-semibold">复杂度与风险评估结果</h3>
+    <Card className="p-6 space-y-6 border-2 border-purple-200 dark:border-purple-800 bg-purple-50/30 dark:bg-purple-900/10">
+      <div className="flex items-center gap-3 pb-4 border-b border-purple-200 dark:border-purple-800">
+        <Palette className="h-6 w-6 text-purple-600" />
+        <h3 className="text-xl font-semibold">交互设计与体验评估</h3>
       </div>
 
-      {/* 开发复杂度评分 */}
+      {/* 交互体感评分 */}
       <div className="space-y-2">
-        <h4 className="text-sm font-medium text-muted-foreground">📊 开发复杂度评分</h4>
+        <h4 className="text-sm font-medium text-muted-foreground">✨ 交互体感评分</h4>
         <div className="flex items-center gap-4">
-          <div className="text-4xl font-bold">{data.complexityScore}/10</div>
+          <div className="text-4xl font-bold text-purple-600">{data.complexityScore}/10</div>
           <div className="text-sm text-muted-foreground">
-            {data.complexityScore >= 8 ? '高复杂度' : data.complexityScore >= 5 ? '中等复杂度' : '低复杂度'}
+            {data.complexityScore >= 8 ? '极致体验' : data.complexityScore >= 5 ? '标准体验' : '基础体验'}
           </div>
         </div>
       </div>
 
-      {/* 复杂度细分 */}
+      {/* 设计维度拆解 (原复杂度拆解) */}
       <div className="space-y-2">
-        <h4 className="text-sm font-medium text-muted-foreground">📈 复杂度细分</h4>
+        <h4 className="text-sm font-medium text-muted-foreground">📐 设计维度模型</h4>
         <div className="space-y-2">
           {Object.entries(data.complexityBreakdown).map(([key, value]) => (
             <div key={key} className="flex items-center gap-2">
-              <span className="text-sm w-24">{key === 'frontend' ? '前端' : key === 'backend' ? '后端' : key === 'database' ? '数据库' : '集成'}:</span>
+              <span className="text-sm w-24">
+                {key === 'frontend' ? '界面交互' : 
+                 key === 'backend' ? '流程逻辑' : 
+                 key === 'database' ? '信息架构' : '视觉表现'}
+              </span>
               <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
                 <div
-                  className="h-full bg-blue-500 transition-all duration-500"
+                  className="h-full bg-purple-500 transition-all duration-500"
                   style={{ width: `${value * 10}%` }}
                 />
               </div>
@@ -567,9 +682,9 @@ function Step5Display({
         </div>
       </div>
 
-      {/* 技术风险点 */}
+      {/* 体验痛点与挑战 (原技术风险) */}
       <div className="space-y-2">
-        <h4 className="text-sm font-medium text-muted-foreground">⚠️ 技术风险点</h4>
+        <h4 className="text-sm font-medium text-muted-foreground">💡 体验痛点与挑战</h4>
         <div className="space-y-2">
           {['HIGH', 'MEDIUM', 'LOW'].map((level) => {
             const risks = data.risks.filter(r => r.level === level);
@@ -578,11 +693,14 @@ function Step5Display({
             return (
               <div key={level} className="space-y-1">
                 <h5 className={cn("text-sm font-semibold", getRiskColor(level as 'HIGH' | 'MEDIUM' | 'LOW'))}>
-                  {getRiskIcon(level as 'HIGH' | 'MEDIUM' | 'LOW')} {level === 'HIGH' ? '高风险' : level === 'MEDIUM' ? '中风险' : '低风险'}
+                  {getRiskIcon(level as 'HIGH' | 'MEDIUM' | 'LOW')} {
+                    level === 'HIGH' ? '核心痛点' : 
+                    level === 'MEDIUM' ? '体验提升点' : '优化建议'
+                  }
                 </h5>
                 <ul className="space-y-1 ml-6">
                   {risks.map((risk, index) => (
-                    <li key={index} className="text-sm">• {risk.description}</li>
+                    <li key={index} className="text-sm text-foreground/80">• {risk.description}</li>
                   ))}
                 </ul>
               </div>
@@ -591,32 +709,32 @@ function Step5Display({
         </div>
       </div>
 
-      {/* 预估工作量 */}
+      {/* 设计资源预估 (原工作量预估) */}
       <div className="space-y-2">
-        <h4 className="text-sm font-medium text-muted-foreground">📦 预估工作量</h4>
+        <h4 className="text-sm font-medium text-muted-foreground">🎨 设计资源预估</h4>
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <div className="text-xs text-muted-foreground">功能点数量</div>
+            <div className="text-xs text-muted-foreground">关键页面</div>
             <div className="text-lg font-semibold">{data.estimatedWorkload.featureCount}个</div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground">预估开发周期</div>
+            <div className="text-xs text-muted-foreground">设计周期</div>
             <div className="text-lg font-semibold">{data.estimatedWorkload.estimatedWeeks}</div>
           </div>
           <div>
-            <div className="text-xs text-muted-foreground">团队规模建议</div>
+            <div className="text-xs text-muted-foreground">设计师</div>
             <div className="text-lg font-semibold">{data.estimatedWorkload.teamSize}</div>
           </div>
         </div>
       </div>
 
-      {/* 风险缓解措施 */}
+      {/* 设计优化策略 (原缓解措施) */}
       <div className="space-y-2">
-        <h4 className="text-sm font-medium text-muted-foreground">🛡️ 风险缓解措施</h4>
+        <h4 className="text-sm font-medium text-muted-foreground">🚀 设计优化策略</h4>
         <ul className="space-y-1">
           {data.mitigations.map((mitigation, index) => (
             <li key={index} className="text-sm flex items-start gap-2">
-              <span className="text-green-600 mt-0.5">✓</span>
+              <span className="text-purple-600 mt-0.5">✓</span>
               <span>{mitigation}</span>
             </li>
           ))}

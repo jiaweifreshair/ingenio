@@ -1809,7 +1809,12 @@ public class OpenLovableController {
 
                 if (line.startsWith("data: ")) {
                     // 轻量统计：避免对每个 chunk 做 JSON 解析
-                    if (line.contains("\"type\":\"stream\"") || line.contains("\"type\":\"content\"")) {
+                    // 只在增量中检测到 <file 标签时才认为“产生了可部署代码”
+                    // 否则可能出现：上游仅输出 status/空 stream，导致代理误判成功而前端最终拿到空代码
+                    if ((line.contains("\"type\":\"stream\"")
+                            || line.contains("\"type\":\"content\"")
+                            || line.contains("\"type\":\"conversation\""))
+                            && line.contains("<file")) {
                         hasDelta = true;
                     }
 
@@ -1842,6 +1847,24 @@ public class OpenLovableController {
                             Map<String, Object> eventData = mapper.readValue(jsonStr, Map.class);
                             Object generatedCodeObj = eventData.get("generatedCode");
                             String generatedCode = generatedCodeObj instanceof String ? (String) generatedCodeObj : "";
+
+                            // V2.2新增：如果AI输出不包含 <file> 标签，尝试自动转换格式
+                            if (generatedCode != null && !generatedCode.trim().isEmpty()
+                                    && !generatedCode.contains("<file")) {
+                                log.info("检测到AI输出缺少 <file> 标签，尝试自动格式转换...");
+                                String converted = OpenLovableResponseSanitizer.convertToFileFormat(generatedCode);
+                                if (converted != null && converted.contains("<file")) {
+                                    log.info("格式转换成功，原长度: {}, 转换后长度: {}", generatedCode.length(), converted.length());
+                                    eventData.put("generatedCode", converted);
+                                    // 重新序列化并更新 line
+                                    String updatedJson = mapper.writeValueAsString(eventData);
+                                    line = "data: " + updatedJson;
+                                    generatedCode = converted;
+                                } else {
+                                    log.warn("格式转换失败，AI输出可能不是有效代码");
+                                }
+                            }
+
                             if (generatedCode != null && !generatedCode.trim().isEmpty()
                                     && generatedCode.contains("<file")) {
                                 hasCompleteCode = true;
@@ -1850,7 +1873,7 @@ public class OpenLovableController {
                                 shouldForward = false;
                             }
                         } catch (Exception parseError) {
-                            // 解析失败时不影响转发，但也不将其计为“有效完整代码”
+                            // 解析失败时不影响转发，但也不将其计为"有效完整代码"
                             log.warn("解析OpenLovable complete事件失败，将继续转发原始数据: {}", parseError.getMessage());
                         }
                     }

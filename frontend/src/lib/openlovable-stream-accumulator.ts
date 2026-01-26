@@ -17,6 +17,8 @@ export interface OpenLovableSseMessage {
   type?: string;
   text?: string;
   content?: string;
+  /** 兼容：部分上游将 stream 增量字段命名为 delta */
+  delta?: string;
   generatedCode?: string;
   message?: string;
   error?: string;
@@ -76,6 +78,7 @@ export function applyOpenLovableSseMessage(
   }
 
   const isLikelyFileTagCode = (text: string) => text.includes('<file') && text.includes('</file>');
+  const looksLikeFileTagDelta = (text: string) => text.includes('<file');
 
   if (message.type === 'complete') {
     if (
@@ -114,10 +117,24 @@ export function applyOpenLovableSseMessage(
         ? message.text
         : typeof message.content === 'string' && message.content
           ? message.content
+          : typeof message.delta === 'string' && message.delta
+            ? message.delta
           : '';
 
     if (delta) {
       return { streamedText: mergeStreamDelta(prev.streamedText, delta), finalCode: null };
+    }
+  }
+
+  /**
+   * conversation 兜底：
+   * - 少数上游会把完整（或近似完整）的 <file ...>...</file> 放在 conversation.text 里
+   * - 为避免污染，仅当其看起来像文件标签输出时才纳入增量合并
+   */
+  if (message.type === 'conversation') {
+    const text = typeof message.text === 'string' ? message.text : '';
+    if (text && looksLikeFileTagDelta(text)) {
+      return { streamedText: mergeStreamDelta(prev.streamedText, text), finalCode: null };
     }
   }
 

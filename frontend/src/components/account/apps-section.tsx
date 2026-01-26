@@ -130,7 +130,8 @@ export function AppsSection(): React.ReactElement {
   const getStatusBadge = (status: ProjectStatus) => {
     const statusConfig: Record<ProjectStatus, { variant: "default" | "secondary" | "destructive" | "outline"; text: string }> = {
       [ProjectStatus.DRAFT]: { variant: "outline", text: "草稿" },
-      [ProjectStatus.PUBLISHED]: { variant: "default", text: "已发布" },
+      [ProjectStatus.GENERATING]: { variant: "default", text: "生成中" },
+      [ProjectStatus.COMPLETED]: { variant: "default", text: "生成完成" },
       [ProjectStatus.ARCHIVED]: { variant: "secondary", text: "已归档" },
     }
     const config = statusConfig[status]

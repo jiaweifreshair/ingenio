@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 import { getApiBaseUrl } from "@/lib/api/base-url";
 import { getBenchmarkHtmlRaw, listBenchmarks, type BenchmarkSummary } from "@/lib/api/benchmarks";
 import { ExternalLink, Loader2, RefreshCw } from "lucide-react";
+import { TopNav } from "@/components/layout/top-nav";
 
 const TSX_PREVIEW_ROUTE: Record<string, string> = {
   index: "/examples",
@@ -89,6 +90,7 @@ export default function BenchmarksPage() {
 
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
+      <TopNav />
       <div className="container mx-auto py-10 space-y-6 max-w-7xl">
         <div className="flex items-center justify-between gap-4">
           <div className="min-w-0">

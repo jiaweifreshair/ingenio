@@ -79,6 +79,16 @@ spring:
       embedding:
         enabled: true
 
+# Ingenio AI配置
+ingenio:
+  ai:
+    # ECA Gateway（EdgeCloud AI 网关）- 用于 Gemini 模型
+    eca-gateway:
+      enabled: true
+      base-url: ${AIGATEWAY_URL:https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01}
+      api-key: ${AIGATEWAY_TOKEN:8aeb4b6f3eac44cbad8c11db4483be42}
+      model: ${AIGATEWAY_MODEL:gemini-3-pro-preview}
+
   # Redis配置
   redis:
     host: ${REDIS_HOST:localhost}
@@ -257,8 +267,6 @@ jeecg:
     base-url: ${JEECG_PAY_BASE_URL:http://localhost:18080}
     notify-url: ${JEECG_PAY_NOTIFY_URL:http://localhost:8080/api/v1/billing/notify/alipay}
 
-# 应用自定义配置
-ingenio:
   admin:
     service-jwt:
       enabled: true
@@ -311,7 +319,7 @@ ingenio:
       # UniAix API基础URL（可包含或不包含 /v1）
       base-url: ${UNIAIX_BASE_URL:https://www.uniaix.com}
       # UniAix API密钥
-      api-key: ${UNIAIX_API_KEY:}
+      api-key: ${UNIAIX_API_KEY:sk-placeholder}
       # 默认模型（支持Claude、GPT、Gemini等多种模型）
       default-model: ${UNIAIX_DEFAULT_MODEL:claude-3-5-sonnet-20241022}
       # Embedding模型
@@ -383,7 +391,7 @@ ingenio:
     providers:
       claude:
         base-url: ${INGENIO_LC4J_CLAUDE_BASE_URL:https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01}
-        api-key: ${INGENIO_LC4J_CLAUDE_API_KEY:}
+        api-key: ${INGENIO_LC4J_CLAUDE_API_KEY:sk-placeholder}
         model: ${INGENIO_LC4J_CLAUDE_MODEL:claude-opus-4-5-20251101}
         temperature: 0.2
         max-tokens: ${INGENIO_LC4J_CLAUDE_MAX_TOKENS:12000}
@@ -391,7 +399,7 @@ ingenio:
         max-retries: 2
       gemini:
         base-url: ${INGENIO_LC4J_GEMINI_BASE_URL:https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01}
-        api-key: ${INGENIO_LC4J_GEMINI_API_KEY:}
+        api-key: ${INGENIO_LC4J_GEMINI_API_KEY:sk-placeholder}
         model: ${INGENIO_LC4J_GEMINI_MODEL:gemini-3-pro-high}
         temperature: 0.2
         max-tokens: 6000
@@ -399,7 +407,7 @@ ingenio:
         max-retries: 2
       deepseek:
         base-url: ${INGENIO_LC4J_DEEPSEEK_BASE_URL:https://api.qnaigc.com/v1}
-        api-key: ${INGENIO_LC4J_DEEPSEEK_API_KEY:}
+        api-key: ${INGENIO_LC4J_DEEPSEEK_API_KEY:sk-placeholder}
         model: ${INGENIO_LC4J_DEEPSEEK_MODEL:deepseek-r1-0528}
         temperature: 0.2
         max-tokens: 6000
@@ -408,7 +416,7 @@ ingenio:
       uniaix:
         # Uniaix OpenAI 兼容网关（支持自动补齐 /v1）
         base-url: ${UNIAIX_BASE_URL:https://www.uniaix.com}
-        api-key: ${UNIAIX_API_KEY:}
+        api-key: ${UNIAIX_API_KEY:sk-placeholder}
         embedding-model: ${UNIAIX_EMBEDDING_MODEL:text-embedding-3-large}
         # 兜底模型需支持 2048 维（text-embedding-3-large 可配置降维至 2048）
         embedding-fallback-model: ${UNIAIX_EMBEDDING_FALLBACK_MODEL:text-embedding-3-large}
@@ -516,7 +524,7 @@ ingenio:
     sandbox:
       # 可选值：e2b（默认，OpenLovable/E2B 远程沙箱） / local（本地 Maven） / goose（外部执行器，本地落盘）
       provider: e2b
-      e2b-api-key: ${E2B_API_KEY:}
+      e2b-api-key: ${E2B_API_KEY:sk-placeholder}
       compile-timeout: 300
       max-rounds: 20
       goose:

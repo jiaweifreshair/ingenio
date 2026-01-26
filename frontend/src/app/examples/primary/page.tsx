@@ -36,14 +36,14 @@ export default function PrimarySchoolPage() {
       <div className="p-4">
         <Link href="/examples" className="inline-flex items-center text-orange-600 font-bold hover:bg-orange-100 px-4 py-2 rounded-full transition-colors">
           <ArrowLeft className="w-5 h-5 mr-2" />
-          Back to Gallery
+          返回示例库
         </Link>
       </div>
 
       <div className="max-w-4xl mx-auto px-4 py-8">
         <div className="text-center mb-10">
-          <h1 className="text-5xl font-extrabold text-orange-500 mb-4 drop-shadow-sm">My Safety Guardian 🛡️</h1>
-          <p className="text-xl text-stone-600 font-medium">Find hidden dangers in your home with AI Magic!</p>
+          <h1 className="text-5xl font-extrabold text-orange-500 mb-4 drop-shadow-sm">我的安全小卫士 🛡️</h1>
+          <p className="text-xl text-stone-600 font-medium">用 AI 魔法发现家里的隐藏危险！</p>
         </div>
 
         {/* Main Game Stage */}
@@ -55,13 +55,13 @@ export default function PrimarySchoolPage() {
               <div className="w-32 h-32 bg-orange-100 rounded-full flex items-center justify-center mx-auto mb-6 animate-bounce">
                 <Camera className="w-16 h-16 text-orange-500" />
               </div>
-              <h2 className="text-3xl font-bold text-slate-800 mb-4">Scan My Room</h2>
-              <p className="text-lg text-slate-500 mb-8">Take a picture of your living room or kitchen. The Guardian will look for safety secrets!</p>
+              <h2 className="text-3xl font-bold text-slate-800 mb-4">扫描我的房间</h2>
+              <p className="text-lg text-slate-500 mb-8">拍一张客厅或厨房的照片。安全小卫士会帮你寻找秘密！</p>
               <Button 
                 onClick={handleScan}
                 className="w-full text-xl py-8 rounded-2xl bg-orange-500 hover:bg-orange-600 text-white shadow-lg border-b-4 border-orange-700 active:border-b-0 active:translate-y-1 transition-all"
               >
-                Start Magic Scan ✨
+                开始魔法扫描 ✨
               </Button>
             </Card>
           )}
@@ -76,9 +76,9 @@ export default function PrimarySchoolPage() {
                 </div>
               </div>
               <h2 className="text-3xl font-bold text-slate-700 animate-pulse">
-                {analyzing ? "Thinking..." : "Almost there!"}
+                {analyzing ? "思考中..." : "马上就好！"}
               </h2>
-              <p className="text-xl text-slate-500 mt-4">Looking for sharp corners... Checking wires...</p>
+              <p className="text-xl text-slate-500 mt-4">正在寻找尖锐的角落... 检查电线...</p>
             </div>
           )}
 
@@ -89,10 +89,10 @@ export default function PrimarySchoolPage() {
                 <div>
                   <h2 className="text-2xl font-bold text-red-600 flex items-center gap-2">
                     <AlertTriangle className="w-8 h-8" />
-                    Oh no! Found 2 Dangers!
+                    哎呀！发现了2个隐患！
                   </h2>
                 </div>
-                <Badge className="bg-red-500 text-white text-lg px-4 py-1">Score: 80/100</Badge>
+                <Badge className="bg-red-500 text-white text-lg px-4 py-1">安全分: 80/100</Badge>
               </div>
               
               <div className="p-8">
@@ -100,15 +100,15 @@ export default function PrimarySchoolPage() {
                   <div className="flex items-center p-4 bg-orange-50 rounded-2xl border-2 border-orange-100">
                     <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-2xl mr-4 shadow-sm">🔌</div>
                     <div className="flex-1">
-                      <h3 className="font-bold text-slate-800 text-lg">Overloaded Socket</h3>
-                      <p className="text-slate-500">Too many plugs in one place! It might get hot.</p>
+                      <h3 className="font-bold text-slate-800 text-lg">插座过载</h3>
+                      <p className="text-slate-500">太多插头挤在一起了！可能会变烫哦。</p>
                     </div>
                   </div>
                   <div className="flex items-center p-4 bg-orange-50 rounded-2xl border-2 border-orange-100">
                     <div className="w-12 h-12 bg-white rounded-xl flex items-center justify-center text-2xl mr-4 shadow-sm">🧸</div>
                     <div className="flex-1">
-                      <h3 className="font-bold text-slate-800 text-lg">Toys on Stairs</h3>
-                      <p className="text-slate-500">Someone might trip and fall!</p>
+                      <h3 className="font-bold text-slate-800 text-lg">楼梯上的玩具</h3>
+                      <p className="text-slate-500">可能会把人绊倒！</p>
                     </div>
                   </div>
                 </div>
@@ -117,7 +117,7 @@ export default function PrimarySchoolPage() {
                   onClick={handleFix}
                   className="w-full text-xl py-6 rounded-2xl bg-green-500 hover:bg-green-600 text-white shadow-lg border-b-4 border-green-700 active:border-b-0 active:translate-y-1 transition-all"
                 >
-                  Ask AI to Fix It! 🛠️
+                  请 AI 帮我修！ 🛠️
                 </Button>
               </div>
             </Card>
@@ -130,25 +130,25 @@ export default function PrimarySchoolPage() {
                 <div className="inline-flex items-center justify-center w-20 h-20 bg-green-100 rounded-full mb-4">
                   <Sparkles className="w-10 h-10 text-green-600" />
                 </div>
-                <h2 className="text-3xl font-bold text-green-700">Safe & Sound!</h2>
-                <p className="text-green-600 text-lg mt-2">Here is your safe room plan.</p>
+                <h2 className="text-3xl font-bold text-green-700">安全啦！</h2>
+                <p className="text-green-600 text-lg mt-2">这是你的安全房间变身计划。</p>
               </div>
               
               <div className="p-8">
                 <div className="bg-slate-100 rounded-2xl h-48 flex items-center justify-center mb-6 relative overflow-hidden group">
                   <div className="text-center">
                     <span className="text-6xl mb-2 block">🏡</span>
-                    <span className="text-slate-400 font-medium">Safe Room Visualization</span>
+                    <span className="text-slate-400 font-medium">安全房间效果图</span>
                   </div>
                   {/* Overlay simulating AI gen */}
                   <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent translate-x-[-100%] animate-[shimmer_2s_infinite]"></div>
                 </div>
 
                 <div className="bg-green-50 p-4 rounded-xl border border-green-100 mb-6">
-                  <h3 className="font-bold text-green-800 mb-2">Guardian Tips:</h3>
+                  <h3 className="font-bold text-green-800 mb-2">卫士小贴士：</h3>
                   <ul className="text-green-700 space-y-2">
-                    <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> Use a power strip with a switch.</li>
-                    <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> Put toys in the &apos;Treasure Box&apos; after playing.</li>
+                    <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> 使用带开关的接线板。</li>
+                    <li className="flex items-center gap-2"><CheckCircle2 className="w-4 h-4" /> 玩完玩具记得放回&apos;百宝箱&apos;。</li>
                   </ul>
                 </div>
 
@@ -157,7 +157,7 @@ export default function PrimarySchoolPage() {
                   variant="outline"
                   className="w-full text-lg py-6 rounded-2xl border-2 hover:bg-slate-50 text-slate-600"
                 >
-                  Scan Another Room 📸
+                  扫描另一个房间 📸
                 </Button>
               </div>
             </Card>

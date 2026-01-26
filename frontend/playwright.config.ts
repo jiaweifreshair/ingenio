@@ -21,6 +21,28 @@ process.env.NO_PROXY = process.env.NO_PROXY
 process.env.no_proxy = process.env.NO_PROXY;
 
 /**
+ * WebServer 启动策略
+ *
+ * 背景：
+ * - 在无外网环境下，`next dev` 可能触发 SWC 二进制下载而失败；
+ * - 但 `next start` 使用已构建产物（.next），通常更稳定。
+ *
+ * 用法：
+ * - 默认：`PLAYWRIGHT_WEB_SERVER_MODE` 未设置时使用 `dev`
+ * - 使用生产模式：`PLAYWRIGHT_WEB_SERVER_MODE=start`
+ * - 禁用自动启动（复用外部已启动的服务）：`PLAYWRIGHT_NO_WEB_SERVER=1`
+ */
+const WEB_SERVER_MODE = process.env.PLAYWRIGHT_WEB_SERVER_MODE || "dev";
+const WEB_SERVER_COMMAND =
+  process.env.PLAYWRIGHT_WEB_SERVER_COMMAND ||
+  (WEB_SERVER_MODE === "start"
+    ? "pnpm exec next start -H 127.0.0.1 -p 3000"
+    : "pnpm dev --hostname 127.0.0.1 --port 3000");
+// Playwright 用该 URL 探测 webServer 是否就绪；优先指向轻量健康检查接口，避免首页 SSR 阻塞导致误判
+const WEB_SERVER_URL =
+  process.env.PLAYWRIGHT_WEB_SERVER_URL || "http://127.0.0.1:3000/api/health";
+
+/**
  * Playwright配置 - E2E测试
  * 秒构AI端到端测试配置
  *
@@ -92,14 +114,14 @@ export default defineConfig({
         },
       ],
 
-  webServer: {
-    // 绑定到 127.0.0.1，避免在受限环境下监听 0.0.0.0 导致 EPERM
-    command: "pnpm dev --hostname 127.0.0.1 --port 3000",
-    // url 需与 hostname 保持一致，避免 Playwright 通过 localhost(IPv6) 探测时误判不可达
-    url: "http://127.0.0.1:3000",
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-    // stdout: 'ignore', // 减少日志噪音
-    // stderr: 'pipe',
-  },
+  webServer: process.env.PLAYWRIGHT_NO_WEB_SERVER === "1" ? undefined : {
+      // 绑定到 127.0.0.1，避免在受限环境下监听 0.0.0.0 导致 EPERM
+      command: WEB_SERVER_COMMAND,
+      // url 需与 hostname 保持一致，避免 Playwright 通过 localhost(IPv6) 探测时误判不可达
+      url: WEB_SERVER_URL,
+      reuseExistingServer: !process.env.CI,
+      timeout: 120 * 1000,
+      // stdout: 'ignore', // 减少日志噪音
+      // stderr: 'pipe',
+    },
 });

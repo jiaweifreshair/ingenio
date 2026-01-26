@@ -15,28 +15,28 @@ export default function MiddleSchoolPage() {
     setIsRunning(true);
     setLog([]);
     setActiveNode(1);
-    addLog("System: Starting logic flow...");
+    addLog("系统：启动逻辑流...");
 
     setTimeout(() => {
       setActiveNode(1);
-      addLog("Input: Gym Camera active. Retrieving feed...");
+      addLog("输入：体育馆摄像头已激活。正在获取画面...");
     }, 500);
 
     setTimeout(() => {
       setActiveNode(2);
-      addLog("Process: Analyzing crowd density...");
-      addLog("Process: Detected 45 people (Capacity: 40).");
+      addLog("处理：正在分析人群密度...");
+      addLog("处理：检测到 45 人（容量上限：40）。");
     }, 2000);
 
     setTimeout(() => {
       setActiveNode(3);
-      addLog("Logic: Threshold exceeded (45 > 40). Triggering Alert path.");
+      addLog("逻辑：超过阈值（45 > 40）。触发报警路径。");
     }, 4000);
 
     setTimeout(() => {
       setActiveNode(4);
-      addLog("Output: Broadcasting warning to Gym Speakers.");
-      addLog("Output: Sending SMS to Duty Teacher.");
+      addLog("输出：正在通过体育馆广播播放警告。");
+      addLog("输出：正在向值班老师发送短信。");
       setIsRunning(false);
     }, 6000);
   };
@@ -58,17 +58,17 @@ export default function MiddleSchoolPage() {
               <Activity className="w-5 h-5" />
             </div>
             <div>
-              <h1 className="font-bold text-lg leading-tight">Campus Logic Watch</h1>
-              <p className="text-xs text-slate-500">Project: Gym Overcrowding Guard</p>
+              <h1 className="font-bold text-lg leading-tight">校园逻辑哨兵</h1>
+              <p className="text-xs text-slate-500">项目：体育馆拥挤检测卫士</p>
             </div>
           </div>
         </div>
         <div className="flex gap-2">
            <Button variant="outline" onClick={() => { setIsRunning(false); setLog([]); setActiveNode(null); }}>
-            <RotateCcw className="w-4 h-4 mr-2" /> Reset
+            <RotateCcw className="w-4 h-4 mr-2" /> 重置
           </Button>
           <Button onClick={runSimulation} disabled={isRunning} className="bg-blue-600 hover:bg-blue-700">
-            <Play className="w-4 h-4 mr-2" /> {isRunning ? 'Running...' : 'Run Simulation'}
+            <Play className="w-4 h-4 mr-2" /> {isRunning ? '运行中...' : '运行模拟'}
           </Button>
         </div>
       </nav>
@@ -92,9 +92,9 @@ export default function MiddleSchoolPage() {
                 <div className={`relative z-10 w-64 p-4 rounded-xl border-2 transition-all duration-500 ${activeNode === 1 ? 'bg-white border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.5)] scale-105' : 'bg-white border-slate-200 shadow-sm'}`}>
                   <div className="flex items-center gap-3 mb-2">
                     <div className="p-2 bg-purple-100 text-purple-600 rounded-lg"><Camera className="w-5 h-5"/></div>
-                    <span className="font-bold text-slate-700">Input: Gym Camera</span>
+                    <span className="font-bold text-slate-700">输入：体育馆摄像头</span>
                   </div>
-                  <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded">Status: Online<br/>Resolution: 1080p</div>
+                  <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded">状态：在线<br/>分辨率：1080p</div>
                   
                   {/* Connector Line Vertical */}
                   <div className="absolute left-1/2 -bottom-16 w-0.5 h-16 bg-slate-300 -ml-[1px]">
@@ -109,9 +109,9 @@ export default function MiddleSchoolPage() {
                 <div className={`relative z-10 w-64 p-4 rounded-xl border-2 transition-all duration-500 ${activeNode === 2 ? 'bg-white border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.5)] scale-105' : 'bg-white border-slate-200 shadow-sm'}`}>
                    <div className="flex items-center gap-3 mb-2">
                     <div className="p-2 bg-yellow-100 text-yellow-600 rounded-lg"><Users className="w-5 h-5"/></div>
-                    <span className="font-bold text-slate-700">AI: Crowd Counter</span>
+                    <span className="font-bold text-slate-700">AI：人群计数器</span>
                   </div>
-                   <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded">Model: YOLOv8<br/>Confidence: 98%</div>
+                   <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded">模型：YOLOv8<br/>置信度：98%</div>
 
                    {/* Connector Line Vertical */}
                    <div className="absolute left-1/2 -bottom-16 w-0.5 h-16 bg-slate-300 -ml-[1px]"></div>
@@ -122,7 +122,7 @@ export default function MiddleSchoolPage() {
 
                 {/* Node 3: Logic Gate */}
                 <div className={`relative z-10 w-48 p-3 rounded-full border-2 text-center transition-all duration-500 ${activeNode === 3 ? 'bg-white border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.5)] scale-105' : 'bg-white border-slate-200 shadow-sm'}`}>
-                   <span className="font-mono font-bold text-slate-700 text-sm">IF Count &gt; 40</span>
+                   <span className="font-mono font-bold text-slate-700 text-sm">IF 人数 &gt; 40</span>
                    
                    {/* Connector Line Vertical */}
                    <div className="absolute left-1/2 -bottom-16 w-0.5 h-16 bg-slate-300 -ml-[1px]"></div>
@@ -135,9 +135,9 @@ export default function MiddleSchoolPage() {
                 <div className={`relative z-10 w-64 p-4 rounded-xl border-2 transition-all duration-500 ${activeNode === 4 ? 'bg-red-50 border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.5)] scale-105' : 'bg-white border-slate-200 shadow-sm'}`}>
                    <div className="flex items-center gap-3 mb-2">
                     <div className="p-2 bg-red-100 text-red-600 rounded-lg"><Bell className="w-5 h-5"/></div>
-                    <span className="font-bold text-slate-700">Action: Alert</span>
+                    <span className="font-bold text-slate-700">动作：报警</span>
                   </div>
-                   <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded">Target: Speakers, SMS<br/>Priority: High</div>
+                   <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded">目标：广播，短信<br/>优先级：高</div>
                 </div>
 
              </div>
@@ -148,11 +148,11 @@ export default function MiddleSchoolPage() {
         <div className="space-y-6">
           <Card className="p-6">
             <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-              <Server className="w-4 h-4 text-slate-500" /> System Logs
+              <Server className="w-4 h-4 text-slate-500" /> 系统日志
             </h3>
             <div className="bg-slate-950 rounded-lg p-4 h-[300px] overflow-y-auto font-mono text-xs text-green-400">
               {log.length === 0 ? (
-                <span className="text-slate-600">Ready to start simulation...</span>
+                <span className="text-slate-600">准备就绪，等待模拟...</span>
               ) : (
                 log.map((l, i) => <div key={i} className="mb-1">{l}</div>)
               )}
@@ -161,23 +161,23 @@ export default function MiddleSchoolPage() {
           </Card>
 
           <Card className="p-6">
-            <h3 className="font-semibold text-slate-900 mb-4">Module Palette</h3>
+            <h3 className="font-semibold text-slate-900 mb-4">组件库</h3>
             <div className="grid grid-cols-2 gap-3">
                <div className="p-3 bg-white border border-slate-200 rounded-lg text-center hover:border-blue-400 cursor-grab active:cursor-grabbing">
                   <div className="text-2xl mb-1">📷</div>
-                  <div className="text-xs font-medium">Camera</div>
+                  <div className="text-xs font-medium">摄像头</div>
                </div>
                <div className="p-3 bg-white border border-slate-200 rounded-lg text-center hover:border-blue-400 cursor-grab active:cursor-grabbing">
                   <div className="text-2xl mb-1">🌡️</div>
-                  <div className="text-xs font-medium">Temp Sensor</div>
+                  <div className="text-xs font-medium">温度传感器</div>
                </div>
                <div className="p-3 bg-white border border-slate-200 rounded-lg text-center hover:border-blue-400 cursor-grab active:cursor-grabbing">
                   <div className="text-2xl mb-1">🧠</div>
-                  <div className="text-xs font-medium">AI Analysis</div>
+                  <div className="text-xs font-medium">AI 分析</div>
                </div>
                <div className="p-3 bg-white border border-slate-200 rounded-lg text-center hover:border-blue-400 cursor-grab active:cursor-grabbing">
                   <div className="text-2xl mb-1">📢</div>
-                  <div className="text-xs font-medium">Speaker</div>
+                  <div className="text-xs font-medium">广播</div>
                </div>
             </div>
           </Card>

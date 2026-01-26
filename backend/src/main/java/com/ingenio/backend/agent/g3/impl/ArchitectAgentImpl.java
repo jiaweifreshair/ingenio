@@ -174,6 +174,27 @@ public class ArchitectAgentImpl implements IArchitectAgent {
             }
         }
 
+        // 注入分析上下文（M8 Enhanced）
+        if (job.getAnalysisContextJson() != null && !job.getAnalysisContextJson().isEmpty()) {
+            try {
+                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                mapper.registerModule(new com.fasterxml.jackson.datatype.jsr310.JavaTimeModule());
+                mapper.configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES,
+                        false);
+
+                com.ingenio.backend.entity.g3.AnalysisContextSummary summary = mapper.convertValue(
+                        job.getAnalysisContextJson(),
+                        com.ingenio.backend.entity.g3.AnalysisContextSummary.class);
+
+                String contextMarkdown = summary.formatAsMarkdown();
+                logConsumer.accept(G3LogEntry.info(getRole(), "注入分析上下文摘要 (" + summary.getCompressionLevel() + ")"));
+                requirement = requirement + "\n\n" + contextMarkdown;
+            } catch (Exception e) {
+                log.warn("[ArchitectAgent] 解析分析上下文失败: {}", e.getMessage());
+                // 不中断流程，降级继续
+            }
+        }
+
         try {
             // 1. 获取AI提供商
             AIProvider aiProvider = hookPipeline.wrapProvider(aiProviderFactory.getProvider(), job, logConsumer);

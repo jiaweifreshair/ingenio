@@ -37,14 +37,14 @@ import { Input } from '@/components/ui/input';
 	} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getToken } from '@/lib/auth/token';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { TypewriterCode } from '@/components/ui/typewriter-code';
 import { parseFilesFromResponse, type GeneratedFile } from '@/lib/ai-stream-parser';
 import {
   applyOpenLovableSseMessage,
   getInitialOpenLovableAccumulationState,
   getOpenLovableCodeForApply,
 } from '@/lib/openlovable-stream-accumulator';
+import { parseSseEvent, splitSseBuffer } from '@/lib/sse/sse-parser';
 import LivePreviewIframe from '@/components/code-generation/live-preview-iframe';
 import type { SandboxStatus } from '@/lib/sandbox/sandbox-manager';
 
@@ -98,6 +98,8 @@ interface AIMessage {
     | 'component';
   content?: string;
   text?: string;
+  /** 兼容：部分上游将 stream 增量字段命名为 delta */
+  delta?: string;
   generatedCode?: string;
   name?: string;
   args?: unknown;
@@ -237,7 +239,7 @@ export default function QuickPreviewPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
 
   // 🆕 运行时错误捕获
-  const [runtimeError, setRuntimeError] = useState<any>(null);
+  const [runtimeError, setRuntimeError] = useState<Error | null>(null);
 
   // 🆕 计时器状态
   const [startTime, setStartTime] = useState<number | null>(null);
@@ -290,7 +292,7 @@ export default function QuickPreviewPage() {
   }, [selectedFile]);
 
   /**
-   * 初始化：创建沙箱 + 生成代码
+   * 初始化：先生成代码，再创建沙箱并部署
    */
   useEffect(() => {
     if (stage === 'init' && !hasStartedRef.current) {
@@ -562,13 +564,18 @@ export default function QuickPreviewPage() {
         addLog('⚠️ Scout 连接失败，跳过侦察阶段');
       }
 
-      setStage('sandbox');
+      // Step 1: 先生成AI代码（sandboxId 传 'pending'，避免提前创建沙箱）
+      setStage('generating');
       setStreamedCode('');
       setGeneratedFiles([]);
       setCurrentFile(null);
+      addLog('🤖 AI正在生成代码（流式输出）...');
 
-      // Step 1: 创建沙箱
-      addLog('📦 创建AI沙箱（Vercel Sandbox）...');
+      const responseToApply = await generateCodeStream(requirement, 'pending', scoutContextRef.current);
+
+      // Step 2: 代码生成完成后创建沙箱
+      setStage('sandbox');
+      addLog('📦 代码生成完成，正在创建AI沙箱（Vercel Sandbox）...');
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
       const token = getToken();
       const sandboxResponse = await fetch(`${API_BASE_URL}/v1/openlovable/sandbox/create`, {
@@ -595,19 +602,73 @@ export default function QuickPreviewPage() {
       addLog(`✅ 沙箱创建成功: ${sandbox.sandboxId}`);
       addLog(`🌐 预览地址: ${sandbox.url}`);
 
-      // Step 2: 生成AI代码（SSE流式）
-      setStage('generating');
-      addLog('🤖 AI正在生成代码（流式输出）...');
+      // Step 3: 将生成的代码应用到沙箱
+      addLog(`📝 正在将代码应用到Sandbox... (响应长度: ${responseToApply.length} 字符)`);
 
-      await generateCodeStream(requirement, sandbox.sandboxId, scoutContextRef.current);
+      const applyResponse = await fetch(`${API_BASE_URL}/v1/openlovable/apply`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { 'Authorization': token } : {}),
+        },
+        body: JSON.stringify({
+          sandboxId: sandbox.sandboxId,
+          response: responseToApply
+        })
+      });
 
-      // Step 3: 生成完成
+      if (!applyResponse.ok) {
+        let detail = '';
+        try {
+          const body = await applyResponse.json();
+          const message = typeof body?.message === 'string' ? body.message : '';
+          detail = message ? `: ${message}` : '';
+        } catch {
+          // 忽略解析失败，保留状态码
+        }
+        throw new Error(`Apply API失败: ${applyResponse.status}${detail}`);
+      }
+
+      const applyResult = await applyResponse.json();
+      const filesWritten = applyResult.data?.filesWritten || 0;
+      addLog(`✅ 代码已成功写入Sandbox: ${filesWritten} 个文件`);
+
+      const filteredFiles = applyResult.data?.filteredFiles as string[] | undefined;
+      if (filteredFiles && filteredFiles.length > 0) {
+        addLog(`⚠️ 已过滤 ${filteredFiles.length} 个不安全/锁文件: ${filteredFiles.join(', ')}`);
+      }
+
+      const appliedSandboxId = typeof applyResult.data?.sandboxId === 'string' ? applyResult.data.sandboxId : null;
+      const appliedSandboxUrl =
+        typeof applyResult.data?.sandboxUrl === 'string'
+          ? applyResult.data.sandboxUrl
+          : typeof applyResult.data?.url === 'string'
+            ? applyResult.data.url
+            : null;
+
+      const effectiveSandboxUrl = appliedSandboxUrl && isValidUrl(appliedSandboxUrl) ? appliedSandboxUrl : sandbox.url;
+
+      if (appliedSandboxId && appliedSandboxId !== sandbox.sandboxId) {
+        addLog(`⚠️ 上游已替换Sandbox: ${sandbox.sandboxId} → ${appliedSandboxId}`);
+        setSandboxInfo(prev => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            sandboxId: appliedSandboxId,
+            url: effectiveSandboxUrl,
+          };
+        });
+      } else if (effectiveSandboxUrl !== sandbox.url) {
+        setSandboxInfo(prev => (prev && prev.sandboxId === sandbox.sandboxId ? { ...prev, url: effectiveSandboxUrl } : prev));
+      }
+
+      // Step 4: 生成完成
       setStage('complete');
       addLog('🎉 生成完成！预览已就绪');
 
       toast({
         title: '生成成功',
-        description: `应用已部署到沙箱，预览地址：${sandbox.url}`,
+        description: `应用已部署到沙箱，预览地址：${effectiveSandboxUrl}`,
       });
       
       // 强制刷新预览组件
@@ -631,13 +692,23 @@ export default function QuickPreviewPage() {
   /**
    * SSE流式生成代码
    */
-  const generateCodeStream = async (userMessage: string, sandboxId: string, templateContext?: string): Promise<void> => {
+  const generateCodeStream = async (userMessage: string, sandboxId: string, templateContext?: string): Promise<string> => {
     return new Promise((resolve, reject) => {
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
       const apiUrl = `${API_BASE_URL}/v1/openlovable/generate/stream`;
       const token = getToken();
 
       let accumulationState = getInitialOpenLovableAccumulationState();
+
+      /**
+       * 判断是否为普通对象（Record）
+       *
+       * 是什么：运行时类型守卫。
+       * 做什么：在 unknown 上安全访问字段。
+       * 为什么：SSE data 可能为任意结构（JSON / 纯文本）。
+       */
+      const isRecord = (value: unknown): value is Record<string, unknown> =>
+        !!value && typeof value === 'object' && !Array.isArray(value);
       
       const requestBody: { userMessage: string; sandboxId: string; templateContext?: string } = {
         userMessage,
@@ -681,27 +752,72 @@ export default function QuickPreviewPage() {
             }
           };
 
+          /**
+           * 处理单个 SSE 事件块
+           *
+           * 用途：
+           * - 兼容 event/data 多行场景
+           * - JSON 解析失败时，若 data 形似 <file ...> 则作为增量兜底
+           */
+          const processEventBlock = (eventBlock: string): { shouldStop: boolean } => {
+            const payloads = parseSseEvent(eventBlock);
+            for (const payload of payloads) {
+              if (payload.kind === 'json') {
+                const value = payload.value;
+                if (!isRecord(value)) continue;
+                if (typeof value.type !== 'string') continue;
+
+                const data = value as unknown as AIMessage;
+
+                // 只拼接 stream/content 的增量，并在 complete 时用 generatedCode 覆盖
+                applyAndUpdateState(data);
+
+                // 处理状态消息
+                if (data.type === 'status' && data.message) {
+                  setStatusMessage(data.message);
+                  addLog(`ℹ️ 状态: ${data.message}`);
+                } else if (data.type === 'thinking' && data.message) {
+                  setStatusMessage(`思考中: ${data.message}`);
+                }
+
+                // 处理消息并记录日志
+                if (data.type === 'tool_call') {
+                  addLog(`🔧 工具调用: ${data.name}`);
+                } else if (data.type === 'error') {
+                  addLog(`❌ 错误: ${data.error}`);
+                  reject(new Error(data.error));
+                  return { shouldStop: true };
+                } else if (data.type === 'complete') {
+                  addLog('🎯 AI生成完成');
+                }
+
+                continue;
+              }
+
+              // text payload：少数上游可能直接输出代码片段（非 JSON）
+              const text = payload.value.trim();
+              if (!text) continue;
+              if (text.includes('<file')) {
+                applyAndUpdateState({ type: 'stream', text } as AIMessage);
+              }
+            }
+
+            return { shouldStop: false };
+          };
+
           const readStream = (): void => {
             reader.read().then(async ({ done, value }) => {
               if (done) {
                 // 处理剩余buffer，避免末尾没有\n\n导致最后一个事件丢失
                 if (buffer.trim()) {
-                  const remainingEvents = buffer.split(/\n\n|\r\n\r\n/);
-                  for (const event of remainingEvents) {
-                    if (!event.trim()) continue;
-                    const lines = event.split(/\n|\r\n/);
-                    for (const line of lines) {
-                      if (!line.trim() || line.startsWith(':')) continue;
-                      if (!line.startsWith('data:')) continue;
-                      try {
-                        const jsonStr = line.replace(/^data:\s*/, '').trim();
-                        if (!jsonStr) continue;
-                        const data: AIMessage = JSON.parse(jsonStr);
-                        applyAndUpdateState(data);
-                      } catch (parseError) {
-                        console.warn('解析SSE剩余Buffer失败:', line, parseError);
-                      }
-                    }
+                  const { events, remainder } = splitSseBuffer(buffer);
+                  for (const event of events) {
+                    const { shouldStop } = processEventBlock(event);
+                    if (shouldStop) return;
+                  }
+                  if (remainder.trim()) {
+                    const { shouldStop } = processEventBlock(remainder);
+                    if (shouldStop) return;
                   }
                 }
 
@@ -716,6 +832,18 @@ export default function QuickPreviewPage() {
                   if (!responseToApply.includes('<file')) {
                     throw new Error('AI生成的代码格式异常（缺少 <file> 标签），无法部署到Sandbox（请重试生成或切换模型）');
                   }
+
+                  // 最终解析文件（无论是否部署沙箱，都确保文件视图可用）
+                  updateFilesFromStream(responseToApply);
+                  setCurrentFile(null);
+
+                  // sandboxId='pending'：仅生成代码，不做 apply（用于先生成后创建沙箱的流程）
+                  if (sandboxId === 'pending') {
+                    addLog('📦 代码生成完成，等待创建沙箱后应用...');
+                    resolve(responseToApply);
+                    return;
+                  }
+
                   // 🔍 调试日志：记录发送到apply API的内容长度
                   console.log('[preview-quick] responseToApply length:', responseToApply.length);
                   console.log('[preview-quick] responseToApply preview:', responseToApply.substring(0, 500));
@@ -777,14 +905,9 @@ export default function QuickPreviewPage() {
                         url: appliedSandboxUrl && isValidUrl(appliedSandboxUrl) ? appliedSandboxUrl : prev.url,
                       };
                     });
-                    setPreviewKey(prev => prev + 1);
                   }
 
-                  // 最终解析文件
-                  updateFilesFromStream(responseToApply);
-                  setCurrentFile(null);
-
-                  resolve();
+                  resolve(responseToApply);
                 } catch (applyError) {
                   const errorMsg = applyError instanceof Error ? applyError.message : '未知错误';
                   addLog(`❌ Apply失败: ${errorMsg}`);
@@ -797,40 +920,13 @@ export default function QuickPreviewPage() {
               const chunk = decoder.decode(value, { stream: true });
               buffer += chunk;
 
-              const lines = buffer.split('\n\n');
-              buffer = lines.pop() || '';
+              const { events, remainder } = splitSseBuffer(buffer);
+              buffer = remainder;
 
-              for (const line of lines) {
-                if (!line.trim() || !line.startsWith('data:')) continue;
-
-                try {
-                  const jsonStr = line.replace(/^data:\s*/, '').trim();
-                  const data: AIMessage = JSON.parse(jsonStr);
-
-                  // 只拼接 stream 的增量，并在 complete 时用 generatedCode 覆盖，避免 conversation 事件导致重复污染
-                  applyAndUpdateState(data);
-
-                  // 处理状态消息
-                  if (data.type === 'status' && data.message) {
-                    setStatusMessage(data.message);
-                    addLog(`ℹ️ 状态: ${data.message}`);
-                  } else if (data.type === 'thinking' && data.message) {
-                    setStatusMessage(`思考中: ${data.message}`);
-                  }
-
-                  // 处理消息并记录日志
-                  if (data.type === 'tool_call') {
-                    addLog(`🔧 工具调用: ${data.name}`);
-                  } else if (data.type === 'error') {
-                    addLog(`❌ 错误: ${data.error}`);
-                    reject(new Error(data.error));
-                    return;
-                  } else if (data.type === 'complete') {
-                    addLog('🎯 AI生成完成');
-                  }
-                } catch (parseError) {
-                  console.warn('解析SSE消息失败:', line, parseError);
-                }
+              for (const event of events) {
+                if (!event.trim()) continue;
+                const { shouldStop } = processEventBlock(event);
+                if (shouldStop) return;
               }
 
               readStream();
@@ -1217,51 +1313,41 @@ export default function QuickPreviewPage() {
                             </div>
                           </div>
 
-                          {/* 代码内容 - 支持流式滚动 */}
-                          <div 
+                          {/* 代码内容 - 支持流式滚动和打字机效果 */}
+                          <div
                             ref={codeScrollRef}
                             className="flex-1 overflow-y-auto scroll-smooth"
                             onScroll={handleCodeScroll}
                             style={{ maxHeight: 'calc(100% - 36px)' }}
                           >
-                            <SyntaxHighlighter
+                            <TypewriterCode
+                              code={displayFile.content || '// 等待代码生成...'}
                               language={getSyntaxLanguage(displayFile.type)}
-                              style={vscDarkPlus}
-                              customStyle={{
-                                margin: 0,
-                                padding: '1rem',
-                                fontSize: '0.75rem',
-                                background: 'transparent',
-                                minHeight: '100%',
-                              }}
+                              completed={displayFile.completed}
                               showLineNumbers={true}
-                              wrapLongLines={true}
-                            >
-                              {displayFile.content || '// 等待代码生成...'}
-                            </SyntaxHighlighter>
-                            {!displayFile.completed && (
-                              <div className="flex items-center px-4 pb-4">
-                                <span className="inline-block w-3 h-4 bg-orange-400 animate-pulse" />
-                                <span className="ml-2 text-xs text-orange-400 animate-pulse">正在生成...</span>
-                              </div>
-                            )}
+                              speed={2}
+                              chunkSize={10}
+                              showProgress={!displayFile.completed}
+                            />
                           </div>
                         </div>
                       ) : (
-                        // 显示原始流式输出 - 支持流式滚动
-                        <div 
+                        // 显示原始流式输出 - 支持流式滚动和打字机效果
+                        <div
                           ref={codeScrollRef}
                           className="h-full overflow-y-auto scroll-smooth p-4"
                           onScroll={handleCodeScroll}
                         >
                           {streamedCode ? (
-                            <pre className="text-xs text-gray-300 font-mono whitespace-pre-wrap">
-                              {streamedCode}
-                              <div className="flex items-center mt-2">
-                                <span className="inline-block w-2 h-4 bg-orange-400 animate-pulse" />
-                                <span className="ml-2 text-xs text-orange-400 animate-pulse">正在生成...</span>
-                              </div>
-                            </pre>
+                            <TypewriterCode
+                              code={streamedCode}
+                              language="markdown"
+                              completed={stage === 'complete'}
+                              showLineNumbers={false}
+                              speed={1}
+                              chunkSize={20}
+                              showProgress={stage !== 'complete'}
+                            />
                           ) : (
                             <div className="flex items-center justify-center h-full text-gray-500">
                               <div className="text-center">

@@ -141,10 +141,15 @@ public class ProjectEntity {
 
     /**
      * 项目状态枚举
+     * - DRAFT: 草稿（初始状态，需求已创建但未生成代码）
+     * - GENERATING: 生成中（正在执行代码生成）
+     * - COMPLETED: 生成完成（代码生成成功，可预览）
+     * - ARCHIVED: 已归档（用户手动归档）
      */
     public enum Status {
         DRAFT("draft"),
-        PUBLISHED("published"),
+        GENERATING("generating"),
+        COMPLETED("completed"),
         ARCHIVED("archived");
 
         private final String value;
@@ -155,6 +160,21 @@ public class ProjectEntity {
 
         public String getValue() {
             return value;
+        }
+
+        /**
+         * 从字符串值获取枚举
+         *
+         * @param value 状态字符串
+         * @return 对应的枚举值，如果无匹配则返回 null
+         */
+        public static Status fromValue(String value) {
+            for (Status status : values()) {
+                if (status.value.equals(value)) {
+                    return status;
+                }
+            }
+            return null;
         }
     }
 

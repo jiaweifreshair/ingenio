@@ -51,6 +51,7 @@ describe("AppSpec API - appspec.ts", () => {
         version: "1.0.0",
         tenantId: "tenant-001",
         userId: "user-001",
+        projectId: "project-001",
         createdAt: "2025-01-14T10:00:00Z",
         updatedAt: "2025-01-14T11:00:00Z",
         userRequirement: "创建一个电商平台",
@@ -146,6 +147,7 @@ describe("AppSpec API - appspec.ts", () => {
           version: "2.0.0",
           tenantId: "tenant-001",
           userId: "user-001",
+          projectId: "project-002",
           createdAt: "2025-01-14T10:00:00Z",
           updatedAt: "2025-01-14T11:00:00Z",
           userRequirement: "复杂的企业级系统",
@@ -177,6 +179,7 @@ describe("AppSpec API - appspec.ts", () => {
         version: "1.0.0",
         tenantId: "tenant-001",
         userId: "user-001",
+        projectId: "project-003",
         createdAt: "2025-01-14T10:00:00Z",
         updatedAt: "2025-01-14T11:00:00Z",
         userRequirement: "需求不明确的项目",
@@ -258,6 +261,7 @@ describe("AppSpec API - appspec.ts", () => {
           version: "1.0.0",
           tenantId: "tenant-001",
           userId: "user-001",
+          projectId: "project-unicode",
           createdAt: "2025-01-14T10:00:00Z",
           updatedAt: "2025-01-14T11:00:00Z",
           userRequirement: specialRequirement,
@@ -304,6 +308,7 @@ describe("AppSpec API - appspec.ts", () => {
         version: "1.1.0",
         tenantId: "tenant-001",
         userId: "user-001",
+        projectId: "project-001",
         createdAt: "2025-01-14T10:00:00Z",
         updatedAt: "2025-01-14T12:00:00Z", // 更新时间变化
         userRequirement: "更新后的需求描述",
@@ -469,6 +474,7 @@ describe("AppSpec API - appspec.ts", () => {
       const mockListItems: AppSpecListItem[] = [
         {
           id: "app-001",
+          projectId: "project-001",
           version: "1.0.0",
           userRequirement: "电商平台",
           projectType: "e-commerce",
@@ -479,6 +485,7 @@ describe("AppSpec API - appspec.ts", () => {
         },
         {
           id: "app-002",
+          projectId: "project-002",
           version: "1.0.0",
           userRequirement: "社交应用",
           projectType: "social",
@@ -615,6 +622,7 @@ describe("AppSpec API - appspec.ts", () => {
     it("应该处理大量列表数据", async () => {
       const largeList: AppSpecListItem[] = Array.from({ length: 100 }, (_, i) => ({
         id: `app-${i.toString().padStart(3, "0")}`,
+        projectId: `project-${i.toString().padStart(3, "0")}`,
         version: "1.0.0",
         userRequirement: `需求 ${i + 1}`,
         qualityScore: Math.floor(Math.random() * 40) + 60, // 60-100分
@@ -668,6 +676,7 @@ describe("AppSpec API - appspec.ts", () => {
           items: [
             {
               id: "app-last",
+              projectId: "project-last",
               version: "1.0.0",
               userRequirement: "最后一个",
               qualityScore: 85,
@@ -695,6 +704,7 @@ describe("AppSpec API - appspec.ts", () => {
       const itemsWithSpecialChars: AppSpecListItem[] = [
         {
           id: "app-special-1",
+          projectId: "project-special-1",
           version: "1.0.0",
           userRequirement: "创建支持中文、English和日本語的应用 🌏",
           qualityScore: 88,
@@ -704,6 +714,7 @@ describe("AppSpec API - appspec.ts", () => {
         },
         {
           id: "app-special-2",
+          projectId: "project-special-2",
           version: "1.0.0",
           userRequirement: "包含特殊符号：<>&\"'/\\的需求",
           qualityScore: 75,

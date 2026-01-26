@@ -80,6 +80,17 @@ public class G3JobEntity {
     @TableField("blueprint_mode_enabled")
     private Boolean blueprintModeEnabled;
 
+    // ==================== 需求分析上下文 ====================
+
+    /**
+     * Step 1-6 分析上下文摘要（JSON 格式）
+     * 
+     * 来源：NLRequirementAnalyzer.buildCompressedAnalysisContext()
+     * 用途：供 G3 Agent 理解需求上下文
+     */
+    @TableField(value = "analysis_context_json", typeHandler = JacksonTypeHandler.class)
+    private Map<String, Object> analysisContextJson;
+
     /**
      * 任务状态
      * 
@@ -378,6 +389,14 @@ public class G3JobEntity {
         this.generationOptions = generationOptions;
     }
 
+    public Map<String, Object> getAnalysisContextJson() {
+        return analysisContextJson;
+    }
+
+    public void setAnalysisContextJson(Map<String, Object> analysisContextJson) {
+        this.analysisContextJson = analysisContextJson;
+    }
+
     public List<G3LogEntry> getLogs() {
         return logs;
     }
@@ -481,6 +500,7 @@ public class G3JobEntity {
         private Instant contractLockedAt;
         private Map<String, String> targetStack;
         private Map<String, Object> generationOptions;
+        private Map<String, Object> analysisContextJson;
         private List<G3LogEntry> logs;
         private String sandboxId;
         private String sandboxUrl;
@@ -602,6 +622,11 @@ public class G3JobEntity {
             return this;
         }
 
+        public G3JobEntityBuilder analysisContextJson(Map<String, Object> analysisContextJson) {
+            this.analysisContextJson = analysisContextJson;
+            return this;
+        }
+
         public G3JobEntityBuilder sandboxId(String sandboxId) {
             this.sandboxId = sandboxId;
             return this;
@@ -638,10 +663,37 @@ public class G3JobEntity {
         }
 
         public G3JobEntity build() {
-            return new G3JobEntity(id, appSpecId, tenantId, userId, requirement, templateContext, matchedTemplateId,
-                    blueprintSpec, blueprintModeEnabled, status, currentRound, maxRounds, contractYaml, dbSchemaSql,
-                    contractLocked, contractLockedAt, targetStack, generationOptions, logs, sandboxId, sandboxUrl,
-                    sandboxProvider, lastError, errorCount, startedAt, completedAt, createdAt, updatedAt);
+            G3JobEntity entity = new G3JobEntity();
+            entity.setId(id);
+            entity.setAppSpecId(appSpecId);
+            entity.setTenantId(tenantId);
+            entity.setUserId(userId);
+            entity.setRequirement(requirement);
+            entity.setTemplateContext(templateContext);
+            entity.setMatchedTemplateId(matchedTemplateId);
+            entity.setBlueprintSpec(blueprintSpec);
+            entity.setBlueprintModeEnabled(blueprintModeEnabled);
+            entity.setAnalysisContextJson(analysisContextJson);
+            entity.setStatus(status);
+            entity.setCurrentRound(currentRound);
+            entity.setMaxRounds(maxRounds);
+            entity.setContractYaml(contractYaml);
+            entity.setDbSchemaSql(dbSchemaSql);
+            entity.setContractLocked(contractLocked);
+            entity.setContractLockedAt(contractLockedAt);
+            entity.setTargetStack(targetStack);
+            entity.setGenerationOptions(generationOptions);
+            entity.setLogs(logs);
+            entity.setSandboxId(sandboxId);
+            entity.setSandboxUrl(sandboxUrl);
+            entity.setSandboxProvider(sandboxProvider);
+            entity.setLastError(lastError);
+            entity.setErrorCount(errorCount);
+            entity.setStartedAt(startedAt);
+            entity.setCompletedAt(completedAt);
+            entity.setCreatedAt(createdAt);
+            entity.setUpdatedAt(updatedAt);
+            return entity;
         }
     }
 
@@ -699,6 +751,7 @@ public class G3JobEntity {
         public String getDescription() {
             return description;
         }
+
     }
 
     public boolean isFinished() {

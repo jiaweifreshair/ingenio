@@ -1,10 +1,12 @@
 package com.ingenio.backend.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -15,13 +17,32 @@ import java.time.Duration;
 
 /**
  * Web配置
- * 配置CORS、拦截器、HTTP客户端等Web相关设置
+ * 配置CORS、拦截器、HTTP客户端、异步请求超时等Web相关设置
  *
  * @author Ingenio Team
  * @since 1.0.0
  */
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
+
+    /**
+     * SSE流式响应的异步请求超时时间（毫秒）
+     * 默认10分钟，AI代码生成可能需要较长时间
+     */
+    @Value("${spring.mvc.async.request-timeout:600000}")
+    private long asyncRequestTimeout;
+
+    /**
+     * 配置异步请求支持
+     * 设置SSE流式响应的超时时间，防止AI代码生成过程中连接被中断
+     *
+     * 重要：Spring MVC默认异步超时为30秒，这对于AI代码生成来说太短了
+     * 必须通过此方法显式配置超时时间，否则application.yml中的配置不会生效
+     */
+    @Override
+    public void configureAsyncSupport(AsyncSupportConfigurer configurer) {
+        configurer.setDefaultTimeout(asyncRequestTimeout);
+    }
 
     /**
      * 配置CORS跨域

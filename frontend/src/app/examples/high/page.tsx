@@ -8,17 +8,17 @@ import { ArrowLeft, Shield, Radio, MapPin, CheckCircle, Cpu, Zap } from 'lucide-
 
 export default function HighSchoolPage() {
   const [incidents, setIncidents] = useState([
-    { id: 'INC-2024-8901', type: 'Fire Risk', loc: 'Zone A - Industrial Park', status: 'Active', severity: 'High' },
-    { id: 'INC-2024-8902', type: 'Traffic Congestion', loc: 'Zone B - Main Bridge', status: 'Monitoring', severity: 'Medium' },
-    { id: 'INC-2024-8903', type: 'Power Fluctuation', loc: 'Zone C - Grid 4', status: 'Resolved', severity: 'Low' },
+    { id: 'INC-2024-8901', type: '火灾风险', loc: 'A区 - 工业园', status: '活跃', severity: '高危' },
+    { id: 'INC-2024-8902', type: '交通拥堵', loc: 'B区 - 主大桥', status: '监控中', severity: '中等' },
+    { id: 'INC-2024-8903', type: '电压波动', loc: 'C区 - 4号电网', status: '已解决', severity: '低' },
   ]);
 
   // agents state is used for rendering.
   const [agents] = useState([
-    { name: 'Sentinel-Alpha', role: 'Surveillance', status: 'Online', load: 45 },
-    { name: 'Medic-Beta', role: 'Emergency Response', status: 'Standby', load: 12 },
-    { name: 'Traffic-Gamma', role: 'Flow Control', status: 'Online', load: 89 },
-    { name: 'Grid-Delta', role: 'Infrastructure', status: 'Offline', load: 0 },
+    { name: 'Sentinel-Alpha', role: '监控', status: '在线', load: 45 },
+    { name: 'Medic-Beta', role: '应急响应', status: '待命', load: 12 },
+    { name: 'Traffic-Gamma', role: '流量控制', status: '在线', load: 89 },
+    { name: 'Grid-Delta', role: '基础设施', status: '离线', load: 0 },
   ]);
 
   const [currentTime, setCurrentTime] = useState('');
@@ -31,7 +31,7 @@ export default function HighSchoolPage() {
   }, []);
 
   const handleResolve = (id: string) => {
-    setIncidents(prev => prev.map(inc => inc.id === id ? { ...inc, status: 'Resolved', severity: 'Low' } : inc));
+    setIncidents(prev => prev.map(inc => inc.id === id ? { ...inc, status: '已解决', severity: '低' } : inc));
   };
 
   return (
@@ -47,13 +47,13 @@ export default function HighSchoolPage() {
               <div className="w-8 h-8 rounded bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-[0_0_15px_rgba(6,182,212,0.5)]">
                 <Shield className="w-5 h-5 text-white" />
               </div>
-              <h1 className="font-bold text-xl tracking-wide">CITY<span className="text-cyan-400 font-light">BRAIN</span> <span className="text-xs text-slate-500 ml-2 font-mono">v2.1.0</span></h1>
+              <h1 className="font-bold text-xl tracking-wide">城市大脑 <span className="text-cyan-400 font-light">CITYBRAIN</span> <span className="text-xs text-slate-500 ml-2 font-mono">v2.1.0</span></h1>
             </div>
           </div>
           <div className="flex items-center gap-6 text-sm font-mono text-cyan-400">
              <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse"></span>
-                SYSTEM OPTIMAL
+                系统运行良好
              </div>
              <div className="text-slate-400">{currentTime}</div>
           </div>
@@ -66,14 +66,14 @@ export default function HighSchoolPage() {
         <div className="col-span-12 lg:col-span-3 space-y-6">
            <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 backdrop-blur-sm">
               <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                <Cpu className="w-4 h-4" /> Agent Swarm Status
+                <Cpu className="w-4 h-4" /> 智能体集群状态
               </h2>
               <div className="space-y-4">
                 {agents.map((agent) => (
                    <div key={agent.name} className="group p-3 rounded-lg bg-slate-900 border border-slate-800 hover:border-cyan-500/30 transition-all">
                       <div className="flex justify-between items-start mb-2">
                          <div className="font-mono font-bold text-sm text-cyan-100">{agent.name}</div>
-                         <Badge variant="outline" className={`text-[10px] h-5 ${agent.status === 'Online' ? 'bg-green-500/10 text-green-400 border-green-500/20' : agent.status === 'Standby' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
+                         <Badge variant="outline" className={`text-[10px] h-5 ${agent.status === '在线' ? 'bg-green-500/10 text-green-400 border-green-500/20' : agent.status === '待命' ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
                             {agent.status}
                          </Badge>
                       </div>
@@ -88,16 +88,16 @@ export default function HighSchoolPage() {
 
            <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5">
               <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                 <Zap className="w-4 h-4" /> System Resources
+                 <Zap className="w-4 h-4" /> 系统资源
               </h2>
               <div className="grid grid-cols-2 gap-4">
                  <div className="text-center p-4 bg-slate-900 rounded-lg border border-slate-800">
                     <div className="text-2xl font-mono font-bold text-white mb-1">24%</div>
-                    <div className="text-xs text-slate-500">CPU Load</div>
+                    <div className="text-xs text-slate-500">CPU 负载</div>
                  </div>
                  <div className="text-center p-4 bg-slate-900 rounded-lg border border-slate-800">
                     <div className="text-2xl font-mono font-bold text-white mb-1">1.2TB</div>
-                    <div className="text-xs text-slate-500">Data Processed</div>
+                    <div className="text-xs text-slate-500">数据处理量</div>
                  </div>
               </div>
            </div>
@@ -117,29 +117,29 @@ export default function HighSchoolPage() {
               <div className="absolute top-1/3 left-1/4">
                  <div className="w-4 h-4 bg-red-500 rounded-full animate-ping absolute opacity-75"></div>
                  <div className="w-4 h-4 bg-red-500 rounded-full relative border-2 border-slate-900"></div>
-                 <div className="absolute left-6 top-0 bg-slate-900/80 px-2 py-1 rounded border border-red-500/30 text-xs text-red-400 whitespace-nowrap">Zone A: Fire Risk</div>
+                 <div className="absolute left-6 top-0 bg-slate-900/80 px-2 py-1 rounded border border-red-500/30 text-xs text-red-400 whitespace-nowrap">A区: 火灾风险</div>
               </div>
 
                <div className="absolute bottom-1/3 right-1/3">
                  <div className="w-3 h-3 bg-yellow-500 rounded-full animate-ping absolute opacity-75"></div>
                  <div className="w-3 h-3 bg-yellow-500 rounded-full relative border-2 border-slate-900"></div>
-                 <div className="absolute left-6 top-0 bg-slate-900/80 px-2 py-1 rounded border border-yellow-500/30 text-xs text-yellow-400 whitespace-nowrap">Zone B: Traffic</div>
+                 <div className="absolute left-6 top-0 bg-slate-900/80 px-2 py-1 rounded border border-yellow-500/30 text-xs text-yellow-400 whitespace-nowrap">B区: 交通</div>
               </div>
            </div>
 
            {/* Quick Actions */}
            <div className="grid grid-cols-4 gap-4">
               <Button variant="outline" className="border-slate-700 hover:bg-cyan-900/20 hover:text-cyan-400 hover:border-cyan-500/50 h-12">
-                 Global Scan
+                 全域扫描
               </Button>
                <Button variant="outline" className="border-slate-700 hover:bg-cyan-900/20 hover:text-cyan-400 hover:border-cyan-500/50 h-12">
-                 Dispatch All
+                 全员调度
               </Button>
                <Button variant="outline" className="border-slate-700 hover:bg-cyan-900/20 hover:text-cyan-400 hover:border-cyan-500/50 h-12">
-                 Generate Report
+                 生成报告
               </Button>
                <Button variant="outline" className="border-slate-700 hover:bg-red-900/20 hover:text-red-400 hover:border-red-500/50 h-12 text-red-400">
-                 Lockdown
+                 紧急封锁
               </Button>
            </div>
         </div>
@@ -148,14 +148,14 @@ export default function HighSchoolPage() {
         <div className="col-span-12 lg:col-span-3">
            <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5 h-full backdrop-blur-sm flex flex-col">
               <h2 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-                 <Radio className="w-4 h-4" /> Incident Feed
+                 <Radio className="w-4 h-4" /> 事件实时流
               </h2>
               
               <div className="space-y-4 overflow-y-auto flex-1 pr-2">
                  {incidents.map((inc) => (
-                    <div key={inc.id} className={`p-4 rounded-lg border transition-all ${inc.status === 'Resolved' ? 'bg-slate-900 border-slate-800 opacity-50' : 'bg-slate-800/50 border-slate-700'}`}>
+                    <div key={inc.id} className={`p-4 rounded-lg border transition-all ${inc.status === '已解决' ? 'bg-slate-900 border-slate-800 opacity-50' : 'bg-slate-800/50 border-slate-700'}`}>
                        <div className="flex justify-between items-start mb-2">
-                          <Badge className={`${inc.severity === 'High' ? 'bg-red-500 hover:bg-red-600' : inc.severity === 'Medium' ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-blue-500 hover:bg-blue-600'} text-white border-none`}>
+                          <Badge className={`${inc.severity === '高危' ? 'bg-red-500 hover:bg-red-600' : inc.severity === '中等' ? 'bg-yellow-500 hover:bg-yellow-600' : 'bg-blue-500 hover:bg-blue-600'} text-white border-none`}>
                              {inc.severity}
                           </Badge>
                           <span className="text-[10px] text-slate-500 font-mono">{inc.id}</span>
@@ -165,14 +165,14 @@ export default function HighSchoolPage() {
                           <MapPin className="w-3 h-3 mr-1" /> {inc.loc}
                        </div>
                        
-                       {inc.status !== 'Resolved' && (
+                       {inc.status !== '已解决' && (
                           <Button size="sm" onClick={() => handleResolve(inc.id)} className="w-full h-7 text-xs bg-slate-700 hover:bg-slate-600 border-slate-600">
-                             Resolve Incident
+                             处置事件
                           </Button>
                        )}
-                       {inc.status === 'Resolved' && (
+                       {inc.status === '已解决' && (
                           <div className="flex items-center justify-center text-xs text-green-500 font-bold gap-1 mt-2">
-                             <CheckCircle className="w-3 h-3" /> RESOLVED
+                             <CheckCircle className="w-3 h-3" /> 已解决
                           </div>
                        )}
                     </div>

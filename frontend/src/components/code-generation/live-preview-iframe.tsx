@@ -104,7 +104,7 @@ interface LivePreviewIframeProps {
   /** 错误文案 */
   errorText?: string;
   /** 运行时错误回调 */
-  onRuntimeError?: (error: any) => void;
+  onRuntimeError?: (error: Error) => void;
 }
 
 /**

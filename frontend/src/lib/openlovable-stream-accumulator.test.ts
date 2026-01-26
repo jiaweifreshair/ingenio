@@ -83,4 +83,22 @@ describe('openlovable-stream-accumulator', () => {
 
     expect(s2.streamedText).toBe('ABCDEF');
   });
+
+  it('兼容 stream.delta 增量字段（上游字段变体）', () => {
+    const s0 = getInitialOpenLovableAccumulationState();
+    const next = '<file path="src/App.jsx">DELTA</file>';
+    const s1 = applyOpenLovableSseMessage(s0, { type: 'stream', delta: next });
+
+    expect(s1.streamedText).toBe(next);
+    expect(getOpenLovableCodeForApply(s1)).toBe(next);
+  });
+
+  it('conversation 含 <file 时应作为增量兜底纳入', () => {
+    const s0 = getInitialOpenLovableAccumulationState();
+    const code = '<file path="src/App.jsx">C</file>';
+    const s1 = applyOpenLovableSseMessage(s0, { type: 'conversation', text: code });
+
+    expect(s1.streamedText).toBe(code);
+    expect(getOpenLovableCodeForApply(s1)).toBe(code);
+  });
 });

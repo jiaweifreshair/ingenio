@@ -14,7 +14,7 @@ import { SmartWizard } from "@/components/home/smart-wizard";
 import { FloatingActionBar } from "@/components/home/floating-action-bar";
 import { GEOSnippet } from "@/components/home/geo-snippet";
 
-// import { AppComplexitySelector } from "@/components/home/app-complexity-selector";
+import { AppComplexitySelector } from "@/components/home/app-complexity-selector";
 // import { IndustrySelection } from "@/components/home/industry-selection";
 // import { AICapabilitySelector } from "@/components/home/ai-capability-selector";
 import {
@@ -103,24 +103,10 @@ function HomePageContent(): React.ReactElement {
       setSelectedCapabilities(prev => prev.filter(c => c !== id));
     }
   };
-  
-  /*
-  // Handler for Industry Selection
-  const handleIndustrySelect = (id: IndustryType) => {
-    setSelectedIndustry(prev => (prev === id ? null : id));
-  };
 
   // Handler for App Mode Selection
   const handleModeSelect = (id: AppComplexityMode) => {
     setSelectedMode(prev => (prev === id ? null : id));
-  };
-
-  // Handler for AI Capabilities
-  const handleCapabilityToggle = (id: AICapabilityType) => {
-    setSelectedCapabilities(prev => {
-      const exists = prev.includes(id);
-      return exists ? prev.filter(c => c !== id) : [...prev, id];
-    });
   };
 
   // Handler for Example Selection (Clicking "示例" in complexity card)
@@ -130,7 +116,7 @@ function HomePageContent(): React.ReactElement {
     // Scroll to top to show Hero Banner input
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-  */
+
   const handleLaunchWizard = (prompt: string, context: { industry: IndustryType | null, mode: AppComplexityMode | null, capabilities: AICapabilityType[] }) => {
     setWizardPrompt(prompt);
     setWizardContext(context);
@@ -220,13 +206,12 @@ function HomePageContent(): React.ReactElement {
             {/* GEO 核心摘要 (Machine & Human Friendly) */}
             <GEOSnippet />
 
-            {/* 简化首页：隐藏复杂的独立选择器，聚焦 Hero Banner 交互 */}
-            {/* 1. 应用复杂度选择 (Hidden) */}
-            {/* <AppComplexitySelector
+            {/* 1. 应用复杂度选择 - 三种代码生成模式 */}
+            <AppComplexitySelector
               selectedMode={selectedMode}
               onSelect={handleModeSelect}
               onSelectExample={handleExampleSelect}
-            /> */}
+            />
 
             {/* 2. 行业场景选择 (Hidden) */}
             {/* <IndustrySelection

@@ -18,6 +18,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 
@@ -113,12 +114,40 @@ public class OpenLovableService {
             String prompt = request.buildPrompt();
             log.info("生成提示词: {}", prompt.substring(0, Math.min(prompt.length(), 200)));
 
-            // Step 3: 调用OpenLovable生成API（异步触发）
-            // V2.0优化：直接返回沙箱URL，代码生成在后台进行
-            // open-lovable-cn自带30分钟超时策略，无需手动管理
-            triggerGenerationAsync(prompt, request.getAiModel(), sandboxId);
-
-            log.info("原型沙箱已创建，代码生成将在后台进行（open-lovable-cn管理超时）");
+            // Step 3: 调用OpenLovable生成API
+            //
+            // 关键修复：
+            // - `streaming=false`（默认）表示“等待完成后返回最终结果”（供 CLONE/HYBRID 路由直出原型使用）
+            // - 之前无论 streaming=true/false 都采用异步触发，导致前端拿到 prototypeUrl 时生成尚未完成，甚至生成失败也被标记成功
+            boolean waitForCompletion = !Boolean.TRUE.equals(request.getStreaming());
+            GenerationTriggerOutcome generationOutcome;
+            if (waitForCompletion) {
+                generationOutcome = triggerGenerationBlocking(prompt, request.getAiModel(), sandboxId,
+                        Math.max(30, request.getTimeoutSeconds() != null ? request.getTimeoutSeconds() : 30));
+                if (!generationOutcome.success()) {
+                    long durationMs = System.currentTimeMillis() - startTime;
+                    String msg = generationOutcome.errorMessage() != null ? generationOutcome.errorMessage()
+                            : "OpenLovable 生成失败或未返回有效代码";
+                    log.warn("OpenLovable前端原型生成失败: sandboxId={}, durationMs={}, err={}", sandboxId, durationMs, msg);
+                    return OpenLovableGenerateResponse.builder()
+                            .success(false)
+                            .sandboxId(sandboxId)
+                            .provider(provider)
+                            .previewUrl(sandboxUrl)
+                            .durationSeconds(durationMs / 1000)
+                            .completedAt(Instant.now())
+                            .errorMessage(msg)
+                            .crawled(request.shouldCrawl())
+                            .crawledUrl(request.getPrimaryReferenceUrl())
+                            .generationLog(generationOutcome.debugInfo())
+                            .build();
+                }
+            } else {
+                // 流式/异步模式：用于“先返回沙箱 URL，后台持续生成”的快速预热场景
+                triggerGenerationAsync(prompt, request.getAiModel(), sandboxId);
+                generationOutcome = null;
+                log.info("原型沙箱已创建，代码生成将在后台进行（streaming=true）");
+            }
 
             // Step 4: 构建响应
             long durationMs = System.currentTimeMillis() - startTime;
@@ -131,6 +160,7 @@ public class OpenLovableService {
                     .completedAt(Instant.now())
                     .crawled(request.shouldCrawl())
                     .crawledUrl(request.getPrimaryReferenceUrl())
+                    .generationLog(generationOutcome != null ? generationOutcome.debugInfo() : null)
                     .build();
 
             log.info("OpenLovable前端原型生成成功: sandboxId={}, previewUrl={}, duration={}s",
@@ -230,7 +260,33 @@ public class OpenLovableService {
 
             // 调用OpenLovable生成API（异步触发）
             // V2.0优化：利用open-lovable-cn的完善超时策略
-            triggerGenerationAsync(prompt, request.getAiModel(), sandboxId);
+            // 修复：当 streaming=false 时应等待生成完成，避免预创建沙箱后仍返回“空原型”
+            boolean waitForCompletion = !Boolean.TRUE.equals(request.getStreaming());
+            GenerationTriggerOutcome outcome = null;
+            if (waitForCompletion) {
+                outcome = triggerGenerationBlocking(prompt, request.getAiModel(), sandboxId,
+                        Math.max(30, request.getTimeoutSeconds() != null ? request.getTimeoutSeconds() : 30));
+                if (!outcome.success()) {
+                    long durationMs = System.currentTimeMillis() - startTime;
+                    String msg = outcome.errorMessage() != null ? outcome.errorMessage()
+                            : "OpenLovable 生成失败或未返回有效代码";
+                    log.warn("使用预创建沙箱生成原型失败: sandboxId={}, durationMs={}, err={}", sandboxId, durationMs, msg);
+                    return OpenLovableGenerateResponse.builder()
+                            .success(false)
+                            .sandboxId(sandboxId)
+                            .provider(provider)
+                            .previewUrl(sandboxUrl)
+                            .durationSeconds(durationMs / 1000)
+                            .completedAt(java.time.Instant.now())
+                            .errorMessage(msg)
+                            .crawled(request.shouldCrawl())
+                            .crawledUrl(request.getPrimaryReferenceUrl())
+                            .generationLog(outcome.debugInfo())
+                            .build();
+                }
+            } else {
+                triggerGenerationAsync(prompt, request.getAiModel(), sandboxId);
+            }
 
             // 构建响应
             long durationMs = System.currentTimeMillis() - startTime;
@@ -243,6 +299,7 @@ public class OpenLovableService {
                     .completedAt(java.time.Instant.now())
                     .crawled(request.shouldCrawl())
                     .crawledUrl(request.getPrimaryReferenceUrl())
+                    .generationLog(outcome != null ? outcome.debugInfo() : null)
                     .build();
 
         } catch (BusinessException e) {
@@ -338,7 +395,9 @@ public class OpenLovableService {
                 // 构建请求体
                 Map<String, Object> requestBody = new HashMap<>();
                 requestBody.put("prompt", prompt);
-                requestBody.put("model", aiModel);
+                if (aiModel != null && !aiModel.isBlank()) {
+                    requestBody.put("model", aiModel);
+                }
                 requestBody.put("isEdit", false);
 
                 // 构建context对象
@@ -348,6 +407,7 @@ public class OpenLovableService {
 
                 HttpHeaders headers = new HttpHeaders();
                 headers.setContentType(MediaType.APPLICATION_JSON);
+                headers.setAccept(List.of(MediaType.TEXT_EVENT_STREAM, MediaType.APPLICATION_JSON));
                 HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(requestBody, headers);
 
                 // 发送POST请求（触发生成）
@@ -360,6 +420,91 @@ public class OpenLovableService {
                 log.error("[异步] 代码生成失败: sandboxId={}", sandboxId, e);
             }
         });
+    }
+
+    /**
+     * OpenLovable 触发生成的执行结果
+     *
+     * 是什么：封装“阻塞等待生成”模式下的成功状态与诊断信息。
+     * 做什么：用于 CLONE/HYBRID 路由在返回 prototypeUrl 之前确保生成已完成且返回了有效代码片段。
+     * 为什么：避免出现“生成代码为空/未完成就开始创建沙箱应用”的前端体验问题。
+     */
+    private record GenerationTriggerOutcome(boolean success, String errorMessage, String debugInfo) {
+    }
+
+    /**
+     * 阻塞触发 OpenLovable 代码生成并等待完成
+     *
+     * 说明：
+     * - 上游接口为 SSE（/api/generate-ai-code-stream），此处不需要实时转发，只需读取到连接结束。
+     * - 通过检查返回文本是否包含 <file 标签，判断是否产出了可部署的代码（避免“空 complete/仅状态输出”）。
+     */
+    private GenerationTriggerOutcome triggerGenerationBlocking(String prompt, String aiModel, String sandboxId,
+            int timeoutSeconds) {
+        String url = openLovableBaseUrl + "/api/generate-ai-code-stream";
+        log.info("[阻塞] 触发代码生成并等待完成: sandboxId={}, model={}, timeout={}s", sandboxId, aiModel, timeoutSeconds);
+
+        Future<ResponseEntity<String>> future = null;
+        try {
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("prompt", prompt);
+            if (aiModel != null && !aiModel.isBlank()) {
+                requestBody.put("model", aiModel);
+            }
+            requestBody.put("isEdit", false);
+
+            Map<String, Object> context = new HashMap<>();
+            context.put("sandboxId", sandboxId);
+            requestBody.put("context", context);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setAccept(List.of(MediaType.TEXT_EVENT_STREAM, MediaType.APPLICATION_JSON));
+            HttpEntity<Map<String, Object>> requestEntity = new HttpEntity<>(requestBody, headers);
+
+            // 注意：
+            // - RestTemplate 会在连接关闭后才返回，此处天然具备“等待生成结束”的效果
+            // - 但仍需要一个上层超时，避免上游卡住导致 route 接口长期阻塞
+            future = executorService.submit(
+                    () -> restTemplate.postForEntity(url, requestEntity, String.class));
+            ResponseEntity<String> response = future.get(timeoutSeconds, TimeUnit.SECONDS);
+
+            String body = response.getBody() != null ? response.getBody() : "";
+            boolean hasFileTag = body.contains("<file");
+            boolean hasErrorEvent = body.contains("\"type\":\"error\"") || body.contains("\"type\": \"error\"");
+
+            String debugInfo = "httpStatus=" + response.getStatusCode().value()
+                    + ", bodyLength=" + body.length()
+                    + ", hasFileTag=" + hasFileTag
+                    + ", hasErrorEvent=" + hasErrorEvent;
+
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                return new GenerationTriggerOutcome(false, "OpenLovable 生成接口返回非2xx: " + response.getStatusCode(),
+                        debugInfo);
+            }
+
+            if (hasErrorEvent && !hasFileTag) {
+                return new GenerationTriggerOutcome(false, "OpenLovable 生成返回 error 事件（未产生可部署代码）", debugInfo);
+            }
+
+            if (!hasFileTag) {
+                return new GenerationTriggerOutcome(false, "OpenLovable 未返回 <file> 标签代码（可能生成失败或模型配置异常）",
+                        debugInfo);
+            }
+
+            return new GenerationTriggerOutcome(true, null, debugInfo);
+        } catch (TimeoutException e) {
+            String msg = "OpenLovable 生成超时（等待超过 " + timeoutSeconds + " 秒）";
+            log.warn("[阻塞] {}", msg);
+            if (future != null) {
+                future.cancel(true);
+            }
+            return new GenerationTriggerOutcome(false, msg, "timeoutSeconds=" + timeoutSeconds);
+        } catch (Exception e) {
+            String msg = e.getMessage() != null ? e.getMessage() : e.toString();
+            log.error("[阻塞] 代码生成失败: sandboxId={}", sandboxId, e);
+            return new GenerationTriggerOutcome(false, "触发OpenLovable生成失败: " + msg, "exception=" + msg);
+        }
     }
 
     /**

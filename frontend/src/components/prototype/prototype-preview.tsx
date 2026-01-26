@@ -121,7 +121,9 @@ export function PrototypePreview({
               <div className="flex items-center justify-between mb-4 text-white">
                 <div className="flex items-center gap-2">
                   <Loader2 className="w-5 h-5 animate-spin text-purple-400" />
-                  <span className="font-medium">{t('ui.ai_writing_code')}</span>
+                  <span className="font-medium">
+                    {stage === 'sandbox' ? t('ui.creating_sandbox') : t('ui.ai_writing_code')}
+                  </span>
                 </div>
                 <div className="text-sm opacity-70">
                   {t('ui.elapsed_time')} <span className="font-mono">{elapsedTime}</span>s
@@ -161,7 +163,9 @@ export function PrototypePreview({
                <div className="flex items-center justify-between mb-4">
                  <div className="flex items-center gap-2">
                    <Loader2 className="w-5 h-5 animate-spin text-purple-600" />
-                   <span className="font-medium text-gray-900 dark:text-gray-100">{t('ui.ai_writing_code')}</span>
+                   <span className="font-medium text-gray-900 dark:text-gray-100">
+                     {stage === 'sandbox' ? t('ui.creating_sandbox') : t('ui.ai_writing_code')}
+                   </span>
                  </div>
                  <div className="text-sm text-muted-foreground">
                    {t('ui.elapsed_time')} <span className="font-mono">{elapsedTime}</span>s

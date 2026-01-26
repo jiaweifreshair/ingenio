@@ -148,4 +148,29 @@ public interface ProjectService extends IService<ProjectEntity> {
      * @param tenantId 租户ID
      */
     void softDelete(UUID projectId, UUID tenantId);
+
+    /**
+     * 根据AppSpec ID查询关联的项目
+     *
+     * @param appSpecId AppSpec ID
+     * @return 关联的项目，如果不存在则返回null
+     */
+    ProjectEntity findByAppSpecId(UUID appSpecId);
+
+    /**
+     * 根据AppSpec ID和租户ID查询关联的项目（租户隔离）
+     *
+     * @param appSpecId AppSpec ID
+     * @param tenantId 租户ID
+     * @return 关联的项目，如果不存在则返回null
+     */
+    ProjectEntity findByAppSpecIdAndTenantId(UUID appSpecId, UUID tenantId);
+
+    /**
+     * 更新项目状态
+     *
+     * @param projectId 项目ID
+     * @param status 新状态
+     */
+    void updateStatus(UUID projectId, String status);
 }

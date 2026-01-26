@@ -56,6 +56,8 @@ const getChangeLabel = (type: VersionChange['type']) => {
       return { text: '删除', className: 'bg-red-100 text-red-800 border-red-300' };
     case 'modification':
       return { text: '修改', className: 'bg-blue-100 text-blue-800 border-blue-300' };
+    default:
+      return { text: '变更', className: 'bg-gray-100 text-gray-800 border-gray-300' };
   }
 };
 
@@ -142,6 +144,10 @@ export const VersionDiffView: React.FC<VersionDiffProps> = ({
   diff,
   className,
 }) => {
+  if (!diff.version1 || !diff.version2) {
+    return <div>版本数据不完整</div>;
+  }
+
   const v1TypeInfo = VERSION_TYPE_INFO[diff.version1.versionType];
   const v2TypeInfo = VERSION_TYPE_INFO[diff.version2.versionType];
 
@@ -179,12 +185,13 @@ export const VersionDiffView: React.FC<VersionDiffProps> = ({
       </Card>
 
       {/* 统计信息 */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div className="space-y-1">
-              <div className="text-2xl font-bold text-green-600">
-                +{diff.stats.additions}
+      {diff.stats && (
+        <Card>
+          <CardContent className="pt-6">
+            <div className="grid grid-cols-3 gap-4 text-center">
+              <div className="space-y-1">
+                <div className="text-2xl font-bold text-green-600">
+                  +{diff.stats.additions}
               </div>
               <div className="text-sm text-muted-foreground">新增</div>
             </div>
@@ -203,6 +210,7 @@ export const VersionDiffView: React.FC<VersionDiffProps> = ({
           </div>
         </CardContent>
       </Card>
+      )}
 
       {/* 变更列表 */}
       <Card>

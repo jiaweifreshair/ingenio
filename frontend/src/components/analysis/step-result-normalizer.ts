@@ -365,15 +365,6 @@ function normalizeRisks(value: unknown): Risk[] {
   const factors = toStringArray(value);
   if (factors.length === 0) return [];
 
-  const guessCategory = (text: string): Risk['category'] => {
-    const normalized = text.toLowerCase();
-    if (normalized.includes('security') || text.includes('安全') || text.includes('鉴权')) return 'SECURITY';
-    if (normalized.includes('performance') || text.includes('性能')) return 'PERFORMANCE';
-    if (normalized.includes('scale') || text.includes('扩展') || text.includes('并发')) return 'SCALABILITY';
-    if (normalized.includes('complex') || text.includes('复杂')) return 'COMPLEXITY';
-    return 'OTHER';
-  };
-
   const guessLevel = (text: string): Risk['level'] => {
     const normalized = text.toLowerCase();
     if (normalized.includes('high') || text.includes('高')) return 'HIGH';
@@ -383,9 +374,76 @@ function normalizeRisks(value: unknown): Risk[] {
 
   return factors.map((f) => ({
     level: guessLevel(f),
-    category: guessCategory(f),
+    category: guessRiskCategory(f),
     description: f
   }));
+}
+
+/**
+ * 估算风险类别
+ *
+ * 是什么：基于文本的风险类别推断。
+ * 做什么：从风险描述中推断 Risk.category。
+ * 为什么：后端 riskFactors 可能只给文本，需要前端兜底分类。
+ */
+function guessRiskCategory(text: string): Risk['category'] {
+  const normalized = text.toLowerCase();
+  if (normalized.includes('security') || text.includes('安全') || text.includes('鉴权')) return 'SECURITY';
+  if (normalized.includes('performance') || text.includes('性能')) return 'PERFORMANCE';
+  if (normalized.includes('scale') || text.includes('扩展') || text.includes('并发')) return 'SCALABILITY';
+  if (normalized.includes('complex') || text.includes('复杂')) return 'COMPLEXITY';
+  return 'OTHER';
+}
+
+/**
+ * 归一化风险级别
+ *
+ * 是什么：风险等级解析器。
+ * 做什么：把 low/medium/high（含中文）映射到 HIGH/MEDIUM/LOW。
+ * 为什么：后端不同模型输出大小写/语言不一致，需要统一为 UI 可用的枚举。
+ */
+function normalizeRiskLevel(value: unknown): Risk['level'] {
+  const text = toDisplayString(value, '').trim().toLowerCase();
+  if (!text) return 'MEDIUM';
+  if (text === 'high' || text.includes('高')) return 'HIGH';
+  if (text === 'low' || text.includes('低')) return 'LOW';
+  return 'MEDIUM';
+}
+
+/**
+ * 解析 Step5 riskFactors（对象数组）
+ *
+ * 是什么：交互设计师步骤风险因子解析器。
+ * 做什么：将后端 {factor, level, mitigation}[] 转换为 Risk[]，并提取缓解措施列表。
+ * 为什么：后端 Step5 输出结构与前端 Risk/mitigations 结构不同，需在前端做兼容。
+ */
+function parseRiskFactors(value: unknown): { risks: Risk[]; mitigations: string[] } | null {
+  if (!Array.isArray(value)) return null;
+
+  const risks: Risk[] = [];
+  const mitigations: string[] = [];
+
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+
+    const factor = toDisplayString(item.factor ?? item.description ?? item.risk ?? item.name, '').trim();
+    const mitigation = toDisplayString(item.mitigation ?? item.solution ?? item.fix, '').trim();
+
+    if (factor) {
+      risks.push({
+        level: normalizeRiskLevel(item.level ?? item.severity),
+        category: guessRiskCategory(factor),
+        description: factor
+      });
+    }
+
+    if (mitigation) {
+      mitigations.push(mitigation);
+    }
+  }
+
+  if (risks.length === 0 && mitigations.length === 0) return null;
+  return { risks, mitigations };
 }
 
 /**
@@ -544,6 +602,8 @@ export function normalizeStepResult(
       ? Math.min(10, Math.max(1, parsedScore))
       : (scoreFromLevel(level) ?? (estimatedDays >= 14 ? 8 : estimatedDays >= 7 ? 6 : 4));
 
+  const parsedRiskFactors = parseRiskFactors(record.riskFactors ?? complexity.riskFactors);
+
   const risks = Array.isArray(record.risks)
     ? record.risks
         .filter(isRecord)
@@ -571,7 +631,9 @@ export function normalizeStepResult(
           };
         })
         .filter(r => r.description)
-    : normalizeRisks(record.riskFactors ?? complexity.riskFactors);
+    : parsedRiskFactors?.risks && parsedRiskFactors.risks.length > 0
+      ? parsedRiskFactors.risks
+      : normalizeRisks(record.riskFactors ?? complexity.riskFactors);
 
   const featureCountFromStep3 = (() => {
     const step3 = previous?.[3];
@@ -582,7 +644,29 @@ export function normalizeStepResult(
   const estimatedWeeks = estimatedDays > 0 ? `${Math.max(1, Math.round(estimatedDays / 5))}周` : '1周';
   const teamSize = complexityScore >= 8 ? '3-5人' : complexityScore >= 5 ? '2-3人' : '1-2人';
 
-  const mitigations = Array.isArray(record.mitigations) ? toStringArray(record.mitigations) : [];
+  const mitigations = Array.from(new Set([
+    ...toStringArray(record.mitigations),
+    ...toStringArray(record.securityConsiderations),
+    ...(parsedRiskFactors?.mitigations ?? [])
+  ].map(s => s.trim()).filter(Boolean)));
+
+  // --- Style Variant Parsing ---
+  const normalizeStyleVariants = (val: unknown): import('@/types/analysis-step-results').StyleVariant[] => {
+    if (!Array.isArray(val)) return [];
+    return val.filter(isRecord).map(v => ({
+      styleId: toDisplayString(v.styleId, 'UNK'),
+      styleName: toDisplayString(v.styleName, '未知风格'),
+      styleCode: toDisplayString(v.styleCode, 'unknown'),
+      previewHtml: typeof v.previewHtml === 'string' ? v.previewHtml : undefined,
+      thumbnailUrl: typeof v.thumbnailUrl === 'string' ? v.thumbnailUrl : undefined,
+      colorTheme: typeof v.colorTheme === 'string' ? v.colorTheme : undefined
+    }));
+  };
+
+  const styleVariants = normalizeStyleVariants(record.styleVariants);
+  const designIntent = typeof record.intent === 'string' ? record.intent : undefined;
+  const designBranch = typeof record.branch === 'string' ? record.branch : undefined;
+  const designConfidence = typeof record.confidence === 'number' ? record.confidence : undefined;
 
   const result: Step5Result = {
     complexityScore,
@@ -593,7 +677,11 @@ export function normalizeStepResult(
       estimatedWeeks,
       teamSize
     },
-    mitigations
+    mitigations,
+    styleVariants,
+    designIntent,
+    designBranch,
+    designConfidence
   };
 
   return { step: 5, data: result };

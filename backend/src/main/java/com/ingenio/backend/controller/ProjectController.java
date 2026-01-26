@@ -40,6 +40,9 @@ public class ProjectController {
 
     private final ProjectService projectService;
     private final GenerationTaskMapper generationTaskMapper;
+    private final com.ingenio.backend.service.VersionService versionService;
+    private final com.ingenio.backend.service.AppSpecService appSpecService;
+    private final com.ingenio.backend.service.g3.G3OrchestratorService g3OrchestratorService;
 
     /**
      * 获取项目统计数据
@@ -76,12 +79,12 @@ public class ProjectController {
                 .ge(ProjectEntity::getCreatedAt, monthStart);
         long monthlyNewProjects = projectService.count(monthlyWrapper);
 
-        // 查询已发布应用数
-        LambdaQueryWrapper<ProjectEntity> publishedWrapper = new LambdaQueryWrapper<>();
-        publishedWrapper.eq(ProjectEntity::getUserId, userId)
+        // 查询生成完成的应用数（原 publishedProjects，现改为 COMPLETED 状态）
+        LambdaQueryWrapper<ProjectEntity> completedWrapper = new LambdaQueryWrapper<>();
+        completedWrapper.eq(ProjectEntity::getUserId, userId)
                 .eq(ProjectEntity::getTenantId, tenantId)
-                .eq(ProjectEntity::getStatus, ProjectEntity.Status.PUBLISHED.getValue());
-        long publishedProjects = projectService.count(publishedWrapper);
+                .eq(ProjectEntity::getStatus, ProjectEntity.Status.COMPLETED.getValue());
+        long completedProjects = projectService.count(completedWrapper);
 
         // 查询草稿应用数
         LambdaQueryWrapper<ProjectEntity> draftWrapper = new LambdaQueryWrapper<>();
@@ -97,7 +100,14 @@ public class ProjectController {
                 .eq(ProjectEntity::getStatus, ProjectEntity.Status.ARCHIVED.getValue());
         long archivedProjects = projectService.count(archivedWrapper);
 
-        // 查询生成中的任务数
+        // 查询生成中的项目数（GENERATING 状态）
+        LambdaQueryWrapper<ProjectEntity> generatingWrapper = new LambdaQueryWrapper<>();
+        generatingWrapper.eq(ProjectEntity::getUserId, userId)
+                .eq(ProjectEntity::getTenantId, tenantId)
+                .eq(ProjectEntity::getStatus, ProjectEntity.Status.GENERATING.getValue());
+        long generatingProjects = projectService.count(generatingWrapper);
+
+        // 同时查询 generation_tasks 中正在执行的任务数（作为补充）
         LambdaQueryWrapper<GenerationTaskEntity> taskWrapper = new LambdaQueryWrapper<>();
         taskWrapper.eq(GenerationTaskEntity::getUserId, userId)
                 .eq(GenerationTaskEntity::getTenantId, tenantId)
@@ -108,11 +118,14 @@ public class ProjectController {
                         GenerationTaskEntity.Status.GENERATING.getValue());
         long generatingTasks = generationTaskMapper.selectCount(taskWrapper);
 
+        // 取两者中的较大值作为"生成中"的数量
+        long totalGenerating = Math.max(generatingProjects, generatingTasks);
+
         ProjectStatsResponse stats = ProjectStatsResponse.builder()
                 .totalProjects((int) totalProjects)
                 .monthlyNewProjects((int) monthlyNewProjects)
-                .generatingTasks((int) generatingTasks)
-                .publishedProjects((int) publishedProjects)
+                .generatingTasks((int) totalGenerating)
+                .publishedProjects((int) completedProjects)  // 使用 completedProjects 作为 publishedProjects
                 .draftProjects((int) draftProjects)
                 .archivedProjects((int) archivedProjects)
                 .build();
@@ -140,17 +153,17 @@ public class ProjectController {
 
         // 构建ProjectEntity
         ProjectEntity project = ProjectEntity.builder()
-            .tenantId(tenantId)
-            .userId(userId)
-            .name(request.getName())
-            .description(request.getDescription())
-            .coverImageUrl(request.getCoverImageUrl())
-            .appSpecId(request.getAppSpecId() != null ? UUID.fromString(request.getAppSpecId()) : null)
-            .visibility(request.getVisibility() != null ? request.getVisibility() : "private")
-            .tags(request.getTags())
-            .ageGroup(request.getAgeGroup())
-            .metadata(request.getMetadata())
-            .build();
+                .tenantId(tenantId)
+                .userId(userId)
+                .name(request.getName())
+                .description(request.getDescription())
+                .coverImageUrl(request.getCoverImageUrl())
+                .appSpecId(request.getAppSpecId() != null ? UUID.fromString(request.getAppSpecId()) : null)
+                .visibility(request.getVisibility() != null ? request.getVisibility() : "private")
+                .tags(request.getTags())
+                .ageGroup(request.getAgeGroup())
+                .metadata(request.getMetadata())
+                .build();
 
         // 调用Service层创建项目
         ProjectEntity createdProject = projectService.createProject(project);
@@ -197,16 +210,15 @@ public class ProjectController {
      * 更新项目
      * 需要登录，只能更新自己的项目
      *
-     * @param id 项目ID
+     * @param id      项目ID
      * @param request 更新的项目信息
      * @return 更新后的项目信息
      */
     @SaCheckLogin
     @PutMapping("/{id}")
     public Result<ProjectResponse> update(
-        @PathVariable UUID id,
-        @Valid @RequestBody CreateProjectRequest request
-    ) {
+            @PathVariable UUID id,
+            @Valid @RequestBody CreateProjectRequest request) {
         // 获取当前用户ID
         String userIdStr = StpUtil.getLoginIdAsString();
         UUID userId = UUID.fromString(userIdStr);
@@ -215,14 +227,14 @@ public class ProjectController {
 
         // 构建更新的ProjectEntity
         ProjectEntity project = ProjectEntity.builder()
-            .name(request.getName())
-            .description(request.getDescription())
-            .coverImageUrl(request.getCoverImageUrl())
-            .visibility(request.getVisibility())
-            .tags(request.getTags())
-            .ageGroup(request.getAgeGroup())
-            .metadata(request.getMetadata())
-            .build();
+                .name(request.getName())
+                .description(request.getDescription())
+                .coverImageUrl(request.getCoverImageUrl())
+                .visibility(request.getVisibility())
+                .tags(request.getTags())
+                .ageGroup(request.getAgeGroup())
+                .metadata(request.getMetadata())
+                .build();
 
         // 调用Service层更新项目
         ProjectEntity updatedProject = projectService.updateProject(id, project);
@@ -262,19 +274,18 @@ public class ProjectController {
      * 查询当前用户创建的项目列表
      *
      * @param current 当前页码
-     * @param size 每页数量
-     * @param status 状态筛选（可选）
+     * @param size    每页数量
+     * @param status  状态筛选（可选）
      * @param keyword 搜索关键词（可选）
      * @return 分页结果
      */
     @SaCheckLogin
     @GetMapping
     public Result<PageResult<ProjectResponse>> list(
-        @RequestParam(defaultValue = "1") Long current,
-        @RequestParam(defaultValue = "10") Long size,
-        @RequestParam(required = false) String status,
-        @RequestParam(required = false) String keyword
-    ) {
+            @RequestParam(defaultValue = "1") Long current,
+            @RequestParam(defaultValue = "10") Long size,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String keyword) {
         // 获取当前用户ID
         String userIdStr = StpUtil.getLoginIdAsString();
         UUID userId = UUID.fromString(userIdStr);
@@ -319,17 +330,16 @@ public class ProjectController {
      * 查询公开项目（社区广场）
      * 公开接口，所有人可访问
      *
-     * @param current 当前页码
-     * @param size 每页数量
+     * @param current  当前页码
+     * @param size     每页数量
      * @param ageGroup 年龄分组过滤（可选）
      * @return 分页结果
      */
     @GetMapping("/public")
     public Result<PageResult<ProjectResponse>> listPublicProjects(
-        @RequestParam(defaultValue = "1") Long current,
-        @RequestParam(defaultValue = "10") Long size,
-        @RequestParam(required = false) String ageGroup
-    ) {
+            @RequestParam(defaultValue = "1") Long current,
+            @RequestParam(defaultValue = "10") Long size,
+            @RequestParam(required = false) String ageGroup) {
         log.info("查询公开项目: current={}, size={}, ageGroup={}", current, size, ageGroup);
 
         // 分页查询公开项目
@@ -515,6 +525,109 @@ public class ProjectController {
     }
 
     /**
+     * 重新生成项目
+     * 创建新版本的AppSpec和GenerationTask
+     *
+     * @param id      项目ID
+     * @param request 重新生成请求
+     * @return 重新生成响应
+     */
+    @SaCheckLogin
+    @PostMapping("/{id}/regenerate")
+    public Result<com.ingenio.backend.dto.response.RegenerateResponse> regenerate(
+            @PathVariable UUID id,
+            @Valid @RequestBody com.ingenio.backend.dto.request.RegenerateRequest request) {
+        String userIdStr = StpUtil.getLoginIdAsString();
+        String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
+        UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : UUID.fromString(userIdStr);
+
+        log.info("重新生成项目: projectId={}, tenantId={}", id, tenantId);
+
+        ProjectEntity project = projectService.getByIdAndTenantId(id, tenantId);
+        if (project == null) {
+            throw new BusinessException(ErrorCode.PROJECT_NOT_FOUND);
+        }
+
+        UUID userId = UUID.fromString(userIdStr);
+        UUID appSpecId = project.getAppSpecId();
+        if (appSpecId == null) {
+            throw new BusinessException(ErrorCode.BUSINESS_ERROR, "项目未关联AppSpec");
+        }
+
+        // 1. 创建新版本
+        com.ingenio.backend.dto.CreateVersionRequest versionRequest = com.ingenio.backend.dto.CreateVersionRequest
+                .builder()
+                .parentVersionId(appSpecId)
+                .userId(userId)
+                .tenantId(tenantId)
+                .build();
+
+        com.ingenio.backend.entity.AppSpecEntity newVersion = versionService.createVersion(versionRequest);
+
+        // 2. 更新新版本的配置（如果提供）
+        boolean needsUpdate = false;
+        if (request.getSelectedTemplateId() != null) {
+            newVersion.setSelectedTemplateId(UUID.fromString(request.getSelectedTemplateId()));
+            needsUpdate = true;
+        }
+        if (request.getSelectedStyle() != null) {
+            newVersion.setSelectedStyle(request.getSelectedStyle());
+            needsUpdate = true;
+        }
+
+        // 更新需求描述（如果有）
+        String requirementToUse = request.getUserRequirement();
+        if (requirementToUse != null && !requirementToUse.isBlank()) {
+            java.util.Map<String, Object> specContent = newVersion.getSpecContent() != null
+                    ? newVersion.getSpecContent()
+                    : new java.util.HashMap<>();
+            specContent.put("userRequirement", requirementToUse);
+            newVersion.setSpecContent(specContent);
+
+            // 更新 metadata
+            java.util.Map<String, Object> metadata = newVersion.getMetadata() != null
+                    ? newVersion.getMetadata()
+                    : new java.util.HashMap<>();
+            metadata.put("requirementUpdatedAt", Instant.now().toString());
+            newVersion.setMetadata(metadata);
+
+            needsUpdate = true;
+        } else {
+            // 如果请求没传，尝试从 AppSpec 获取
+            if (newVersion.getSpecContent() != null && newVersion.getSpecContent().containsKey("userRequirement")) {
+                requirementToUse = newVersion.getSpecContent().get("userRequirement").toString();
+            }
+        }
+
+        if (needsUpdate) {
+            appSpecService.updateById(newVersion);
+        }
+
+        // 3. 更新项目关联到新版本
+        project.setAppSpecId(newVersion.getId());
+        projectService.updateById(project);
+
+        // 4. 提交 G3 任务 Trigger Generation
+        UUID jobId = g3OrchestratorService.submitJob(
+                requirementToUse,
+                userId,
+                tenantId,
+                newVersion.getId(), // 使用新版本作为上下文
+                newVersion.getSelectedTemplateId(),
+                null // 使用默认轮次
+        );
+
+        log.info("重新生成项目触发成功: projectId={}, newVersionId={}, jobId={}", id, newVersion.getId(), jobId);
+
+        return Result.success(com.ingenio.backend.dto.response.RegenerateResponse.builder()
+                .projectId(id)
+                .newVersionId(newVersion.getId())
+                .newVersion(newVersion.getVersion())
+                .taskId(jobId)
+                .build());
+    }
+
+    /**
      * 获取项目执行历史
      * 查询项目关联的所有生成任务
      *
@@ -560,26 +673,26 @@ public class ProjectController {
      */
     private ProjectResponse convertToProjectResponse(ProjectEntity project) {
         return ProjectResponse.builder()
-            .id(project.getId())
-            .tenantId(project.getTenantId())
-            .userId(project.getUserId())
-            .name(project.getName())
-            .description(project.getDescription())
-            .coverImageUrl(project.getCoverImageUrl())
-            .appSpecId(project.getAppSpecId())
-            .status(project.getStatus())
-            .visibility(project.getVisibility())
-            .viewCount(project.getViewCount())
-            .likeCount(project.getLikeCount())
-            .forkCount(project.getForkCount())
-            .commentCount(project.getCommentCount())
-            .tags(project.getTags())
-            .ageGroup(project.getAgeGroup())
-            .createdAt(project.getCreatedAt())
-            .updatedAt(project.getUpdatedAt())
-            .publishedAt(project.getPublishedAt())
-            .metadata(project.getMetadata())
-            .build();
+                .id(project.getId())
+                .tenantId(project.getTenantId())
+                .userId(project.getUserId())
+                .name(project.getName())
+                .description(project.getDescription())
+                .coverImageUrl(project.getCoverImageUrl())
+                .appSpecId(project.getAppSpecId())
+                .status(project.getStatus())
+                .visibility(project.getVisibility())
+                .viewCount(project.getViewCount())
+                .likeCount(project.getLikeCount())
+                .forkCount(project.getForkCount())
+                .commentCount(project.getCommentCount())
+                .tags(project.getTags())
+                .ageGroup(project.getAgeGroup())
+                .createdAt(project.getCreatedAt())
+                .updatedAt(project.getUpdatedAt())
+                .publishedAt(project.getPublishedAt())
+                .metadata(project.getMetadata())
+                .build();
     }
 
     /**
@@ -590,15 +703,15 @@ public class ProjectController {
      */
     private PageResult<ProjectResponse> convertToPageResult(Page<ProjectEntity> page) {
         return PageResult.<ProjectResponse>builder()
-            .records(page.getRecords().stream()
-                .map(this::convertToProjectResponse)
-                .toList())
-            .total(page.getTotal())
-            .size(page.getSize())
-            .current(page.getCurrent())
-            .pages(page.getPages())
-            .hasNext(page.hasNext())
-            .hasPrevious(page.hasPrevious())
-            .build();
+                .records(page.getRecords().stream()
+                        .map(this::convertToProjectResponse)
+                        .toList())
+                .total(page.getTotal())
+                .size(page.getSize())
+                .current(page.getCurrent())
+                .pages(page.getPages())
+                .hasNext(page.hasNext())
+                .hasPrevious(page.hasPrevious())
+                .build();
     }
 }

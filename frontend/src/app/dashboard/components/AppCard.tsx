@@ -66,10 +66,16 @@ export function AppCard({
    */
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case ProjectStatus.PUBLISHED:
+      case ProjectStatus.COMPLETED:
         return (
           <Badge variant="default" className="bg-green-500">
-            已发布
+            生成完成
+          </Badge>
+        );
+      case ProjectStatus.GENERATING:
+        return (
+          <Badge variant="default" className="bg-yellow-500">
+            生成中
           </Badge>
         );
       case ProjectStatus.DRAFT:

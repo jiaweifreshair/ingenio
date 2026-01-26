@@ -34,15 +34,30 @@ spring:
       port: 6379
       database: 0
 
+  # 邮件配置（用于验证码发送）
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:your-email@qq.com}
+    password: ${MAIL_PASSWORD:your-authorization-code}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          starttls:
+            enable: false
+
   # Spring AI OpenAI配置（七牛云AI服务 - OpenAI兼容接口）
   # 注意：Spring AI 的 base-url 不要包含 /v1（例如 https://api.qnaigc.com）
   # 说明：Spring AI 会在 base-url 后自动拼接 `/v1/...`，若配置成 `.../v1` 会产生 `/v1/v1/...`（404）。
   ai:
     openai:
-      # ⚠️ 请通过环境变量注入密钥，禁止在代码/配置中硬编码真实 sk-... 值
+      # ⚠️ 请通过环境变量注入密钥，禁止在代码/配置中硬编码真实 sk-your-api-key... 值
       # 推荐：QINIU_CLOUD_API_KEY（七牛云 OpenAI 兼容接口）
       # 兼容：SPRING_AI_OPENAI_API_KEY / QINIU_AI_API_KEY / DEEPSEEK_API_KEY
-      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-placeholder}}}}
+      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-your-api-key}}}}
       # 注意：Spring AI 的 base-url 不要包含 /v1（例如 https://api.qnaigc.com）
       base-url: ${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:https://api.qnaigc.com}}
       chat:
@@ -162,7 +177,7 @@ ingenio:
     primary:
       enabled: true
       base-url: http://127.0.0.1:8045/v1
-      api-key: sk-418de7bda2824845967ff0c8b97bfbc9
+      api-key: your-api-key-here
       model: claude-opus-4-5-thinking
     # 速率限制配置
     rate-limit:
@@ -178,6 +193,46 @@ ingenio:
   # 本地开发：3001端口（确保3000端口未被占用）
   openlovable:
     base-url: ${OPENLOVABLE_BASE_URL:http://localhost:3001}
+
+  # LangChain4j 配置覆盖（本地开发）
+  g3:
+    rag:
+      engine: lc4j
+    agent:
+      engine: lc4j
+
+  # LangChain4j 提供商配置（本地开发硬编码，避免环境变量问题）
+  langchain4j:
+    providers:
+      uniaix:
+        base-url: https://www.uniaix.com
+        api-key: your-api-key-here
+        embedding-model: doubao-embedding-text-240715
+        embedding-dimension: 2048
+      claude:
+        base-url: https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01
+        api-key: your-api-key-here
+        model: claude-opus-4-5-20251101
+        temperature: 0.2
+        max-tokens: 12000
+        timeout-seconds: 180
+        max-retries: 2
+      gemini:
+        base-url: https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01
+        api-key: your-api-key-here
+        model: gemini-3-pro-high
+        temperature: 0.2
+        max-tokens: 6000
+        timeout-seconds: 180
+        max-retries: 2
+      deepseek:
+        base-url: https://api.qnaigc.com/v1
+        api-key: your-api-key-here
+        model: deepseek-r1-0528
+        temperature: 0.2
+        max-tokens: 6000
+        timeout-seconds: 150
+        max-retries: 2
 
   # 跨域配置（允许前端localhost:3000访问）
   cors:

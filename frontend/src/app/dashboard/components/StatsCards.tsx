@@ -29,10 +29,10 @@ export function StatsCards({ stats }: { stats: ProjectStats }): React.ReactEleme
       bgColor: 'bg-yellow-50',
     },
     {
-      title: '已发布',
+      title: '生成完成',
       value: stats.publishedProjects,
       icon: CheckCircle2,
-      description: '可公开访问的应用',
+      description: '代码生成完成的应用',
       color: 'text-green-600',
       bgColor: 'bg-green-50',
     },

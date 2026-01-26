@@ -223,8 +223,8 @@ public final class OpenLovableResponseSanitizer {
             return false;
         }
 
-        // 检查常见的代码关键词
-        return response.contains("import ") ||
+        // 检查常见的代码关键词（JavaScript/TypeScript/React）
+        boolean isJsCode = response.contains("import ") ||
                 response.contains("export ") ||
                 response.contains("function ") ||
                 response.contains("const ") ||
@@ -233,6 +233,276 @@ public final class OpenLovableResponseSanitizer {
                 response.contains("return (") ||
                 response.contains("useState") ||
                 response.contains("useEffect");
+
+        // 检查 CSS 特征
+        boolean isCssCode = response.contains("@tailwind") ||
+                response.contains("@apply") ||
+                response.contains("@import") ||
+                response.contains("@keyframes") ||
+                (response.contains("{") && response.contains("}") &&
+                        (response.contains("color:") || response.contains("background:") ||
+                                response.contains("margin:") || response.contains("padding:") ||
+                                response.contains("display:") || response.contains("font-")));
+
+        // 检查 HTML 特征
+        boolean isHtmlCode = response.contains("<!DOCTYPE html>") ||
+                response.contains("<html") ||
+                response.contains("<head>") ||
+                response.contains("<body>");
+
+        // 检查 JSON 特征
+        boolean isJsonCode = (response.trim().startsWith("{") && response.trim().endsWith("}") &&
+                response.contains("\"")) ||
+                (response.contains("\"dependencies\"") && response.contains("\"scripts\""));
+
+        return isJsCode || isCssCode || isHtmlCode || isJsonCode;
+    }
+
+    /**
+     * Markdown代码块匹配模式
+     *
+     * 是什么：匹配 ```lang filename="..." ... ``` 或 ```lang:path ... ``` 格式的代码块。
+     * 做什么：提取语言、文件路径和代码内容。
+     * 为什么：AI模型可能输出Markdown格式而非 <file> 标签格式。
+     */
+    private static final Pattern MARKDOWN_CODE_BLOCK_PATTERN = Pattern.compile(
+            "```(\\w+)?(?:\\s+([^\\n]+))?\\n([\\s\\S]*?)```",
+            Pattern.MULTILINE);
+
+    /**
+     * Bolt格式匹配模式
+     *
+     * 是什么：匹配 <boltAction type="file" filePath="...">...</boltAction> 格式。
+     * 做什么：提取文件路径和代码内容。
+     * 为什么：某些AI模型使用Bolt格式输出代码。
+     */
+    private static final Pattern BOLT_ACTION_PATTERN = Pattern.compile(
+            "<boltAction\\s+type=\"file\"\\s+filePath=\"([^\"]+)\">(.*?)</boltAction>",
+            Pattern.DOTALL);
+
+    /**
+     * 将AI输出转换为标准 <file> 格式
+     *
+     * 是什么：格式转换器，将各种AI输出格式统一转换为 <file path="...">...</file> 格式。
+     * 做什么：
+     *   1. 如果已有 <file> 标签，保持不变
+     *   2. 检测并转换 Bolt 格式
+     *   3. 检测并转换 Markdown 代码块格式
+     *   4. 对于纯代码，尝试推断文件类型并包裹
+     * 为什么：前端和部署流程都依赖 <file> 格式，需要统一输出格式。
+     *
+     * @param response AI原始输出
+     * @return 转换后的响应（包含 <file> 标签）或原始响应（如果无法转换）
+     */
+    public static String convertToFileFormat(String response) {
+        if (response == null || response.isBlank()) {
+            return response;
+        }
+
+        // 如果已经包含 <file 标签，不需要转换
+        if (response.contains("<file")) {
+            log.debug("响应已包含 <file> 标签，无需转换");
+            return response;
+        }
+
+        StringBuilder converted = new StringBuilder();
+        boolean hasConversion = false;
+
+        // 1. 尝试转换 Bolt 格式
+        String afterBolt = convertBoltFormat(response);
+        if (!afterBolt.equals(response)) {
+            log.info("已转换 Bolt 格式为 <file> 格式");
+            response = afterBolt;
+            hasConversion = true;
+        }
+
+        // 2. 如果转换后仍无 <file> 标签，尝试转换 Markdown 代码块
+        if (!response.contains("<file")) {
+            String afterMarkdown = convertMarkdownCodeBlocks(response);
+            if (!afterMarkdown.equals(response)) {
+                log.info("已转换 Markdown 代码块为 <file> 格式");
+                response = afterMarkdown;
+                hasConversion = true;
+            }
+        }
+
+        // 3. 如果仍无 <file> 标签但看起来像代码，尝试包裹为 App.jsx
+        if (!response.contains("<file") && looksLikeCode(response)) {
+            String wrapped = wrapCodeAsFile(response);
+            if (wrapped != null) {
+                log.info("已将纯代码包裹为 <file> 格式");
+                response = wrapped;
+                hasConversion = true;
+            }
+        }
+
+        if (hasConversion) {
+            log.info("格式转换完成，响应长度: {} -> {}", response.length(), response.length());
+        } else {
+            log.debug("无需格式转换或转换失败");
+        }
+
+        return response;
+    }
+
+    /**
+     * 转换 Bolt 格式为 <file> 格式
+     */
+    private static String convertBoltFormat(String response) {
+        Matcher matcher = BOLT_ACTION_PATTERN.matcher(response);
+        StringBuffer buffer = new StringBuffer();
+        boolean found = false;
+
+        while (matcher.find()) {
+            found = true;
+            String filePath = matcher.group(1);
+            String content = matcher.group(2);
+            String replacement = String.format("<file path=\"%s\">%s</file>", filePath, content);
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
+        }
+
+        if (found) {
+            matcher.appendTail(buffer);
+            return buffer.toString();
+        }
+        return response;
+    }
+
+    /**
+     * 转换 Markdown 代码块为 <file> 格式
+     */
+    private static String convertMarkdownCodeBlocks(String response) {
+        Matcher matcher = MARKDOWN_CODE_BLOCK_PATTERN.matcher(response);
+        StringBuilder result = new StringBuilder();
+        boolean found = false;
+
+        while (matcher.find()) {
+            String lang = matcher.group(1);
+            String attributes = matcher.group(2);
+            String content = matcher.group(3);
+
+            String filePath = extractFilePathFromMarkdownAttributes(lang, attributes, content);
+
+            if (filePath != null && !filePath.isBlank()) {
+                found = true;
+                result.append(String.format("<file path=\"%s\">\n%s\n</file>\n\n", filePath, content.trim()));
+            }
+        }
+
+        if (found) {
+            return result.toString().trim();
+        }
+        return response;
+    }
+
+    /**
+     * 从 Markdown 代码块属性中提取文件路径
+     */
+    private static String extractFilePathFromMarkdownAttributes(String lang, String attributes, String content) {
+        // 尝试从属性中提取 filename="path" 或 title="path"
+        if (attributes != null && !attributes.isBlank()) {
+            Matcher attrMatcher = Pattern.compile("(?:filename|title)=[\"']([^\"']+)[\"']").matcher(attributes);
+            if (attrMatcher.find()) {
+                return attrMatcher.group(1);
+            }
+
+            // 尝试直接匹配路径 (如 src/App.jsx)
+            String possiblePath = attributes.trim();
+            if (!possiblePath.contains("=") && (possiblePath.contains("/") || possiblePath.contains("."))) {
+                return possiblePath;
+            }
+
+            // 尝试 lang:path 格式
+            if (possiblePath.contains(":")) {
+                String[] parts = possiblePath.split(":", 2);
+                if (parts.length == 2 && !parts[1].isBlank()) {
+                    return parts[1].trim();
+                }
+            }
+        }
+
+        // 尝试从代码内容第一行注释中提取
+        if (content != null && !content.isBlank()) {
+            String firstLine = content.trim().split("\\n")[0];
+            Matcher commentMatcher = Pattern.compile("^(?://|<!--|#)\\s*(?:filename:|file:)?\\s*([^\\s<]+)(?:-->)?$", Pattern.CASE_INSENSITIVE)
+                    .matcher(firstLine);
+            if (commentMatcher.find()) {
+                String path = commentMatcher.group(1);
+                if (path.contains(".") || path.contains("/")) {
+                    return path;
+                }
+            }
+        }
+
+        // 根据语言推断默认文件名
+        if (lang != null) {
+            return inferDefaultFilePath(lang);
+        }
+
+        return null;
+    }
+
+    /**
+     * 根据语言推断默认文件路径
+     */
+    private static String inferDefaultFilePath(String lang) {
+        if (lang == null) return null;
+        return switch (lang.toLowerCase()) {
+            case "jsx", "javascript" -> "src/App.jsx";
+            case "tsx", "typescript" -> "src/App.tsx";
+            case "css" -> "src/index.css";
+            case "html" -> "index.html";
+            case "json" -> "package.json";
+            default -> null;
+        };
+    }
+
+    /**
+     * 将纯代码包裹为 <file> 格式
+     *
+     * 是什么：对于没有任何格式标记的纯代码，尝试推断文件类型并包裹。
+     * 做什么：分析代码特征，确定最可能的文件路径。
+     * 为什么：某些AI可能直接输出代码而不加任何标记。
+     */
+    private static String wrapCodeAsFile(String response) {
+        if (response == null || response.isBlank()) {
+            return null;
+        }
+
+        // 检测代码类型
+        String filePath = "src/App.jsx"; // 默认
+
+        if (response.contains("@tailwind") || response.contains("@apply")) {
+            filePath = "src/index.css";
+        } else if (response.contains("<!DOCTYPE html>") || response.contains("<html")) {
+            filePath = "index.html";
+        } else if (response.contains("\"dependencies\"") && response.contains("\"scripts\"")) {
+            filePath = "package.json";
+        } else if (response.contains("ReactDOM.createRoot") || response.contains("createRoot(")) {
+            filePath = "src/main.jsx";
+        } else if (response.contains("export default function") || response.contains("function App")) {
+            filePath = "src/App.jsx";
+        }
+
+        // 移除可能的 markdown 包裹符号
+        String cleanCode = response.trim();
+        if (cleanCode.startsWith("```")) {
+            int firstNewline = cleanCode.indexOf('\n');
+            if (firstNewline > 0) {
+                cleanCode = cleanCode.substring(firstNewline + 1);
+            }
+        }
+        if (cleanCode.endsWith("```")) {
+            cleanCode = cleanCode.substring(0, cleanCode.length() - 3);
+        }
+        cleanCode = cleanCode.trim();
+
+        if (cleanCode.isBlank()) {
+            return null;
+        }
+
+        log.info("将纯代码包裹为文件: {}", filePath);
+        return String.format("<file path=\"%s\">\n%s\n</file>", filePath, cleanCode);
     }
 
     /**

@@ -15,7 +15,7 @@ import {
   Briefcase,
   Code,
   ScanSearch,
-  ShieldCheck
+  Palette
 } from 'lucide-react';
 import { type AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
 import { cn } from '@/lib/utils';
@@ -61,7 +61,7 @@ const STEP_CONFIG = [
   { name: '👨‍💻 数据架构师', icon: Database, description: '架构师正在设计数据模型与实体关系...' },
   { name: '🕵️ 业务分析师', icon: ScanSearch, description: '分析师正在识别功能意图与边界...' },
   { name: '🏗️ 技术负责人', icon: Code, description: 'Tech Lead 正在选型技术栈与开发框架...' },
-  { name: '🛡️ 安全工程师', icon: ShieldCheck, description: '安全专家正在评估系统复杂度与风险...' },
+  { name: '👩‍🎨 交互设计师', icon: Palette, description: '设计师正在智能识别场景并生成最佳交互方案...' },
   { name: '🧠 首席架构师', icon: Brain, description: '首席架构师正在生成最终实施蓝图...' }
 ];
 
@@ -455,18 +455,29 @@ export function AnalysisProgressPanel({
       return;
     }
 
-    const runningStep = messages.find(m => m.status === 'RUNNING')?.step;
-    if (runningStep && runningStep !== expandedStep) {
-      setExpandedStep(runningStep);
+    // 查找真正正在运行的步骤（通过检查该步骤的最新状态，而不是历史消息）
+    const currentlyRunningStep = STEP_CONFIG.map((_, i) => i + 1).find(step => {
+       const { status } = getStepStatus(step);
+       return status === 'RUNNING';
+    });
+
+    if (currentlyRunningStep && currentlyRunningStep !== expandedStep) {
+      setExpandedStep(currentlyRunningStep);
     }
-  }, [messages, isCompleted, expandedStep, waitingForPrototype, finalResult]); // Added dependencies
+  }, [messages, isCompleted, expandedStep, waitingForPrototype, finalResult]);
 
   // 自动滚动到底部
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      // 使用 setTimeout 确保 DOM 更新后再滚动 (例如展开动画开始后)
+      const timer = setTimeout(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      }, 100);
+      return () => clearTimeout(timer);
     }
-  }, [messages]);
+  }, [messages, expandedStep]);
 
   const getStepStatus = (step: number) => {
     const stepMessages = messages.filter(m => m.step === step);

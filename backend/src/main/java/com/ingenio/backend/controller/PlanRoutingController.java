@@ -8,12 +8,14 @@ import com.ingenio.backend.dto.request.PlanRoutingRequest;
 import com.ingenio.backend.dto.request.OpenLovableGenerateRequest;
 import com.ingenio.backend.dto.response.OpenLovableGenerateResponse;
 import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.entity.UserEntity;
 import com.ingenio.backend.enums.DesignStyle;
 import com.ingenio.backend.mapper.UserMapper;
 import com.ingenio.backend.service.AppSpecService;
 import com.ingenio.backend.service.BillingService;
 import com.ingenio.backend.service.OpenLovableService;
+import com.ingenio.backend.service.ProjectService;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -45,7 +47,8 @@ import java.util.regex.Pattern;
  * - 修复前端“深度分析/生成流程”在调用 `/v2/plan-routing/route` 时返回 500 的问题。
  *
  * 背景：
- * - 前端 `frontend/src/lib/api/plan-routing.ts:1` 会调用 `/v2/plan-routing/route` 获取 appSpecId + 路由分支。
+ * - 前端 `frontend/src/lib/api/plan-routing.ts:1` 会调用 `/v2/plan-routing/route` 获取
+ * appSpecId + 路由分支。
  * - 之前 Spring Boot 侧缺失该接口，导致 NoHandler 异常被全局异常处理器包装为“系统错误(1000)”，前端显示 HTTP 500。
  *
  * 说明：
@@ -78,6 +81,8 @@ public class PlanRoutingController {
     private final BillingService billingService;
     private final OpenLovableService openLovableService;
     private final UserMapper userMapper;
+    private final ProjectService projectService;
+    private final com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer;
 
     /**
      * 路由用户需求（意图识别 + 分支决策 + 生成 AppSpec）
@@ -149,7 +154,8 @@ public class PlanRoutingController {
         // 2) 写入 V2 关键元数据（便于后续流程读取）
         appSpec.setIntentType(decision.intent.name());
         appSpec.setConfidenceScore(BigDecimal.valueOf(decision.confidence));
-        Map<String, Object> metadata = appSpec.getMetadata() != null ? new HashMap<>(appSpec.getMetadata()) : new HashMap<>();
+        Map<String, Object> metadata = appSpec.getMetadata() != null ? new HashMap<>(appSpec.getMetadata())
+                : new HashMap<>();
         metadata.put("intent", decision.intent.name());
         metadata.put("branch", decision.branch.name());
         metadata.put("confidence", decision.confidence);
@@ -167,6 +173,40 @@ public class PlanRoutingController {
 
         appSpecService.updateById(appSpec);
 
+        // 2.3) 创建或获取关联的 Project（确保 Dashboard 可以显示）
+        final UUID finalUserId = userId;
+        final UUID finalTenantId = tenantId;
+        ProjectEntity project = projectService.findByAppSpecId(appSpec.getId());
+        if (project == null) {
+            // 从需求中提取项目名称（取前30个字符作为名称）
+            String projectName = requirement.length() > 30
+                    ? requirement.substring(0, 30) + "..."
+                    : requirement;
+
+            project = ProjectEntity.builder()
+                    .tenantId(finalTenantId)
+                    .userId(finalUserId)
+                    .name(projectName)
+                    .description(requirement)
+                    .appSpecId(appSpec.getId())
+                    .status(ProjectEntity.Status.DRAFT.getValue())
+                    .visibility(ProjectEntity.Visibility.PRIVATE.getValue())
+                    .build();
+            project = projectService.createProject(project);
+            log.info("创建关联项目成功: projectId={}, appSpecId={}", project.getId(), appSpec.getId());
+        } else {
+            // 更新已存在的 Project（如果需求有变化）
+            if (!requirement.equals(project.getDescription())) {
+                project.setDescription(requirement);
+                if (requirement.length() <= 30) {
+                    project.setName(requirement);
+                }
+                projectService.updateById(project);
+                log.info("更新关联项目: projectId={}, appSpecId={}", project.getId(), appSpec.getId());
+            }
+        }
+        final UUID projectId = project.getId();
+
         // 2.5) CLONE/HYBRID 分支尝试快速生成原型（OpenLovable）
         if (decision.branch != RoutingBranch.DESIGN) {
             boolean hasPrototype = StringUtils.hasText(appSpec.getFrontendPrototypeUrl())
@@ -178,7 +218,13 @@ public class PlanRoutingController {
                             .userRequirement(requirement)
                             .referenceUrls(referenceUrls)
                             .needsCrawling(!referenceUrls.isEmpty())
+                            // CLONE/HYBRID 直出原型：需要等待生成完成后再返回 prototypeUrl
                             .streaming(false)
+                            // 关键修复：不强行指定默认模型（避免模型/密钥不匹配导致返回空代码）
+                            // 由 open-lovable-cn 侧选择其默认可用模型，必要时再在前端发起 SSE 生成
+                            .aiModel(null)
+                            // 克隆/爬取链路可能明显慢于“纯生成”，默认放宽超时，避免过早返回空原型
+                            .timeoutSeconds(180)
                             .build();
                     OpenLovableGenerateResponse preview = openLovableService.generatePrototype(openLovableRequest);
                     if (preview != null && preview.isSuccessful()) {
@@ -204,6 +250,7 @@ public class PlanRoutingController {
 
         PlanRoutingResult result = PlanRoutingResult.builder()
                 .appSpecId(appSpec.getId().toString())
+                .projectId(projectId.toString())
                 .intent(decision.intent)
                 .confidence(decision.confidence)
                 .branch(decision.branch)
@@ -211,13 +258,14 @@ public class PlanRoutingController {
                 .styleVariants(styleVariants)
                 .prototypeGenerated(prototypeGenerated)
                 .prototypeUrl(appSpec.getFrontendPrototypeUrl())
-                .selectedStyleId(StringUtils.hasText(appSpec.getSelectedStyle()) ? appSpec.getSelectedStyle() : selectedStyleId)
+                .selectedStyleId(
+                        StringUtils.hasText(appSpec.getSelectedStyle()) ? appSpec.getSelectedStyle() : selectedStyleId)
                 .nextAction(decision.branch == RoutingBranch.DESIGN ? "请选择您喜欢的设计风格" : "请提供参考网站或选择模板")
                 .requiresUserConfirmation(true)
                 .metadata(Map.of(
                         "tenantId", tenantId.toString(),
-                        "userId", userId.toString()
-                ))
+                        "userId", userId.toString(),
+                        "projectId", projectId.toString()))
                 .build();
 
         return Result.success(result);
@@ -249,6 +297,36 @@ public class PlanRoutingController {
             nextSpecContent.putIfAbsent("stage", "planning");
             appSpec.setSpecContent(nextSpecContent);
 
+            // Re-analyze intent using NLRequirementAnalyzer
+            try {
+                Map<String, Object> intentResult = nlRequirementAnalyzer.analyzeIntent(requirement);
+                if (intentResult != null && !intentResult.isEmpty()) {
+                    String intent = (String) intentResult.get("intent");
+                    Object confidenceObj = intentResult.get("confidence");
+                    Double confidence = confidenceObj instanceof Number ? ((Number) confidenceObj).doubleValue() : 0.8;
+
+                    if (intent != null) {
+                        appSpec.setIntentType(intent);
+                        appSpec.setConfidenceScore(BigDecimal.valueOf(confidence));
+
+                        // Update metadata with reasoning
+                        Map<String, Object> meta = appSpec.getMetadata() != null
+                                ? new HashMap<>(appSpec.getMetadata())
+                                : new HashMap<>();
+                        meta.put("intent", intent);
+                        meta.put("confidence", confidence);
+                        meta.put("intentReasoning", intentResult.getOrDefault("reasoning", ""));
+                        meta.put("intentKeywords", intentResult.getOrDefault("keywords", List.of()));
+                        appSpec.setMetadata(meta);
+                    }
+                }
+            } catch (Exception ex) {
+                log.warn("Failed to re-analyze intent for appSpecId={}", appSpecId, ex);
+                // Fallback to simple logic if AI fails
+                RoutingDecision decision = decideRouting(requirement);
+                appSpec.setIntentType(decision.intent.name());
+            }
+
             Map<String, Object> metadata = appSpec.getMetadata() != null
                     ? new HashMap<>(appSpec.getMetadata())
                     : new HashMap<>();
@@ -258,10 +336,9 @@ public class PlanRoutingController {
 
             return Result.success(Map.of(
                     "success", true,
-                    "message", "需求已更新",
+                    "message", "需求已更新，意图已重新分析",
                     "appSpecId", appSpecId,
-                    "updatedAt", Instant.now().toString()
-            ));
+                    "updatedAt", Instant.now().toString()));
         } catch (IllegalArgumentException e) {
             return Result.error("400", "无效的AppSpec ID");
         } catch (Exception e) {
@@ -364,7 +441,7 @@ public class PlanRoutingController {
      * - 若 AppSpec 不存在则返回 404，确保前端可识别错误类型。
      *
      * @param appSpecId AppSpec ID
-     * @param styleId 风格标识（code 或 identifier）
+     * @param styleId   风格标识（code 或 identifier）
      * @return 更新后的路由结果
      */
     @PostMapping("/{appSpecId}/select-style")
@@ -461,8 +538,7 @@ public class PlanRoutingController {
                 userId,
                 1,
                 appSpecId,
-                "确认设计 - " + appSpecId
-        );
+                "确认设计 - " + appSpecId);
 
         if (!consumed) {
             return Result.error("402", "扣费失败，请重试");
@@ -517,8 +593,7 @@ public class PlanRoutingController {
             return Result.success(Map.of(
                     "success", true,
                     "message", "已进入代码生成阶段",
-                    "appSpecId", appSpecId
-            ));
+                    "appSpecId", appSpecId));
         } catch (IllegalArgumentException e) {
             return Result.error("400", "无效的AppSpec ID");
         } catch (Exception e) {
@@ -557,7 +632,7 @@ public class PlanRoutingController {
      * 更新原型状态（前端生成预览后同步到后端）
      *
      * @param appSpecId AppSpec ID
-     * @param request 原型信息
+     * @param request   原型信息
      * @return 更新结果
      */
     @PostMapping("/{appSpecId}/update-prototype")
@@ -595,8 +670,7 @@ public class PlanRoutingController {
             return Result.success(Map.of(
                     "success", true,
                     "message", "原型状态更新成功",
-                    "updatedAt", Instant.now().toString()
-            ));
+                    "updatedAt", Instant.now().toString()));
         } catch (IllegalArgumentException e) {
             log.error("无效的AppSpec ID: {}", appSpecId, e);
             return Result.error("400", "无效的AppSpec ID");
@@ -686,8 +760,7 @@ public class PlanRoutingController {
                 requirement.contains("类似") ||
                 requirement.contains("克隆") ||
                 requirement.contains("爬取");
-        boolean hasCustomizeKeyword =
-                requirement.contains("但") ||
+        boolean hasCustomizeKeyword = requirement.contains("但") ||
                 requirement.contains("但是") ||
                 requirement.contains("修改") ||
                 requirement.contains("定制") ||
@@ -698,7 +771,8 @@ public class PlanRoutingController {
             return new RoutingDecision(RequirementIntent.HYBRID_CLONE_AND_CUSTOMIZE, RoutingBranch.HYBRID, 0.85);
         }
         if (hasCloneKeyword) {
-            return new RoutingDecision(RequirementIntent.CLONE_EXISTING_WEBSITE, RoutingBranch.CLONE, hasUrl ? 0.92 : 0.80);
+            return new RoutingDecision(RequirementIntent.CLONE_EXISTING_WEBSITE, RoutingBranch.CLONE,
+                    hasUrl ? 0.92 : 0.80);
         }
         return new RoutingDecision(RequirementIntent.DESIGN_FROM_SCRATCH, RoutingBranch.DESIGN, 0.80);
     }
@@ -833,6 +907,7 @@ public class PlanRoutingController {
     @AllArgsConstructor
     public static class PlanRoutingResult {
         private String appSpecId;
+        private String projectId;
         private RequirementIntent intent;
         private double confidence;
         private RoutingBranch branch;

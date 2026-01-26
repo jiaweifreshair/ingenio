@@ -100,6 +100,49 @@ public class NLRequirementAnalyzer {
     }
 
     /**
+     * 分析用户需求的意图
+     *
+     * @param requirement 用户需求
+     * @return 意图识别结果 (Map)
+     */
+    public Map<String, Object> analyzeIntent(String requirement) {
+        log.info("开始意图识别: requirementLength={}", requirement.length());
+        try {
+            String prompt = buildIntentAnalysisPrompt(requirement);
+            AIProvider provider = aiProviderFactory.getProvider();
+            AIProvider.AIResponse response = provider.generate(prompt);
+            String content = response.content();
+            return parseAnalysisResult(content);
+        } catch (Exception e) {
+            log.error("意图识别失败", e);
+            return new HashMap<>();
+        }
+    }
+
+    private String buildIntentAnalysisPrompt(String requirement) {
+        return """
+                You are an Intent Classifier for Ingenio AI.
+                Determine the user's intent based on the requirement.
+
+                Intent Types:
+                1. CLONE_EXISTING_WEBSITE: User wants to clone/copy a specific existing website URL.
+                2. DESIGN_FROM_SCRATCH: User describes a new idea without referencing a specific URL to clone.
+                3. HYBRID_CLONE_AND_CUSTOMIZE: User wants to clone a site but adds significant custom requirements.
+
+                Return a JSON object:
+                {
+                  "intent": "CLONE_EXISTING_WEBSITE|DESIGN_FROM_SCRATCH|HYBRID_CLONE_AND_CUSTOMIZE",
+                  "confidence": 0.95,
+                  "reasoning": "User provided a URL...",
+                  "keywords": ["keyword1", "keyword2"],
+                  "urls": ["http://example.com"]
+                }
+
+                Requirement:
+                """ + requirement;
+    }
+
+    /**
      * 检查AI服务是否可用
      */
     public boolean isConfigured() {
@@ -179,6 +222,89 @@ public class NLRequirementAnalyzer {
                 }
             }
         }
+        // 保护性检查
+        if (lastException == null) {
+            lastException = new RuntimeException("未知错误：重试耗尽");
+        }
+        throw lastException;
+    }
+
+    /**
+     * 带重试和心跳进度的AI API调用（使用专属 Prompt）
+     *
+     * @param context          累积上下文
+     * @param step             步骤编号 (1-6)
+     * @param progressCallback 进度回调
+     */
+    private String callAIForAnalysisWithRetry(
+            String context,
+            int step,
+            Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+
+        Exception lastException = null;
+        String stepName = getStepDescription(step).split(":")[0]; // 获取步骤名称
+
+        for (int attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
+            try {
+                log.info("调用AI API进行 Step {} 分析 (尝试 {}/{})", step, attempt, MAX_RETRIES + 1);
+
+                final java.util.concurrent.atomic.AtomicBoolean isCompleted = new java.util.concurrent.atomic.AtomicBoolean(
+                        false);
+                final java.util.concurrent.atomic.AtomicInteger heartbeatCount = new java.util.concurrent.atomic.AtomicInteger(
+                        0);
+
+                java.util.concurrent.ScheduledExecutorService heartbeat = java.util.concurrent.Executors
+                        .newSingleThreadScheduledExecutor();
+
+                heartbeat.scheduleAtFixedRate(() -> {
+                    if (!isCompleted.get()) {
+                        int count = heartbeatCount.incrementAndGet();
+                        int elapsed = count * 3;
+                        int progress = Math.min(1 + count, 19);
+
+                        progressCallback.accept(AnalysisProgressMessage.builder()
+                                .step(step)
+                                .stepName(stepName)
+                                .status(AnalysisProgressMessage.StepStatus.RUNNING)
+                                .description(String.format("AI正在深度分析中...已用时%d秒", elapsed))
+                                .progress(progress)
+                                .result(Map.of("heartbeat", count, "elapsed", elapsed))
+                                .timestamp(Instant.now())
+                                .build());
+                    }
+                }, 3, 3, TimeUnit.SECONDS);
+
+                try {
+                    // 使用专属 Prompt 调用 AI
+                    String result = callAIForStepAnalysis(context, step);
+
+                    isCompleted.set(true);
+                    heartbeat.shutdown();
+                    return result;
+
+                } catch (Exception e) {
+                    isCompleted.set(true);
+                    heartbeat.shutdown();
+                    throw e;
+                }
+
+            } catch (Exception e) {
+                lastException = e;
+                String errorMsg = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
+                boolean isTimeout = errorMsg.contains("timeout") || errorMsg.contains("SocketTimeout");
+
+                if (isTimeout && attempt <= MAX_RETRIES) {
+                    log.warn("AI API超时，等待重试...");
+                    Thread.sleep(RETRY_DELAY_MS);
+                } else {
+                    break;
+                }
+            }
+        }
+        // 保护性检查
+        if (lastException == null) {
+            lastException = new RuntimeException("未知错误：重试耗尽");
+        }
         throw lastException;
     }
 
@@ -220,6 +346,50 @@ public class NLRequirementAnalyzer {
     }
 
     /**
+     * 调用AI进行步骤分析（使用专属 Prompt）
+     *
+     * @param context 累积上下文（包含需求和前面步骤的结果）
+     * @param step    步骤编号 (1-6)
+     * @return AI 返回的 JSON 字符串
+     */
+    private String callAIForStepAnalysis(String context, int step) throws Exception {
+        log.info("使用专属 Prompt 进行 Step {} 分析", step);
+
+        // 根据步骤选择专属 Prompt
+        String systemPrompt = switch (step) {
+            case 1 -> buildStep1ProductManagerPrompt();
+            case 2 -> buildStep2DataArchitectPrompt();
+            case 3 -> buildStep3BusinessAnalystPrompt();
+            case 4 -> buildStep4TechLeadPrompt();
+            case 5 -> buildStep5SecurityEngineerPrompt();
+            case 6 -> buildStep6ChiefArchitectPrompt();
+            default -> buildAnalysisPrompt(); // 回退到通用 Prompt
+        };
+
+        String userPrompt = "请基于以下上下文进行分析：\n\n" + context;
+        String fullPrompt = systemPrompt + "\n\n" + userPrompt;
+
+        try {
+            AIProvider provider = aiProviderFactory.getProvider();
+            log.info("Step {} 使用 AI 提供商: {}", step, provider.getProviderDisplayName());
+
+            AIProvider.AIResponse response = provider.generate(fullPrompt);
+
+            String content = response.content();
+            if (content == null || content.isBlank()) {
+                throw new RuntimeException("AI 返回内容为空");
+            }
+
+            log.debug("Step {} 分析结果: {}", step, content.substring(0, Math.min(200, content.length())));
+            return content;
+
+        } catch (AIProvider.AIException e) {
+            log.error("Step {} AI 调用失败", step, e);
+            throw new RuntimeException("AI 服务调用失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * 获取当前使用的AI模型名称
      */
     private String getAiModelName() {
@@ -245,48 +415,42 @@ public class NLRequirementAnalyzer {
      */
     private String buildAnalysisPrompt() {
         return """
-                You are a professional software architect for Ingenio (秒构AI) platform.
+                You are a professional software architect for Ingenio (妙构AI) platform.
                 Analyze the user requirement comprehensively.
 
                 ===== CRITICAL: Tech Stack Selection Rules =====
 
-                【技术栈选择核心原则】
+                【当前支持的技术栈】
+                妙构 AI 当前仅支持 Web 应用生成，请根据应用复杂度选择：
 
-                1. 需要原生功能调用的多端应用 → 使用 "Kuikly" 框架
-                   Kuikly适用场景（需要原生能力）：
-                   - 相机、GPS定位、传感器、蓝牙等硬件调用
-                   - 推送通知、后台任务、本地存储大量数据
-                   - 高性能渲染（游戏、动画、图形处理）
-                   - 需要App Store/Play Store上架的原生应用
-                   - 离线优先应用、需要深度系统集成的应用
+                1. 简单应用（≤5实体，无复杂业务逻辑）→ 使用 "React + Supabase"
+                   适用场景：
+                   - 博客系统、管理后台、数据看板
+                   - 预约系统、表单应用、内容展示
+                   - 简单的 CRUD 应用
+                   - 个人项目、快速原型
 
-                2. 普通多端应用（无原生功能需求）→ 使用 "H5 + WebView" (套壳方案)
-                   H5+WebView适用场景：
-                   - 内容展示类应用（新闻、博客、文档）
-                   - 简单表单、列表、数据管理应用
-                   - 电商展示、信息查询类应用
-                   - 不需要复杂原生交互的应用
-                   - 快速迭代、频繁更新的应用
+                2. 复杂应用（>5实体，复杂业务逻辑）→ 使用 "React + Spring Boot + PostgreSQL"
+                   适用场景：
+                   - 电商平台、企业 ERP、在线教育
+                   - 多租户 SaaS、复杂工作流
+                   - 需要复杂后端逻辑的系统
+                   - 企业级应用
 
-                3. 纯Web应用 → 使用 "React + Supabase"
-                   Web-only适用场景：
-                   - 仅在浏览器运行的应用
-                   - SaaS管理后台
-                   - 数据可视化Dashboard
+                【暂不支持的功能】
+                原生 App 功能（相机、GPS、蓝牙、推送通知等）暂不支持。
+                如果用户需求涉及以下关键词，请在 reason 中说明"该功能需要原生 App 能力，当前平台版本暂不支持，建议使用 Web 方案替代"：
+                - 相机、摄像头、扫码
+                - GPS、定位、地理位置
+                - 蓝牙、NFC、传感器
+                - 推送通知、后台任务
+                - App Store、Play Store 上架
 
-                4. 复杂企业级应用（>8实体）→ 使用 "React + Spring Boot + PostgreSQL"
-
-                【关键词识别】
-                需要Kuikly的关键词：相机、摄像头、GPS、定位、蓝牙、NFC、指纹、Face ID、
-                                   推送通知、后台下载、离线、本地数据库、传感器、陀螺仪、
-                                   App Store、Play Store、原生、高性能、游戏
-
-                可用H5+WebView的关键词：展示、浏览、查询、表单、列表、内容、文章、
-                                       商品展示、信息展示、简单交互
-
-                【不确定时】
-                如果无法明确判断是否需要原生功能，设置 "needsConfirmation": true，
-                并在reason中说明需要与用户确认的点。
+                【注意】
+                - 始终推荐 Web 方案（React + Supabase 或 React + Spring Boot）
+                - 不要推荐 Kuikly、React Native 或其他原生框架
+                - platform 字段应为 "Web"
+                - frontend 字段应为 "React"
                 ==============================================
 
                 Return a JSON object with the following structure:
@@ -317,14 +481,13 @@ public class NLRequirementAnalyzer {
                     }
                   },
                   "techStack": {
-                    "platform": "Kuikly|H5+WebView|Web|React Native",
-                    "frontend": "Kuikly|React|Vue|H5",
-                    "backend": "Supabase|Spring Boot|Node.js|Firebase",
-                    "database": "SQLite|PostgreSQL|MySQL|MongoDB",
+                    "platform": "Web",
+                    "frontend": "React",
+                    "backend": "Supabase|Spring Boot",
+                    "database": "PostgreSQL",
                     "needsNativeFeatures": true/false,
                     "nativeFeatures": ["camera", "gps", "bluetooth"],
-                    "needsConfirmation": true/false,
-                    "reason": "Why this tech stack is recommended, and what needs user confirmation if any"
+                    "reason": "Why this tech stack is recommended. If native features are needed but not supported, explain the limitation."
                   },
                   "complexity": {
                     "level": "SIMPLE|MEDIUM|COMPLEX",
@@ -338,7 +501,6 @@ public class NLRequirementAnalyzer {
 
                 Analyze based on:
                 - Number and complexity of entities (≤3 = SIMPLE, 4-8 = MEDIUM, >8 = COMPLEX)
-                - Whether native device features are needed (camera, GPS, sensors, etc.)
                 - Business logic requirements
                 - User interaction patterns
                 - Data relationships
@@ -348,25 +510,355 @@ public class NLRequirementAnalyzer {
                 """;
     }
 
+    // ============================================================================
+    // 6 步骤专属 Prompt（参考 structured-prompt-engine.ts 设计模式）
+    // ============================================================================
+
+    /**
+     * Step 1: 产品经理视角 - 需求语义解析
+     * 从模糊需求中提取精确的产品方案
+     */
+    private String buildStep1ProductManagerPrompt() {
+        return """
+                # 🎯 产品经理需求分析专家
+
+                ## 角色定义
+                你是一位资深产品经理，擅长将用户的模糊需求转化为精确、可执行的产品方案。
+                你的分析必须全面、结构化、可落地。
+
+                ## 🧠 思维过程（在 <thinking> 标签中完成）
+                在输出结果前，你必须先完成以下分析：
+
+                ### Step 1: 需求理解
+                - 用户的核心痛点是什么？
+                - 有哪些隐含需求（用户没说但实际需要的）？
+                - 有什么模糊点需要做出假设？
+
+                ### Step 2: 用户画像
+                - 谁是主要用户？他们的特征是什么？
+                - 用户的使用场景是什么？
+                - 用户目前的痛点和期望是什么？
+
+                ### Step 3: 功能拆解
+                - 最小可行产品（MVP）需要哪些核心功能？
+                - 有哪些锦上添花的增强功能？
+                - 功能的优先级如何排序（P0必须有/P1重要/P2可选）？
+
+                ### Step 4: 数据实体
+                - 系统需要管理哪些数据？
+                - 每个实体的核心属性是什么？
+                - 实体之间的关系是什么？
+
+                ## 📤 输出格式
+                返回 JSON（不要有任何 markdown 包裹）：
+                {
+                  "summary": "核心需求摘要（1-2句话精准描述用户真正想要什么）",
+                  "targetUsers": {
+                    "primary": {
+                      "role": "主要用户角色",
+                      "characteristics": "用户特征描述",
+                      "painPoints": ["痛点1", "痛点2"]
+                    },
+                    "secondary": [{"role": "次要角色", "description": "描述"}]
+                  },
+                  "businessScenarios": [
+                    {"name": "场景名称", "userStory": "作为XX，我想要XX，以便XX", "priority": "P0"}
+                  ],
+                  "features": {
+                    "core": [{"name": "功能名", "description": "详细描述", "priority": "P0"}],
+                    "enhanced": [{"name": "功能名", "description": "详细描述", "priority": "P1"}]
+                  },
+                  "entities": [
+                    {"name": "实体名", "description": "实体描述", "attributes": ["属性1", "属性2"]}
+                  ],
+                  "entityRelationships": [
+                    {"from": "实体A", "to": "实体B", "type": "一对多", "description": "关系描述"}
+                  ],
+                  "scope": {
+                    "included": ["在范围内的功能"],
+                    "excluded": ["不在范围内的功能"]
+                  },
+                  "assumptions": ["假设1：XXX", "假设2：XXX"]
+                }
+
+                ## 🚫 禁止行为
+                - 不要输出模糊的描述
+                - 不要遗漏关键信息
+                - 如果信息不足，做出合理假设并在 assumptions 中明确说明
+                """;
+    }
+
+    /**
+     * Step 2: 数据架构师视角 - 实体关系建模
+     */
+    private String buildStep2DataArchitectPrompt() {
+        return """
+                # 🗄️ 数据架构师 - 实体关系建模专家
+
+                ## 角色定义
+                你是一位资深数据架构师，擅长设计高效、可扩展的数据模型。
+                基于 Step 1 的产品分析结果，设计详细的数据模型和实体关系。
+
+                ## 🧠 思维过程
+                在设计前，分析：
+                - 核心业务对象有哪些？
+                - 哪些数据需要持久化？
+                - 实体之间的关系类型是什么（1:1、1:N、N:M）？
+                - 需要哪些索引和约束？
+
+                ## 📤 输出格式
+                返回 JSON：
+                {
+                  "entities": {
+                    "EntityName": {
+                      "description": "实体描述",
+                      "tableName": "表名（snake_case）",
+                      "fields": [
+                        {"name": "字段名", "type": "VARCHAR(255)/INTEGER/TIMESTAMP等", "required": true, "description": "字段说明"},
+                        {"name": "createdAt", "type": "TIMESTAMP", "required": true, "description": "创建时间"}
+                      ],
+                      "primaryKey": "id",
+                      "indexes": ["字段1", "字段2"]
+                    }
+                  },
+                  "relationships": {
+                    "RelationName": {
+                      "from": "Entity1",
+                      "to": "Entity2",
+                      "type": "one-to-many",
+                      "foreignKey": "entity1_id",
+                      "description": "关系描述"
+                    }
+                  },
+                  "entitiesCount": 5,
+                  "relationshipsCount": 3
+                }
+
+                ## 设计原则
+                - 遵循数据库第三范式
+                - 使用合适的字段类型
+                - 为常用查询添加索引
+                - 考虑数据增长和性能
+                """;
+    }
+
+    /**
+     * Step 3: 业务分析师视角 - 功能意图识别
+     */
+    private String buildStep3BusinessAnalystPrompt() {
+        return """
+                # 📋 业务分析师 - 功能意图识别专家
+
+                ## 角色定义
+                你是一位资深业务分析师，擅长识别和定义系统功能、API 设计和业务规则。
+                基于前面步骤的分析结果，定义详细的功能模块和业务逻辑。
+
+                ## 🧠 思维过程
+                分析：
+                - 系统需要提供哪些 API 接口？
+                - 每个操作的输入输出是什么？
+                - 有哪些业务规则和约束条件？
+                - 权限控制如何设计？
+
+                ## 📤 输出格式
+                返回 JSON：
+                {
+                  "operations": {
+                    "操作名称": {
+                      "type": "CRUD/business",
+                      "method": "GET/POST/PUT/DELETE",
+                      "endpoint": "/api/v1/xxx",
+                      "description": "操作描述",
+                      "input": ["参数1", "参数2"],
+                      "output": "返回结果描述"
+                    }
+                  },
+                  "constraints": {
+                    "约束名称": {
+                      "type": "validation/business/security",
+                      "description": "约束描述",
+                      "rule": "具体规则"
+                    }
+                  },
+                  "businessRules": [
+                    {"name": "规则名", "condition": "条件", "action": "动作"}
+                  ],
+                  "operationsCount": 10,
+                  "constraintsCount": 5
+                }
+
+                ## 设计原则
+                - RESTful API 设计规范
+                - 清晰的输入输出定义
+                - 完整的业务规则覆盖
+                """;
+    }
+
+    /**
+     * Step 4: 技术负责人视角 - 技术架构选型
+     */
+    private String buildStep4TechLeadPrompt() {
+        return """
+                # 🏗️ 技术负责人 - 技术架构选型专家
+
+                ## 角色定义
+                你是一位资深技术负责人，擅长技术选型和架构设计。
+                基于前面步骤的分析结果，推荐最合适的技术栈和架构方案。
+
+                ## 技术栈选择规则
+
+                【当前支持的技术栈】
+                妙构 AI 当前仅支持 Web 应用生成：
+
+                1. 简单应用（≤5实体，无复杂业务逻辑）→ "React + Supabase"
+                   适用：博客、管理后台、预约系统、表单应用
+
+                2. 复杂应用（>5实体，复杂业务逻辑）→ "React + Spring Boot + PostgreSQL"
+                   适用：电商平台、企业ERP、在线教育、SaaS
+
+                【暂不支持】
+                原生 App 功能（相机、GPS、蓝牙等）暂不支持。
+
+                ## 📤 输出格式
+                返回 JSON：
+                {
+                  "platform": "Web",
+                  "uiFramework": "React",
+                  "backend": "Supabase 或 Spring Boot",
+                  "database": "PostgreSQL",
+                  "needsNativeFeatures": false,
+                  "reason": "选型理由",
+                  "confidence": 0.85,
+                  "alternatives": [
+                    {"stack": "备选方案", "reason": "理由"}
+                  ]
+                }
+                """;
+    }
+
+    /**
+     * Step 5: 安全工程师视角 - 复杂度与风险评估
+     */
+    private String buildStep5SecurityEngineerPrompt() {
+        return """
+                # 🛡️ 安全工程师 - 复杂度与风险评估专家
+
+                ## 角色定义
+                你是一位资深安全工程师和项目评估专家，擅长评估项目复杂度和识别风险。
+                基于前面步骤的分析结果，评估项目规模、复杂度和潜在风险。
+
+                ## 评估规则
+                - SIMPLE: ≤3实体，基础CRUD
+                - MEDIUM: 4-8实体，有业务逻辑
+                - COMPLEX: >8实体，复杂业务流程
+
+                ## 📤 输出格式
+                返回 JSON：
+                {
+                  "complexityLevel": "SIMPLE/MEDIUM/COMPLEX",
+                  "estimatedDays": 5,
+                  "estimatedLines": 2000,
+                  "confidenceScore": 0.8,
+                  "description": "复杂度评估说明",
+                  "riskFactors": [
+                    {"factor": "风险因素", "level": "low/medium/high", "mitigation": "缓解措施"}
+                  ],
+                  "securityConsiderations": [
+                    "安全注意事项1",
+                    "安全注意事项2"
+                  ]
+                }
+                """;
+    }
+
+    /**
+     * Step 6: 首席架构师视角 - Ultrathink 深度规划
+     */
+    private String buildStep6ChiefArchitectPrompt() {
+        return """
+                # 🎓 首席架构师 - Ultrathink 深度规划专家
+
+                ## 角色定义
+                你是一位首席架构师，擅长整合所有分析结果，生成完整的技术实施蓝图。
+                这是最后一步，需要生成可以直接用于代码生成的完整蓝图。
+
+                ## 输出要求
+                生成一份完整的 Markdown 格式技术蓝图，包含：
+
+                1. **项目概述**
+                   - 核心需求摘要
+                   - 目标用户
+                   - 主要功能
+
+                2. **技术架构**
+                   - 技术栈选型
+                   - 系统架构图（文字描述）
+                   - 部署方案
+
+                3. **数据模型**
+                   - 实体定义
+                   - 关系描述
+
+                4. **API 设计**
+                   - 接口列表
+                   - 请求响应格式
+
+                5. **UI 规划**
+                   - 页面列表
+                   - 核心交互
+
+                6. **实施路线图**
+                   - 开发阶段划分
+                   - 里程碑
+
+                ## 📤 输出格式
+                返回 JSON：
+                {
+                  "blueprint": "完整的 Markdown 格式技术蓝图（直接返回字符串）",
+                  "sections": 6
+                }
+                """;
+    }
+
     private Map<String, Object> parseAnalysisResult(String analysisJson) {
         try {
             String jsonContent = analysisJson;
-            if (analysisJson.contains("```json")) {
-                int start = analysisJson.indexOf("```json") + 7;
-                int end = analysisJson.lastIndexOf("```");
+
+            // 移除 <thinking>...</thinking> 标签及其内容
+            // AI 可能在 <thinking> 标签中输出思考过程，然后再输出 JSON
+            if (jsonContent.contains("<thinking>")) {
+                // 移除所有 <thinking>...</thinking> 块
+                jsonContent = jsonContent.replaceAll("(?s)<thinking>.*?</thinking>", "").trim();
+                log.debug("移除 <thinking> 标签后的内容长度: {}", jsonContent.length());
+            }
+
+            // 处理 markdown 代码块包裹的 JSON
+            if (jsonContent.contains("```json")) {
+                int start = jsonContent.indexOf("```json") + 7;
+                int end = jsonContent.lastIndexOf("```");
                 if (end > start) {
-                    jsonContent = analysisJson.substring(start, end).trim();
+                    jsonContent = jsonContent.substring(start, end).trim();
                 }
-            } else if (analysisJson.contains("```")) {
-                int start = analysisJson.indexOf("```") + 3;
-                int end = analysisJson.lastIndexOf("```");
+            } else if (jsonContent.contains("```")) {
+                int start = jsonContent.indexOf("```") + 3;
+                int end = jsonContent.lastIndexOf("```");
                 if (end > start) {
-                    jsonContent = analysisJson.substring(start, end).trim();
+                    jsonContent = jsonContent.substring(start, end).trim();
                 }
             }
+
+            // 尝试找到 JSON 对象的开始和结束位置
+            // 处理 AI 可能在 JSON 前后添加额外文本的情况
+            int jsonStart = jsonContent.indexOf("{");
+            int jsonEnd = jsonContent.lastIndexOf("}");
+            if (jsonStart >= 0 && jsonEnd > jsonStart) {
+                jsonContent = jsonContent.substring(jsonStart, jsonEnd + 1);
+            }
+
             return objectMapper.readValue(jsonContent, Map.class);
         } catch (Exception e) {
-            log.error("解析分析结果失败", e);
+            log.error("解析分析结果失败: {}", e.getMessage());
+            log.debug("原始内容: {}", analysisJson.substring(0, Math.min(500, analysisJson.length())));
             return new HashMap<>();
         }
     }
@@ -394,11 +886,11 @@ public class NLRequirementAnalyzer {
     /**
      * 从AI分析结果中提取技术栈推荐
      *
-     * 技术栈选择规则：
-     * 1. 需要原生功能调用（相机、GPS、蓝牙等）→ Kuikly
-     * 2. 普通多端应用（无原生需求）→ H5+WebView（套壳方案）
-     * 3. 纯Web应用 → React + Supabase
-     * 4. 复杂企业应用 → React + Spring Boot + PostgreSQL
+     * 技术栈选择规则（当前版本仅支持 Web 应用）：
+     * 1. 简单应用（≤5实体）→ React + Supabase
+     * 2. 复杂企业应用（>5实体）→ React + Spring Boot + PostgreSQL
+     *
+     * 注意：原生 App 功能（相机、GPS、蓝牙等）暂不支持
      *
      * @param analysisResult AI返回的完整分析结果
      * @return 技术栈推荐
@@ -453,21 +945,19 @@ public class NLRequirementAnalyzer {
     /**
      * 默认技术栈推荐
      *
-     * 默认使用 H5+WebView 方案（套壳），适用于：
-     * - 大部分简单应用（不需要原生功能）
+     * 默认使用 React + Supabase 方案，适用于：
+     * - 大部分简单应用（≤5实体）
      * - 内容展示、表单、列表类应用
      * - 快速迭代、频繁更新的应用
-     *
-     * 只有明确需要原生功能（相机、GPS、蓝牙等）才推荐 Kuikly
      */
     private TechStackRecommendation getDefaultTechStack() {
         return TechStackRecommendation.builder()
-                .platform("H5+WebView")
-                .uiFramework("H5")
+                .platform("Web")
+                .uiFramework("React")
                 .backend("Supabase")
                 .database("PostgreSQL")
-                .confidence(0.8)
-                .reason("简单应用推荐使用 H5+WebView 方案（套壳），快速开发、易于更新。如需原生功能（相机、GPS等）请告知，将推荐 Kuikly 框架")
+                .confidence(0.85)
+                .reason("简单应用推荐使用 React + Supabase 方案，快速开发、易于部署")
                 .build();
     }
 
@@ -1442,8 +1932,8 @@ public class NLRequirementAnalyzer {
                 .timestamp(Instant.now())
                 .build());
 
-        // 使用累积上下文调用AI
-        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        // 使用专属 Prompt 调用 AI（Step 1：产品经理视角）
+        String analysisJson = callAIForAnalysisWithRetry(context, 1, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
 
         progressCallback.accept(AnalysisProgressMessage.builder()
@@ -1472,8 +1962,8 @@ public class NLRequirementAnalyzer {
                 .timestamp(Instant.now())
                 .build());
 
-        // 使用累积上下文调用AI
-        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        // 使用专属 Prompt 调用 AI（Step 2：数据架构师视角）
+        String analysisJson = callAIForAnalysisWithRetry(context, 2, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
         Map<String, Object> entities = extractMap(analysisResult, "entities");
         Map<String, Object> relationships = extractMap(analysisResult, "relationships");
@@ -1512,7 +2002,8 @@ public class NLRequirementAnalyzer {
                 .timestamp(Instant.now())
                 .build());
 
-        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        // 使用专属 Prompt 调用 AI（Step 3：业务分析师视角）
+        String analysisJson = callAIForAnalysisWithRetry(context, 3, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
         Map<String, Object> operations = extractMap(analysisResult, "operations");
         Map<String, Object> constraints = extractMap(analysisResult, "constraints");
@@ -1558,7 +2049,8 @@ public class NLRequirementAnalyzer {
                 .timestamp(Instant.now())
                 .build());
 
-        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        // 使用专属 Prompt 调用 AI（Step 4：技术负责人视角）
+        String analysisJson = callAIForAnalysisWithRetry(context, 4, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
         TechStackRecommendation techStack = recommendTechStack(analysisResult);
 
@@ -1599,7 +2091,8 @@ public class NLRequirementAnalyzer {
                 .timestamp(Instant.now())
                 .build());
 
-        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        // 使用专属 Prompt 调用 AI（Step 5：安全工程师视角）
+        String analysisJson = callAIForAnalysisWithRetry(context, 5, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
         ComplexityAssessment complexity = assessComplexity(analysisResult);
         BigDecimal confidenceScore = extractConfidenceScore(analysisResult);
@@ -1640,7 +2133,8 @@ public class NLRequirementAnalyzer {
                 .timestamp(Instant.now())
                 .build());
 
-        String analysisJson = callAIForAnalysisWithRetry(context, progressCallback);
+        // 使用专属 Prompt 调用 AI（Step 6：首席架构师视角）
+        String analysisJson = callAIForAnalysisWithRetry(context, 6, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
         TechStackRecommendation techStack = recommendTechStack(analysisResult);
         ComplexityAssessment complexity = assessComplexity(analysisResult);
@@ -1664,5 +2158,301 @@ public class NLRequirementAnalyzer {
                 .build());
 
         return result;
+    }
+
+    // ========================================================================
+    // 上下文压缩方法（供 G3 引擎使用）
+    // ========================================================================
+
+    /**
+     * 构建压缩版分析上下文（供 G3 引擎使用）
+     *
+     * 压缩策略：
+     * - 小型项目（<8K tokens）：不压缩，使用完整上下文
+     * - 中型项目（8K-32K tokens）：提取摘要 + 关键列表
+     * - 大型项目（>32K tokens）：仅保留核心结论 + 统计
+     *
+     * @param requirement 原始需求
+     * @param stepResults Step 1-6 的完整结果
+     * @param maxTokens   最大 Token 数（默认 4000）
+     * @return 压缩后的上下文摘要
+     */
+    public com.ingenio.backend.entity.g3.AnalysisContextSummary buildCompressedAnalysisContext(
+            String requirement,
+            Map<Integer, Object> stepResults,
+            int maxTokens) {
+
+        log.info("构建压缩分析上下文，maxTokens={}", maxTokens);
+
+        // 计算原始上下文大小
+        String fullContext = buildCumulativeContext(requirement, 7, stepResults, null, null);
+        long originalTokens = com.ingenio.backend.entity.g3.AnalysisContextSummary.estimateTokens(fullContext);
+
+        // 根据大小选择压缩级别
+        com.ingenio.backend.entity.g3.AnalysisContextSummary.CompressionLevel compressionLevel;
+        if (originalTokens <= 8000) {
+            compressionLevel = com.ingenio.backend.entity.g3.AnalysisContextSummary.CompressionLevel.FULL;
+        } else if (originalTokens <= 32000) {
+            compressionLevel = com.ingenio.backend.entity.g3.AnalysisContextSummary.CompressionLevel.MEDIUM;
+        } else {
+            compressionLevel = com.ingenio.backend.entity.g3.AnalysisContextSummary.CompressionLevel.MINIMAL;
+        }
+
+        log.info("原始 Token 数: {}, 压缩级别: {}", originalTokens, compressionLevel);
+
+        // 构建摘要
+        var builder = com.ingenio.backend.entity.g3.AnalysisContextSummary.builder()
+                .requirement(requirement)
+                .originalTokenCount(originalTokens)
+                .compressionLevel(compressionLevel)
+                .createdAt(Instant.now());
+
+        // 提取 Step 1 结果（产品摘要）
+        if (stepResults.containsKey(1)) {
+            extractStep1Summary(stepResults.get(1), builder);
+        }
+
+        // 提取 Step 2 结果（数据模型）
+        if (stepResults.containsKey(2)) {
+            extractStep2Summary(stepResults.get(2), builder);
+        }
+
+        // 提取 Step 3 结果（API）
+        if (stepResults.containsKey(3)) {
+            extractStep3Summary(stepResults.get(3), builder);
+        }
+
+        // 提取 Step 4 结果（技术栈）
+        if (stepResults.containsKey(4)) {
+            extractStep4Summary(stepResults.get(4), builder);
+        }
+
+        // 提取 Step 5 结果（复杂度）
+        if (stepResults.containsKey(5)) {
+            extractStep5Summary(stepResults.get(5), builder);
+        }
+
+        // 提取 Step 6 结果（蓝图）
+        if (stepResults.containsKey(6)) {
+            extractStep6Summary(stepResults.get(6), builder, compressionLevel);
+        }
+
+        var summary = builder.build();
+
+        // 计算压缩后大小
+        String compressedMarkdown = summary.formatAsMarkdown();
+        long compressedTokens = com.ingenio.backend.entity.g3.AnalysisContextSummary.estimateTokens(compressedMarkdown);
+        summary.setCompressedTokenCount(compressedTokens);
+        summary.setCompressionRatio(originalTokens > 0 ? 1.0 - (double) compressedTokens / originalTokens : 0);
+
+        log.info("压缩完成: {} tokens -> {} tokens (压缩率: {:.1f}%)",
+                originalTokens, compressedTokens, summary.getCompressionRatio() * 100);
+
+        return summary;
+    }
+
+    /**
+     * 提取 Step 1 摘要（产品经理视角）
+     */
+    @SuppressWarnings("unchecked")
+    private void extractStep1Summary(Object step1Result,
+            com.ingenio.backend.entity.g3.AnalysisContextSummary.AnalysisContextSummaryBuilder builder) {
+        if (!(step1Result instanceof Map))
+            return;
+        Map<String, Object> result = (Map<String, Object>) step1Result;
+
+        // 产品摘要
+        builder.productSummary(getStringOrNull(result, "summary"));
+
+        // 目标用户
+        if (result.get("targetUsers") instanceof Map) {
+            Map<String, Object> targetUsers = (Map<String, Object>) result.get("targetUsers");
+            if (targetUsers.get("primary") instanceof Map) {
+                Map<String, Object> primary = (Map<String, Object>) targetUsers.get("primary");
+                builder.primaryUserRole(getStringOrNull(primary, "role"));
+                if (primary.get("painPoints") instanceof List) {
+                    builder.userPainPoints((List<String>) primary.get("painPoints"));
+                }
+            }
+        }
+
+        // 核心功能
+        if (result.get("features") instanceof Map) {
+            Map<String, Object> features = (Map<String, Object>) result.get("features");
+            if (features.get("core") instanceof List) {
+                List<Map<String, Object>> coreList = (List<Map<String, Object>>) features.get("core");
+                List<String> coreNames = coreList.stream()
+                        .map(f -> getStringOrNull(f, "name"))
+                        .filter(n -> n != null)
+                        .toList();
+                builder.coreFeatures(coreNames);
+            }
+        }
+
+        // 实体列表
+        if (result.get("entities") instanceof List) {
+            List<Map<String, Object>> entityList = (List<Map<String, Object>>) result.get("entities");
+            List<String> entityNames = entityList.stream()
+                    .map(e -> getStringOrNull(e, "name"))
+                    .filter(n -> n != null)
+                    .toList();
+            builder.entities(entityNames);
+        }
+    }
+
+    /**
+     * 提取 Step 2 摘要（数据架构师视角）
+     */
+    @SuppressWarnings("unchecked")
+    private void extractStep2Summary(Object step2Result,
+            com.ingenio.backend.entity.g3.AnalysisContextSummary.AnalysisContextSummaryBuilder builder) {
+        if (!(step2Result instanceof Map))
+            return;
+        Map<String, Object> result = (Map<String, Object>) step2Result;
+
+        int entitiesCount = getIntOrDefault(result, "entitiesCount", 0);
+        int relationshipsCount = getIntOrDefault(result, "relationshipsCount", 0);
+
+        builder.entitiesCount(entitiesCount);
+        builder.relationshipsCount(relationshipsCount);
+        builder.dataModelDigest(String.format("%d 实体, %d 关系", entitiesCount, relationshipsCount));
+    }
+
+    /**
+     * 提取 Step 3 摘要（业务分析师视角）
+     */
+    @SuppressWarnings("unchecked")
+    private void extractStep3Summary(Object step3Result,
+            com.ingenio.backend.entity.g3.AnalysisContextSummary.AnalysisContextSummaryBuilder builder) {
+        if (!(step3Result instanceof Map))
+            return;
+        Map<String, Object> result = (Map<String, Object>) step3Result;
+
+        builder.operationsCount(getIntOrDefault(result, "operationsCount", 0));
+        builder.businessRulesCount(getIntOrDefault(result, "constraintsCount", 0));
+
+        // 提取关键 API
+        if (result.get("operations") instanceof Map) {
+            Map<String, Object> operations = (Map<String, Object>) result.get("operations");
+            List<String> endpoints = operations.entrySet().stream()
+                    .limit(10) // 最多 10 个
+                    .map(e -> {
+                        if (e.getValue() instanceof Map) {
+                            Map<String, Object> op = (Map<String, Object>) e.getValue();
+                            String method = getStringOrNull(op, "method");
+                            String endpoint = getStringOrNull(op, "endpoint");
+                            return method != null && endpoint != null ? method + " " + endpoint : e.getKey();
+                        }
+                        return e.getKey();
+                    })
+                    .toList();
+            builder.keyEndpoints(endpoints);
+        }
+    }
+
+    /**
+     * 提取 Step 4 摘要（技术负责人视角）
+     */
+    @SuppressWarnings("unchecked")
+    private void extractStep4Summary(Object step4Result,
+            com.ingenio.backend.entity.g3.AnalysisContextSummary.AnalysisContextSummaryBuilder builder) {
+        if (!(step4Result instanceof Map))
+            return;
+        Map<String, Object> result = (Map<String, Object>) step4Result;
+
+        String platform = getStringOrNull(result, "platform");
+        String uiFramework = getStringOrNull(result, "uiFramework");
+        String backend = getStringOrNull(result, "backend");
+        String database = getStringOrNull(result, "database");
+
+        builder.uiFramework(uiFramework);
+        builder.backend(backend);
+        builder.database(database);
+
+        // 构建技术栈摘要
+        StringBuilder techStack = new StringBuilder();
+        if (uiFramework != null)
+            techStack.append(uiFramework);
+        if (backend != null) {
+            if (techStack.length() > 0)
+                techStack.append(" + ");
+            techStack.append(backend);
+        }
+        if (database != null) {
+            if (techStack.length() > 0)
+                techStack.append(" + ");
+            techStack.append(database);
+        }
+        builder.techStack(techStack.toString());
+    }
+
+    /**
+     * 提取 Step 5 摘要（安全工程师视角）
+     */
+    @SuppressWarnings("unchecked")
+    private void extractStep5Summary(Object step5Result,
+            com.ingenio.backend.entity.g3.AnalysisContextSummary.AnalysisContextSummaryBuilder builder) {
+        if (!(step5Result instanceof Map))
+            return;
+        Map<String, Object> result = (Map<String, Object>) step5Result;
+
+        builder.complexityLevel(getStringOrNull(result, "complexityLevel"));
+        builder.estimatedDays(getIntOrDefault(result, "estimatedDays", 0));
+        builder.estimatedLines(getIntOrDefault(result, "estimatedLines", 0));
+
+        Object confidence = result.get("confidenceScore");
+        if (confidence instanceof Number) {
+            builder.confidenceScore(((Number) confidence).doubleValue());
+        }
+    }
+
+    /**
+     * 提取 Step 6 摘要（首席架构师视角）
+     */
+    @SuppressWarnings("unchecked")
+    private void extractStep6Summary(Object step6Result,
+            com.ingenio.backend.entity.g3.AnalysisContextSummary.AnalysisContextSummaryBuilder builder,
+            com.ingenio.backend.entity.g3.AnalysisContextSummary.CompressionLevel level) {
+        if (!(step6Result instanceof Map))
+            return;
+        Map<String, Object> result = (Map<String, Object>) step6Result;
+
+        builder.blueprintSections(getIntOrDefault(result, "sections", 0));
+
+        String blueprint = getStringOrNull(result, "blueprint");
+        if (blueprint != null) {
+            // 根据压缩级别决定蓝图摘要长度
+            int maxLength = switch (level) {
+                case FULL -> 2000;
+                case MEDIUM -> 500;
+                case MINIMAL -> 200;
+            };
+            builder.blueprintDigest(truncateString(blueprint, maxLength));
+        }
+    }
+
+    // ========================================================================
+    // 辅助方法
+    // ========================================================================
+
+    private String getStringOrNull(Map<String, Object> map, String key) {
+        Object value = map.get(key);
+        return value instanceof String ? (String) value : null;
+    }
+
+    private int getIntOrDefault(Map<String, Object> map, String key, int defaultValue) {
+        Object value = map.get(key);
+        if (value instanceof Number) {
+            return ((Number) value).intValue();
+        }
+        return defaultValue;
+    }
+
+    private String truncateString(String text, int maxLength) {
+        if (text == null)
+            return null;
+        if (text.length() <= maxLength)
+            return text;
+        return text.substring(0, maxLength) + "...";
     }
 }

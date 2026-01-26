@@ -151,14 +151,32 @@ export default function DashboardPage(): React.ReactElement {
    * 处理查看结果
    */
   const handleView = (id: string) => {
-    router.push(`/wizard/${id}`);
+    const project = projects.find(p => p.id === id);
+    if (project?.appSpecId) {
+      router.push(`/wizard/${project.appSpecId}`);
+    } else {
+      router.push(`/wizard/${id}`);
+    }
   };
 
   /**
    * 处理继续编辑
    */
   const handleEdit = (id: string) => {
-    router.push(`/wizard/${id}`);
+    const project = projects.find(p => p.id === id);
+    if (!project) return;
+    
+    // 如果是草稿状态，跳转到Wizard继续创建
+    if (project.status === ProjectStatus.DRAFT) {
+      if (project.appSpecId) {
+        router.push(`/wizard/${project.appSpecId}`);
+      } else {
+        router.push(`/wizard/${id}`); // Fallback
+      }
+    } else {
+      // 否则跳转到编辑/重新生成页面
+      router.push(`/projects/${id}/edit`);
+    }
   };
 
   /**
@@ -291,7 +309,7 @@ export default function DashboardPage(): React.ReactElement {
 
             <Button
               variant="outline"
-              onClick={() => router.push('/dashboard')}
+              onClick={() => router.push('/versions')}
               className="flex items-center gap-2 h-auto p-4 justify-start"
             >
               <Clock className="h-5 w-5 text-orange-500" />

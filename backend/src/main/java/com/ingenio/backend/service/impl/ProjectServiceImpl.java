@@ -209,7 +209,7 @@ public class ProjectServiceImpl extends ServiceImpl<ProjectMapper, ProjectEntity
         projectMapper.selectPageByVisibilityAndStatus(
                 page,
                 ProjectEntity.Visibility.PUBLIC.getValue(),
-                ProjectEntity.Status.PUBLISHED.getValue()
+                ProjectEntity.Status.COMPLETED.getValue()
         );
         return page;
     }
@@ -501,7 +501,7 @@ public class ProjectServiceImpl extends ServiceImpl<ProjectMapper, ProjectEntity
     }
 
     /**
-     * 发布项目
+     * 发布项目（标记为生成完成）
      *
      * @param projectId 项目ID
      * @param tenantId 租户ID
@@ -519,8 +519,8 @@ public class ProjectServiceImpl extends ServiceImpl<ProjectMapper, ProjectEntity
         // 查询项目（租户隔离）
         ProjectEntity project = getByIdAndTenantId(projectId, tenantId);
 
-        // 更新状态为已发布
-        project.setStatus(ProjectEntity.Status.PUBLISHED.getValue());
+        // 更新状态为生成完成
+        project.setStatus(ProjectEntity.Status.COMPLETED.getValue());
         project.setPublishedAt(Instant.now());
 
         if (!updateById(project)) {
@@ -587,5 +587,78 @@ public class ProjectServiceImpl extends ServiceImpl<ProjectMapper, ProjectEntity
         }
 
         log.info("删除项目成功: projectId={}, tenantId={}", projectId, tenantId);
+    }
+
+    /**
+     * 根据AppSpec ID查询关联的项目
+     *
+     * @param appSpecId AppSpec ID
+     * @return 关联的项目，如果不存在则返回null
+     */
+    @Override
+    public ProjectEntity findByAppSpecId(UUID appSpecId) {
+        if (appSpecId == null) {
+            return null;
+        }
+
+        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ProjectEntity> wrapper =
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+        wrapper.eq(ProjectEntity::getAppSpecId, appSpecId);
+        return getOne(wrapper, false);
+    }
+
+    /**
+     * 根据AppSpec ID和租户ID查询关联的项目（租户隔离）
+     *
+     * @param appSpecId AppSpec ID
+     * @param tenantId 租户ID
+     * @return 关联的项目，如果不存在则返回null
+     */
+    @Override
+    public ProjectEntity findByAppSpecIdAndTenantId(UUID appSpecId, UUID tenantId) {
+        if (appSpecId == null || tenantId == null) {
+            return null;
+        }
+
+        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ProjectEntity> wrapper =
+            new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<>();
+        wrapper.eq(ProjectEntity::getAppSpecId, appSpecId)
+               .eq(ProjectEntity::getTenantId, tenantId);
+        return getOne(wrapper, false);
+    }
+
+    /**
+     * 更新项目状态
+     *
+     * @param projectId 项目ID
+     * @param status 新状态
+     */
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void updateStatus(UUID projectId, String status) {
+        if (projectId == null || status == null) {
+            log.error("更新项目状态失败: 参数不能为空");
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        ProjectEntity project = getById(projectId);
+        if (project == null) {
+            log.warn("更新项目状态失败: 项目不存在 - projectId={}", projectId);
+            throw new BusinessException(ErrorCode.PROJECT_NOT_FOUND);
+        }
+
+        project.setStatus(status);
+
+        // 如果状态是 COMPLETED，设置发布时间
+        if (ProjectEntity.Status.COMPLETED.getValue().equals(status)) {
+            project.setPublishedAt(Instant.now());
+        }
+
+        if (!updateById(project)) {
+            log.error("更新项目状态失败: 数据库更新失败 - projectId={}", projectId);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR);
+        }
+
+        log.info("更新项目状态成功: projectId={}, status={}", projectId, status);
     }
 }

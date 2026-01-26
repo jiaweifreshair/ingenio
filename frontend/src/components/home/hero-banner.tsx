@@ -112,11 +112,11 @@ export function HeroBanner({
 
   selectedCapabilities: externalSelectedCapabilities,
 
-  onIndustryChange,
+  onIndustryChange: _onIndustryChange,
 
-  onModeChange,
+  onModeChange: _onModeChange,
 
-    onCapabilitiesChange,
+    onCapabilitiesChange: _onCapabilitiesChange,
 
     onRemoveTag: _onRemoveTag,
 

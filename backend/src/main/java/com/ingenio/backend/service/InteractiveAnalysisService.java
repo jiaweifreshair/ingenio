@@ -118,11 +118,37 @@ public class InteractiveAnalysisService {
      */
     @Transactional
     public void confirmStep(String sessionId, int step) {
-        InteractiveAnalysisSessionEntity session = getSession(sessionId);
+        // 重试机制：最多等待3秒，每500ms检查一次
+        // 解决前端收到COMPLETED消息后立即发送确认请求，但后端事务还未提交的竞态问题
+        int maxRetries = 6;
+        int retryInterval = 500; // 毫秒
 
-        // 容错处理：如果状态是RUNNING但步骤已有结果，说明SSE流刚完成还未完全同步状态，允许确认
-        boolean canConfirm = "WAITING_CONFIRMATION".equals(session.getStatus()) ||
-                ("RUNNING".equals(session.getStatus()) && session.getStepResults().containsKey(step));
+        InteractiveAnalysisSessionEntity session = null;
+        boolean canConfirm = false;
+
+        for (int i = 0; i < maxRetries; i++) {
+            session = getSession(sessionId);
+
+            // 容错处理：如果状态是RUNNING但步骤已有结果，说明SSE流刚完成还未完全同步状态，允许确认
+            canConfirm = "WAITING_CONFIRMATION".equals(session.getStatus()) ||
+                    ("RUNNING".equals(session.getStatus()) && session.getStepResults().containsKey(step));
+
+            if (canConfirm) {
+                break;
+            }
+
+            // 如果是最后一次重试，不再等待
+            if (i < maxRetries - 1) {
+                log.debug("等待步骤完成: sessionId={}, 当前状态={}, 重试次数={}/{}",
+                        sessionId, session.getStatus(), i + 1, maxRetries);
+                try {
+                    Thread.sleep(retryInterval);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
 
         if (!canConfirm) {
             log.error("确认步骤失败: sessionId={}, 当前状态={}, 期望状态=WAITING_CONFIRMATION或RUNNING(有结果)",
@@ -177,11 +203,37 @@ public class InteractiveAnalysisService {
      */
     @Transactional
     public void modifyStep(String sessionId, int step, String feedback) {
-        InteractiveAnalysisSessionEntity session = getSession(sessionId);
+        // 重试机制：最多等待3秒，每500ms检查一次
+        // 解决前端收到COMPLETED消息后立即发送修改请求，但后端事务还未提交的竞态问题
+        int maxRetries = 6;
+        int retryInterval = 500; // 毫秒
 
-        // 容错处理：如果状态是RUNNING但步骤已有结果，说明SSE流刚完成还未完全同步状态，允许修改
-        boolean canModify = "WAITING_CONFIRMATION".equals(session.getStatus()) ||
-                ("RUNNING".equals(session.getStatus()) && session.getStepResults().containsKey(step));
+        InteractiveAnalysisSessionEntity session = null;
+        boolean canModify = false;
+
+        for (int i = 0; i < maxRetries; i++) {
+            session = getSession(sessionId);
+
+            // 容错处理：如果状态是RUNNING但步骤已有结果，说明SSE流刚完成还未完全同步状态，允许修改
+            canModify = "WAITING_CONFIRMATION".equals(session.getStatus()) ||
+                    ("RUNNING".equals(session.getStatus()) && session.getStepResults().containsKey(step));
+
+            if (canModify) {
+                break;
+            }
+
+            // 如果是最后一次重试，不再等待
+            if (i < maxRetries - 1) {
+                log.debug("等待步骤完成: sessionId={}, 当前状态={}, 重试次数={}/{}",
+                        sessionId, session.getStatus(), i + 1, maxRetries);
+                try {
+                    Thread.sleep(retryInterval);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
 
         if (!canModify) {
             log.error("修改步骤失败: sessionId={}, 当前状态={}, 期望状态=WAITING_CONFIRMATION或RUNNING(有结果)",

@@ -160,7 +160,7 @@ export const VersionDetailView: React.FC<VersionDetailProps> = ({
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <JsonViewer data={version.snapshot} />
+          <JsonViewer data={version.snapshot || {}} />
         </CardContent>
       </Card>
     </div>

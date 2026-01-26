@@ -276,19 +276,19 @@ public class ProjectE2ETest extends BaseE2ETest {
     public void testListPublicProjects_Success() throws Exception {
         // 创建公开项目
         UUID publicProjectId = UUID.randomUUID();
-        ProjectEntity publicProject = ProjectEntity.builder()
-            .id(publicProjectId)
-            .tenantId(testTenantId)
-            .userId(testUserId)
-            .name("公开项目")
-            .description("公开项目描述")
-            .appSpecId(testAppSpecId)
-            .status(ProjectEntity.Status.PUBLISHED.getValue())
-            .visibility(ProjectEntity.Visibility.PUBLIC.getValue())
-            .viewCount(10)
-            .likeCount(5)
-            .forkCount(2)
-            .commentCount(3)
+	        ProjectEntity publicProject = ProjectEntity.builder()
+	            .id(publicProjectId)
+	            .tenantId(testTenantId)
+	            .userId(testUserId)
+	            .name("公开项目")
+	            .description("公开项目描述")
+	            .appSpecId(testAppSpecId)
+	            .status(ProjectEntity.Status.COMPLETED.getValue())
+	            .visibility(ProjectEntity.Visibility.PUBLIC.getValue())
+	            .viewCount(10)
+	            .likeCount(5)
+	            .forkCount(2)
+	            .commentCount(3)
             .publishedAt(Instant.now())
             .createdAt(Instant.now())
             .updatedAt(Instant.now())
@@ -422,11 +422,11 @@ public class ProjectE2ETest extends BaseE2ETest {
     }
 
     @Test
-    @DisplayName("测试14: 查询项目统计数据 - 成功场景")
-    public void testGetProjectStats_Success() throws Exception {
-        // 创建多个不同状态的项目
-        createProjectWithStatus(ProjectEntity.Status.PUBLISHED.getValue());
-        createProjectWithStatus(ProjectEntity.Status.ARCHIVED.getValue());
+	    @DisplayName("测试14: 查询项目统计数据 - 成功场景")
+	    public void testGetProjectStats_Success() throws Exception {
+	        // 创建多个不同状态的项目
+	        createProjectWithStatus(ProjectEntity.Status.COMPLETED.getValue());
+	        createProjectWithStatus(ProjectEntity.Status.ARCHIVED.getValue());
 
         // 执行GET请求查询统计数据
         mockMvc.perform(get("/v1/projects/stats")
@@ -440,21 +440,21 @@ public class ProjectE2ETest extends BaseE2ETest {
     }
 
     @Test
-    @DisplayName("测试15: 按状态筛选项目列表 - 成功场景")
-    public void testListProjectsByStatus_Success() throws Exception {
-        // 创建已发布项目
-        createProjectWithStatus(ProjectEntity.Status.PUBLISHED.getValue());
+	    @DisplayName("测试15: 按状态筛选项目列表 - 成功场景")
+	    public void testListProjectsByStatus_Success() throws Exception {
+	        // 创建已发布项目
+	        createProjectWithStatus(ProjectEntity.Status.COMPLETED.getValue());
 
-        // 执行GET请求，筛选已发布项目
-        mockMvc.perform(get("/v1/projects")
-                .param("current", "1")
-                .param("size", "10")
-                .param("status", "published")
-                .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("0000"))
-                .andExpect(jsonPath("$.data.records[*].status", everyItem(equalTo("published"))));
-    }
+	        // 执行GET请求，筛选已发布项目
+	        mockMvc.perform(get("/v1/projects")
+	                .param("current", "1")
+	                .param("size", "10")
+	                .param("status", "completed")
+	                .contentType(MediaType.APPLICATION_JSON))
+	                .andExpect(status().isOk())
+	                .andExpect(jsonPath("$.code").value("0000"))
+	                .andExpect(jsonPath("$.data.records[*].status", everyItem(equalTo("completed"))));
+	    }
 
     @Test
     @DisplayName("测试16: 关键词搜索项目 - 成功场景")

@@ -13,6 +13,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import com.ingenio.backend.entity.g3.AnalysisContextSummary;
+import com.ingenio.backend.entity.g3.G3JobEntity;
+import com.ingenio.backend.mapper.g3.G3JobMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import com.fasterxml.jackson.databind.DeserializationFeature;
+
 /**
  * G3上下文构建器
  *
@@ -43,6 +50,7 @@ public class G3ContextBuilder {
     private static final Logger log = LoggerFactory.getLogger(G3ContextBuilder.class);
 
     private final G3PlanningFileService planningFileService;
+    private final G3JobMapper jobMapper;
 
     /**
      * 任务类型常量
@@ -75,9 +83,33 @@ public class G3ContextBuilder {
      */
     public String buildGlobalContext(UUID jobId) {
         log.debug("构建全局上下文: jobId={}", jobId);
-        // 直接复用规划文件服务提供的精简上下文
+        StringBuilder sb = new StringBuilder();
+
+        // 1. 注入分析上下文（M8 Enhanced）
+        try {
+            G3JobEntity job = jobMapper.selectById(jobId);
+            if (job != null && job.getAnalysisContextJson() != null && !job.getAnalysisContextJson().isEmpty()) {
+                ObjectMapper mapper = new ObjectMapper();
+                mapper.registerModule(new JavaTimeModule());
+                mapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+                AnalysisContextSummary summary = mapper.convertValue(
+                        job.getAnalysisContextJson(),
+                        AnalysisContextSummary.class);
+
+                sb.append(summary.formatAsMarkdown());
+                sb.append("\n\n");
+                log.debug("注入分析上下文摘要 ({})", summary.getCompressionLevel());
+            }
+        } catch (Exception e) {
+            log.warn("构建分析上下文失败: {}", e.getMessage());
+        }
+
+        // 2. 基础上下文（复用规划文件）
         // 它包含了 context.md 中的核心信息（文件列表、关键签名）
-        return planningFileService.getCompactContext(jobId);
+        sb.append(planningFileService.getCompactContext(jobId));
+
+        return sb.toString();
     }
 
     /**

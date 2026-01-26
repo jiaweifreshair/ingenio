@@ -161,7 +161,19 @@ export interface EstimatedWorkload {
 }
 
 /**
- * Step 5: 复杂度与风险评估结果
+ * 设计风格变体
+ */
+export interface StyleVariant {
+  styleId: string;
+  styleName: string;
+  styleCode: string;
+  previewHtml?: string;
+  thumbnailUrl?: string;
+  colorTheme?: string;
+}
+
+/**
+ * Step 5: 交互设计与体验评估结果
  */
 export interface Step5Result {
   /** 开发复杂度评分 (1-10) */
@@ -179,6 +191,16 @@ export interface Step5Result {
   estimatedWorkload: EstimatedWorkload;
   /** 风险缓解措施 */
   mitigations: string[];
+  
+  // --- 风格设计相关 (可选) ---
+  /** 推荐的风格变体 */
+  styleVariants?: StyleVariant[];
+  /** 设计意图 */
+  designIntent?: string;
+  /** 设计分支 */
+  designBranch?: string;
+  /** 设计置信度 */
+  designConfidence?: number;
 }
 
 /**

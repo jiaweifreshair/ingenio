@@ -331,3 +331,73 @@ export async function getProjectExecutionHistory(id: string): Promise<import('@/
 
   return result.data as import('@/types/project').GenerationTask[];
 }
+
+/**
+ * 更新项目需求
+ */
+export async function updateProjectRequirement(
+  id: string, 
+  requirement: string,
+  reanalyzeIntent: boolean = true
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE_URL}/v1/projects/${id}/requirement`,
+    buildFetchOptions({ 
+      method: 'PUT',
+      body: JSON.stringify({ description: requirement, reanalyzeIntent })
+    })
+  );
+
+  if (!response.ok) {
+    throw new Error(`更新需求失败: ${response.statusText}`);
+  }
+
+  const raw = await response.json();
+  const result = normalizeApiResponse<void>(raw);
+
+  if (!result.success) {
+    throw new Error(result.message || result.error || '更新需求失败');
+  }
+}
+
+/**
+ * 重新生成项目（创建新版本）
+ */
+export interface RegenerateResponse {
+  projectId: string;
+  taskId: string;
+  newVersion?: string;
+  newVersionId?: string;
+}
+
+export async function regenerateProject(
+  id: string,
+  selectedTemplateId?: string,
+  selectedStyle?: string,
+  userRequirement?: string
+): Promise<RegenerateResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/v1/projects/${id}/regenerate`,
+    buildFetchOptions({ 
+      method: 'POST',
+      body: JSON.stringify({ 
+        selectedTemplateId, 
+        selectedStyle,
+        userRequirement 
+      })
+    })
+  );
+
+  if (!response.ok) {
+    throw new Error(`重新生成失败: ${response.statusText}`);
+  }
+
+  const raw = await response.json();
+  const result = normalizeApiResponse<RegenerateResponse>(raw);
+
+  if (!result.success) {
+    throw new Error(result.message || result.error || '重新生成失败');
+  }
+  
+  return result.data as RegenerateResponse;
+}

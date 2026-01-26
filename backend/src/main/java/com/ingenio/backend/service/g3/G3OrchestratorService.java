@@ -7,6 +7,7 @@ import com.ingenio.backend.entity.AppSpecEntity;
 import com.ingenio.backend.entity.GenerationTaskEntity;
 import com.ingenio.backend.entity.GenerationVersionEntity;
 import com.ingenio.backend.entity.IndustryTemplateEntity;
+import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3ErrorSignature;
 import com.ingenio.backend.entity.g3.G3JobEntity;
@@ -23,6 +24,7 @@ import com.ingenio.backend.mapper.g3.G3JobMapper;
 import com.ingenio.backend.mapper.g3.G3ValidationResultMapper;
 import com.ingenio.backend.dto.VersionType;
 import com.ingenio.backend.service.VersionSnapshotService;
+import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.blueprint.BlueprintComplianceResult;
 import com.ingenio.backend.service.blueprint.BlueprintValidator;
 import com.ingenio.backend.websocket.G3WebSocketBroadcaster;
@@ -107,6 +109,7 @@ public class G3OrchestratorService {
     private final FrontendApiClientGenerator frontendApiClientGenerator;
     private final com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer;
     private final G3LogStreamService g3LogStreamService;
+    private final ProjectService projectService;
 
     /**
      * 最大修复轮次
@@ -139,7 +142,8 @@ public class G3OrchestratorService {
             G3CodeArchiveService codeArchiveService,
             FrontendApiClientGenerator frontendApiClientGenerator,
             com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer,
-            G3LogStreamService g3LogStreamService) {
+            G3LogStreamService g3LogStreamService,
+            ProjectService projectService) {
         this.jobMapper = jobMapper;
         this.artifactMapper = artifactMapper;
         this.validationResultMapper = validationResultMapper;
@@ -164,6 +168,7 @@ public class G3OrchestratorService {
         this.frontendApiClientGenerator = frontendApiClientGenerator;
         this.nlRequirementAnalyzer = nlRequirementAnalyzer;
         this.g3LogStreamService = g3LogStreamService;
+        this.projectService = projectService;
     }
 
     /**
@@ -326,6 +331,20 @@ public class G3OrchestratorService {
                 || (resolvedBlueprintModeEnabled == null && resolvedBlueprintSpec != null
                         && !resolvedBlueprintSpec.isEmpty());
 
+        // 4) 加载分析上下文（从 appSpec 或重新构建）
+        java.util.Map<String, Object> resolvedAnalysisContext = null;
+        if (appSpecId != null) {
+            AppSpecEntity appSpec = appSpecMapper.selectById(appSpecId);
+            if (appSpec != null && appSpec.getSpecContent() != null) {
+                // 尝试从 specContent 中提取 analysisContext
+                Object analysisCtx = appSpec.getSpecContent().get("analysisContext");
+                if (analysisCtx instanceof java.util.Map) {
+                    resolvedAnalysisContext = (java.util.Map<String, Object>) analysisCtx;
+                    log.debug("[G3] 从 AppSpec 加载 analysisContext");
+                }
+            }
+        }
+
         return new ResolvedJobContext(
                 resolvedRequirement,
                 resolvedUserId,
@@ -333,7 +352,8 @@ public class G3OrchestratorService {
                 resolvedAppSpecId,
                 resolvedTemplateId,
                 resolvedBlueprintSpec,
-                inferredBlueprintModeEnabled);
+                inferredBlueprintModeEnabled,
+                resolvedAnalysisContext);
     }
 
     /**
@@ -346,7 +366,8 @@ public class G3OrchestratorService {
             UUID appSpecId,
             UUID matchedTemplateId,
             java.util.Map<String, Object> blueprintSpec,
-            boolean blueprintModeEnabled) {
+            boolean blueprintModeEnabled,
+            java.util.Map<String, Object> analysisContextJson) {
     }
 
     /**
@@ -1118,6 +1139,9 @@ public class G3OrchestratorService {
         // 规划文件：阶段8完成（若未触发修复则保持未勾选也无妨）、整体完成
         safeUpdateTaskPlanFinal(job.getId(), true, null);
 
+        // 自动创建Project记录（用于Dashboard展示）
+        ensureProjectRecord(job, logConsumer);
+
         logConsumer.accept(G3LogEntry.success(G3LogEntry.Role.PLAYER,
                 "🎉 G3任务完成！共生成 " + artifactMapper.selectByJobId(job.getId()).size() + " 个文件"));
     }
@@ -1138,6 +1162,76 @@ public class G3OrchestratorService {
         safeUpdateTaskPlanFinal(job.getId(), false, error);
 
         logConsumer.accept(G3LogEntry.error(G3LogEntry.Role.PLAYER, "❌ G3任务失败: " + error));
+    }
+
+    /**
+     * 确保Project记录存在
+     *
+     * 说明：
+     * - Dashboard展示需要Project记录
+     * - 任务完成后自动创建Project，关联到AppSpec
+     * - 如果已存在则跳过
+     *
+     * @param job         G3任务
+     * @param logConsumer 日志消费者
+     */
+    private void ensureProjectRecord(G3JobEntity job, Consumer<G3LogEntry> logConsumer) {
+        if (job == null || job.getId() == null) {
+            return;
+        }
+
+        try {
+            UUID userId = job.getUserId() != null ? job.getUserId()
+                    : (job.getTenantId() != null ? job.getTenantId() : DEFAULT_ANONYMOUS_USER_ID);
+            UUID tenantId = job.getTenantId() != null ? job.getTenantId() : userId;
+            UUID appSpecId = job.getAppSpecId();
+
+            // 检查是否已存在关联的Project
+            if (appSpecId != null) {
+                long existingCount = projectService.count(
+                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ProjectEntity>()
+                                .eq(ProjectEntity::getAppSpecId, appSpecId)
+                                .eq(ProjectEntity::getUserId, userId));
+                if (existingCount > 0) {
+                    log.debug("[G3] Project已存在，跳过创建: appSpecId={}", appSpecId);
+                    return;
+                }
+            }
+
+            // 构建项目名称（从需求中提取前24个字符）
+            String requirement = job.getRequirement() != null ? job.getRequirement().trim() : "";
+            String projectName = requirement.isEmpty()
+                    ? "AI生成应用-" + job.getId().toString().substring(0, 8)
+                    : (requirement.length() > 24 ? requirement.substring(0, 24) + "..." : requirement);
+
+            // 创建Project实体
+            ProjectEntity project = new ProjectEntity();
+            project.setId(UUID.randomUUID());
+            project.setTenantId(tenantId);
+            project.setUserId(userId);
+            project.setName(projectName);
+            project.setDescription(requirement.length() > 200 ? requirement.substring(0, 200) + "..." : requirement);
+            project.setAppSpecId(appSpecId);
+            project.setStatus(ProjectEntity.Status.DRAFT.getValue());
+            project.setVisibility(ProjectEntity.Visibility.PRIVATE.getValue());
+            project.setViewCount(0);
+            project.setLikeCount(0);
+            project.setForkCount(0);
+            project.setCommentCount(0);
+            project.setCreatedAt(Instant.now());
+            project.setUpdatedAt(Instant.now());
+
+            projectService.createProject(project);
+
+            log.info("[G3] 自动创建Project: projectId={}, name={}, appSpecId={}",
+                    project.getId(), projectName, appSpecId);
+            logConsumer.accept(G3LogEntry.info(G3LogEntry.Role.PLAYER,
+                    "📁 已创建项目记录: " + projectName));
+
+        } catch (Exception e) {
+            // 创建Project失败不阻断主流程
+            log.warn("[G3] 自动创建Project失败: {}", e.getMessage(), e);
+        }
     }
 
     /**

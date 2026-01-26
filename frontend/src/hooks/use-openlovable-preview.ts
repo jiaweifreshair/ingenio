@@ -25,6 +25,7 @@ import {
   getInitialOpenLovableAccumulationState,
   getOpenLovableCodeForApply,
 } from '@/lib/openlovable-stream-accumulator';
+import { parseSseEvent, splitSseBuffer } from '@/lib/sse/sse-parser';
 import {
   ensureSandboxAvailable,
   ensureSandboxIdAvailable,
@@ -56,6 +57,8 @@ interface AIMessage {
     | 'component';
   content?: string;
   text?: string;
+  /** 兼容：部分上游将 stream 增量字段命名为 delta */
+  delta?: string;
   generatedCode?: string;
   name?: string;
   args?: unknown;
@@ -213,6 +216,16 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
 
       let accumulationState = getInitialOpenLovableAccumulationState();
 
+      /**
+       * 判断是否为普通对象（Record）
+       *
+       * 是什么：运行时类型守卫。
+       * 做什么：在 unknown 上安全访问字段。
+       * 为什么：SSE data 可能为任意结构（JSON / 纯文本）。
+       */
+      const isRecord = (value: unknown): value is Record<string, unknown> =>
+        !!value && typeof value === 'object' && !Array.isArray(value);
+
       fetch(apiUrl, {
         method: 'POST',
         headers: {
@@ -246,27 +259,62 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
             }
           };
 
+          /**
+           * 处理单个 SSE 事件块
+           *
+           * 用途：
+           * - 兼容 event/data 多行场景
+           * - JSON 解析失败时，若 data 形似 <file ...> 则作为增量兜底
+           */
+          const processEventBlock = (eventBlock: string): { shouldStop: boolean } => {
+            const payloads = parseSseEvent(eventBlock);
+            for (const payload of payloads) {
+              if (payload.kind === 'json') {
+                const value = payload.value;
+                if (!isRecord(value)) continue;
+                if (typeof value.type !== 'string') continue;
+
+                const data = value as unknown as AIMessage;
+                applyAndUpdateState(data);
+
+                if (data.type === 'tool_call') {
+                  addLog(`🔧 工具调用: ${data.name}`);
+                } else if (data.type === 'status') {
+                  addLog(`📋 ${data.message || '状态更新'}`);
+                } else if (data.type === 'error') {
+                  addLog(`❌ 错误: ${data.error}`);
+                  reject(new Error(data.error));
+                  return { shouldStop: true };
+                } else if (data.type === 'complete') {
+                  addLog('🎯 AI生成完成');
+                }
+                continue;
+              }
+
+              // text payload：少数上游可能直接输出代码片段（非 JSON）
+              const text = payload.value.trim();
+              if (!text) continue;
+              if (text.includes('<file')) {
+                applyAndUpdateState({ type: 'stream', text } as AIMessage);
+              }
+            }
+
+            return { shouldStop: false };
+          };
+
           const readStream = (): void => {
             reader.read().then(async ({ done, value }) => {
               if (done) {
                 // 处理剩余buffer，避免末尾没有\n\n导致最后一个事件丢失
                 if (buffer.trim()) {
-                  const remainingEvents = buffer.split(/\n\n|\r\n\r\n/);
-                  for (const event of remainingEvents) {
-                    if (!event.trim()) continue;
-                    const lines = event.split(/\n|\r\n/);
-                    for (const line of lines) {
-                      if (!line.trim() || line.startsWith(':')) continue;
-                      if (!line.startsWith('data:')) continue;
-                      try {
-                        const jsonStr = line.replace(/^data:\s*/, '').trim();
-                        if (!jsonStr) continue;
-                        const data: AIMessage = JSON.parse(jsonStr);
-                        applyAndUpdateState(data);
-                      } catch (parseError) {
-                        console.warn('解析SSE剩余Buffer失败:', line, parseError);
-                      }
-                    }
+                  const { events, remainder } = splitSseBuffer(buffer);
+                  for (const event of events) {
+                    const { shouldStop } = processEventBlock(event);
+                    if (shouldStop) return;
+                  }
+                  if (remainder.trim()) {
+                    const { shouldStop } = processEventBlock(remainder);
+                    if (shouldStop) return;
                   }
                 }
 
@@ -433,48 +481,13 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
               const chunk = decoder.decode(value, { stream: true });
               buffer += chunk;
 
-              // SSE标准：事件由空行分隔（\n\n），但也要兼容单换行情况
-              // 首先尝试按 \n\n 分割，如果没有则按 \n 处理每个data行
-              const events = buffer.split(/\n\n|\r\n\r\n/);
-              buffer = events.pop() || '';
+              const { events, remainder } = splitSseBuffer(buffer);
+              buffer = remainder;
 
               for (const event of events) {
                 if (!event.trim()) continue;
-
-                // 处理每个事件块中的所有行
-                const lines = event.split(/\n|\r\n/);
-                for (const line of lines) {
-                  // 跳过注释行（以:开头）和空行
-                  if (!line.trim() || line.startsWith(':')) continue;
-                  if (!line.startsWith('data:')) continue;
-
-                  try {
-                    const jsonStr = line.replace(/^data:\s*/, '').trim();
-                    if (!jsonStr) continue;
-                    const data: AIMessage = JSON.parse(jsonStr);
-
-                    // 只拼接 stream 的增量，并在 complete 时用 generatedCode 覆盖，避免 conversation 事件导致重复污染
-                    applyAndUpdateState(data);
-
-                    if (data.type === 'tool_call') {
-                      addLog(`🔧 工具调用: ${data.name}`);
-                    } else if (data.type === 'stream') {
-                      // stream类型的消息，text已经在上面处理了
-                      // 这里可以添加额外的日志或处理
-                    } else if (data.type === 'status') {
-                      // 状态消息
-                      addLog(`📋 ${data.message || '状态更新'}`);
-                    } else if (data.type === 'error') {
-                      addLog(`❌ 错误: ${data.error}`);
-                      reject(new Error(data.error));
-                      return;
-                    } else if (data.type === 'complete') {
-                      addLog('🎯 AI生成完成');
-                    }
-                  } catch (parseError) {
-                    console.warn('解析SSE消息失败:', line, parseError);
-                  }
-                }
+                const { shouldStop } = processEventBlock(event);
+                if (shouldStop) return;
               }
 
               readStream();

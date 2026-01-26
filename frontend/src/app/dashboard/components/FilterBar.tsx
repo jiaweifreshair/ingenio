@@ -59,7 +59,8 @@ export function FilterBar({
         <SelectContent>
           <SelectItem value="all">全部状态</SelectItem>
           <SelectItem value={ProjectStatus.DRAFT}>草稿</SelectItem>
-          <SelectItem value={ProjectStatus.PUBLISHED}>已发布</SelectItem>
+          <SelectItem value={ProjectStatus.GENERATING}>生成中</SelectItem>
+          <SelectItem value={ProjectStatus.COMPLETED}>生成完成</SelectItem>
           <SelectItem value={ProjectStatus.ARCHIVED}>已归档</SelectItem>
         </SelectContent>
       </Select>

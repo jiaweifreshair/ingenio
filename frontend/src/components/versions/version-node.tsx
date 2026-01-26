@@ -34,10 +34,10 @@ const getVersionIcon = (type: VersionType) => {
   const iconClass = "h-5 w-5";
 
   switch (type) {
-    case VersionType.VALIDATION_SUCCESS:
-    case VersionType.FINAL:
+    case 'DESIGN_CONFIRM':
+    case 'CODE_GENERATION':
       return <CheckCircle2 className={cn(iconClass, "text-green-600")} />;
-    case VersionType.VALIDATION_FAILED:
+    case 'ROLLBACK':
       return <XCircle className={cn(iconClass, "text-red-600")} />;
     default:
       return <GitCommit className={cn(iconClass, VERSION_TYPE_INFO[type].color)} />;

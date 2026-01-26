@@ -19,14 +19,14 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Progress } from '@/components/ui/progress';
 import { StepResultDisplay } from '@/components/analysis/StepResultDisplay';
 import { normalizeStepResult } from '@/components/analysis/step-result-normalizer';
-import { Briefcase, Code, ScanSearch, ShieldCheck, Database, Brain } from 'lucide-react';
+import { Briefcase, Code, ScanSearch, Database, Brain, Palette } from 'lucide-react';
 
 const STEP_CONFIG = [
   { name: '👩‍💼 产品经理 (PM)', description: '产品经理正在分析您的需求，拆解业务流程...', icon: Briefcase },
   { name: '👨‍💻 数据架构师', description: '架构师正在设计数据模型与实体关系...', icon: Database },
   { name: '🕵️ 业务分析师', description: '分析师正在识别功能意图与边界...', icon: ScanSearch },
   { name: '🏗️ 技术负责人', description: 'Tech Lead 正在选型技术栈与开发框架...', icon: Code },
-  { name: '🛡️ 安全工程师', description: '安全专家正在评估系统复杂度与风险...', icon: ShieldCheck },
+  { name: '👩‍🎨 交互设计师', description: '设计师正在智能识别场景并生成最佳交互方案...', icon: Palette },
   { name: '🧠 首席架构师', description: '首席架构师正在生成最终实施蓝图...', icon: Brain }
 ];
 

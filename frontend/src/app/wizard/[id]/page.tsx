@@ -27,6 +27,7 @@ import {
   type AsyncGenerateRequest,
   type TaskStatusResponse
 } from '@/lib/api/generate';
+import { updateProjectRequirement, regenerateProject } from '@/lib/api/projects'; // Import new API methods
 import { GenerationConfig, AgentType, AgentState, type AgentExecutionStatus } from '@/types/wizard';
 import { SplitLayout } from '@/components/wizard/split-layout';
 import { ConfigurationPanel } from '@/components/wizard/configuration-panel'; // Ensure this is imported
@@ -62,6 +63,7 @@ interface GenerationTask {
  */
 interface AppSpecWithPlan {
   id: string;
+  projectId?: string;
   requirement?: string;
   model?: string;
   qualityScore?: number;
@@ -268,7 +270,9 @@ export default function WizardPage() {
                 qualityScore: fullAppSpec.qualityScore,
                 planResult: fullAppSpec.planResult,
                 frontendPrototype: fullAppSpec.frontendPrototype as Record<string, unknown>,
-                frontendPrototypeUrl: fullAppSpec.frontendPrototypeUrl
+
+                frontendPrototypeUrl: fullAppSpec.frontendPrototypeUrl,
+                projectId: fullAppSpec.projectId // Map projectId
               });
               setTask(prev => ({
                 ...prev,
@@ -302,7 +306,6 @@ export default function WizardPage() {
     fetchInitialData();
   }, [appSpecId]);
 
-  // 开始异步生成
   const handleStartGeneration = useCallback(async () => {
     if (!task.config.requirement?.trim()) {
       alert('请填写应用需求描述');
@@ -312,29 +315,49 @@ export default function WizardPage() {
     try {
       setTask(prev => ({ ...prev, status: 'generating' }));
 
-      const request: AsyncGenerateRequest = {
-        userRequirement: task.config.requirement,
-        model: task.config.model,
-        skipValidation: task.config.skipValidation || false,
-        qualityThreshold: task.config.qualityThreshold || 70,
-        generatePreview: task.config.generatePreview || false,
-      };
+      // 判断是新建生成还是重新生成
+      if (appSpec?.projectId) {
+        // 1. 重新生成 (Regenerate)
+        
+        // 先更新需求
+        await updateProjectRequirement(appSpec.projectId, task.config.requirement);
+        
+        // 再提交重新生成任务
+        const response = await regenerateProject(appSpec.projectId);
+        
+        if (response && response.taskId) {
+           setTaskId(response.taskId);
+           setTask(prev => ({ ...prev, id: response.taskId, status: 'generating' }));
+        } else {
+           throw new Error('重新生成任务创建失败');
+        }
 
-      const response = await createAsyncGenerationTask(request);
-
-      if (response.success && response.data) {
-        const { taskId: newTaskId } = response.data;
-        setTaskId(newTaskId);
-        setTask(prev => ({ ...prev, id: newTaskId, status: 'generating' }));
       } else {
-        throw new Error(response.error || '创建生成任务失败');
+        // 2. 新建生成 (Create New)
+        const request: AsyncGenerateRequest = {
+          userRequirement: task.config.requirement,
+          model: task.config.model,
+          skipValidation: task.config.skipValidation || false,
+          qualityThreshold: task.config.qualityThreshold || 70,
+          generatePreview: task.config.generatePreview || false,
+        };
+
+        const response = await createAsyncGenerationTask(request);
+
+        if (response.success && response.data) {
+          const { taskId: newTaskId } = response.data;
+          setTaskId(newTaskId);
+          setTask(prev => ({ ...prev, id: newTaskId, status: 'generating' }));
+        } else {
+          throw new Error(response.error || '创建生成任务失败');
+        }
       }
     } catch (err) {
       console.error('生成任务创建失败:', err);
       setTask(prev => ({ ...prev, status: 'failed' }));
       alert(err instanceof Error ? err.message : '创建生成任务失败');
     }
-  }, [task.config, setTaskId]);
+  }, [task.config, setTaskId, appSpec?.projectId]);
 
   // 同步任务状态
   useEffect(() => {

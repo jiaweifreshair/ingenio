@@ -12,6 +12,8 @@ export interface AppSpec {
   tenantId: string;
   /** 用户ID */
   userId: string;
+  /** 项目ID */
+  projectId: string;
   /** 创建时间 */
   createdAt: string;
   /** 更新时间 */
@@ -74,6 +76,7 @@ export interface AppSpec {
  */
 export interface AppSpecListItem {
   id: string;
+  projectId: string;
   version: string;
   userRequirement: string;
   projectType?: string;

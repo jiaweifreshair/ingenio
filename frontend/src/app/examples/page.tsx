@@ -13,7 +13,7 @@ export default function ExamplesPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
           {/* Primary School */}
-          <Link href="/examples/primary" className="group block">
+          <Link href="/examples/primary" className="group block" target="_blank">
             <div className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-slate-100 h-full">
               <div className="bg-yellow-100 h-48 flex items-center justify-center group-hover:bg-yellow-200 transition-colors">
                 <span className="text-6xl">🛡️</span>
@@ -32,7 +32,7 @@ export default function ExamplesPage() {
           </Link>
 
           {/* Middle School */}
-          <Link href="/examples/middle" className="group block">
+          <Link href="/examples/middle" className="group block" target="_blank">
             <div className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-slate-100 h-full">
               <div className="bg-blue-100 h-48 flex items-center justify-center group-hover:bg-blue-200 transition-colors">
                 <span className="text-6xl">🧩</span>
@@ -51,7 +51,7 @@ export default function ExamplesPage() {
           </Link>
 
           {/* High School */}
-          <Link href="/examples/high" className="group block">
+          <Link href="/examples/high" className="group block" target="_blank">
             <div className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-slate-100 h-full">
               <div className="bg-purple-100 h-48 flex items-center justify-center group-hover:bg-purple-200 transition-colors">
                 <span className="text-6xl">🧠</span>
@@ -70,7 +70,7 @@ export default function ExamplesPage() {
           </Link>
 
           {/* Vocational */}
-          <Link href="/examples/vocational" className="group block">
+          <Link href="/examples/vocational" className="group block" target="_blank">
             <div className="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all duration-300 overflow-hidden border border-slate-100 h-full">
               <div className="bg-green-100 h-48 flex items-center justify-center group-hover:bg-green-200 transition-colors">
                 <span className="text-6xl">👷</span>

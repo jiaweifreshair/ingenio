@@ -23,11 +23,12 @@ import java.util.List;
  * 1. 如果配置了AI_PROVIDER，优先使用配置的提供商
  * 2. 如果配置的提供商不可用，警告并尝试降级到其他提供商
  * 3. 如果未配置AI_PROVIDER，按优先级自动选择：
- *    - Qiniu Cloud（七牛云）- 国内访问快，价格优惠
- *    - DashScope（阿里云）- 生态完整，企业级稳定
+ * - Qiniu Cloud（七牛云）- 国内访问快，价格优惠
+ * - DashScope（阿里云）- 生态完整，企业级稳定
  * 4. 如果所有提供商都不可用，抛出异常
  *
  * 使用示例：
+ * 
  * <pre>
  * AIProvider provider = aiProviderFactory.getProvider();
  * AIResponse response = provider.generate("生成一个登录界面");
@@ -50,6 +51,11 @@ public class AIProviderFactory {
     private String configuredProvider;
 
     /**
+     * ECA Gateway AI 提供商（Gemini）
+     */
+    private final EcaGatewayAIProvider ecaGatewayAIProvider;
+
+    /**
      * 七牛云AI提供商
      */
     private final QiniuCloudAIProvider qiniuCloudAIProvider;
@@ -65,16 +71,19 @@ public class AIProviderFactory {
     private final List<AIProvider> allProviders;
 
     public AIProviderFactory(
+            EcaGatewayAIProvider ecaGatewayAIProvider,
             QiniuCloudAIProvider qiniuCloudAIProvider,
             DashScopeAIProvider dashScopeAIProvider) {
 
+        this.ecaGatewayAIProvider = ecaGatewayAIProvider;
         this.qiniuCloudAIProvider = qiniuCloudAIProvider;
         this.dashScopeAIProvider = dashScopeAIProvider;
 
         // 注册提供商列表（按优先级排序）
         this.allProviders = List.of(
-                qiniuCloudAIProvider,   // 优先级1：七牛云（国内访问快）
-                dashScopeAIProvider     // 优先级2：阿里云DashScope（备用）
+                ecaGatewayAIProvider, // 优先级1：ECA Gateway（Gemini，用户指定）
+                qiniuCloudAIProvider, // 优先级2：七牛云（国内访问快）
+                dashScopeAIProvider // 优先级3：阿里云DashScope（备用）
         );
 
         log.info("AI提供商工厂初始化完成，已注册 {} 个提供商", allProviders.size());
@@ -150,8 +159,7 @@ public class AIProviderFactory {
                 "没有可用的AI提供商。请配置以下环境变量之一：\n" +
                         "  - QINIU_CLOUD_API_KEY 或 DEEPSEEK_API_KEY（七牛云）\n" +
                         "  - DASHSCOPE_API_KEY（阿里云）",
-                "factory"
-        );
+                "factory");
     }
 
     /**
@@ -181,8 +189,7 @@ public class AIProviderFactory {
                         "请检查API Key配置：\n" +
                         "  - QINIU_CLOUD_API_KEY 或 DEEPSEEK_API_KEY（七牛云）\n" +
                         "  - DASHSCOPE_API_KEY（阿里云）",
-                "factory"
-        );
+                "factory");
     }
 
     /**

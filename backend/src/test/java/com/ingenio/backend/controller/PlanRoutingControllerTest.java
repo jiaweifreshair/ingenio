@@ -7,6 +7,7 @@ import com.ingenio.backend.mapper.UserMapper;
 import com.ingenio.backend.service.AppSpecService;
 import com.ingenio.backend.service.BillingService;
 import com.ingenio.backend.service.OpenLovableService;
+import com.ingenio.backend.service.ProjectService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,11 +55,18 @@ class PlanRoutingControllerTest {
     @Mock
     private UserMapper userMapper;
 
+    @Mock
+    private ProjectService projectService;
+
+    @Mock
+    private com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer;
+
     private PlanRoutingController controller;
 
     @BeforeEach
     void setUp() {
-        controller = new PlanRoutingController(appSpecService, billingService, openLovableService, userMapper);
+        controller = new PlanRoutingController(appSpecService, billingService, openLovableService, userMapper,
+                projectService, nlRequirementAnalyzer);
     }
 
     @Test

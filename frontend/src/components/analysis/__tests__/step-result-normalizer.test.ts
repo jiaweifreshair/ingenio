@@ -119,5 +119,36 @@ describe("step-result-normalizer", () => {
       expect(Array.isArray(result.data.mitigations)).toBe(true);
     }
   });
-});
 
+  it("Step5：riskFactors 为对象数组时应正确映射 risks 与 mitigations", () => {
+    const raw = {
+      complexityLevel: "MEDIUM",
+      estimatedDays: 8,
+      riskFactors: [
+        { factor: "鉴权与权限边界", level: "high", mitigation: "采用 RBAC 并进行接口鉴权覆盖测试" },
+        { factor: "性能：列表查询与缓存策略", level: "medium", mitigation: "引入分页/索引与缓存，压测验证 P95" },
+      ],
+      securityConsiderations: ["全站 HTTPS", "输入校验与 XSS 防护"],
+    };
+
+    const result = normalizeStepResult(5, raw);
+
+    expect(result.step).toBe(5);
+    if (result.step === 5) {
+      expect(result.data.risks.map(r => r.description)).toEqual(
+        expect.arrayContaining(["鉴权与权限边界", "性能：列表查询与缓存策略"])
+      );
+      expect(result.data.risks.map(r => r.level)).toEqual(
+        expect.arrayContaining(["HIGH", "MEDIUM"])
+      );
+      expect(result.data.mitigations).toEqual(
+        expect.arrayContaining([
+          "采用 RBAC 并进行接口鉴权覆盖测试",
+          "引入分页/索引与缓存，压测验证 P95",
+          "全站 HTTPS",
+          "输入校验与 XSS 防护",
+        ])
+      );
+    }
+  });
+});
