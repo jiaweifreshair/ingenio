@@ -35,8 +35,19 @@ Ingenio (妙构) 是一个颠覆性的 AI 编程平台。不同于市面上仅�
 <div align="center">
 
 ### 首页 - Smart Builder
-
 <img src="docs/screenshots/homepage.png" alt="Ingenio 首页" width="100%" />
+
+<br/>
+
+### 挑战赛示例 & 应用模版
+<img src="docs/screenshots/benchmarks-page.png" alt="挑战赛示例" width="48%" />
+<img src="docs/screenshots/templates-page.png" alt="应用模版" width="48%" />
+
+<br/>
+
+### 登录 & 注册
+<img src="docs/screenshots/login-page.png" alt="登录页" width="48%" />
+<img src="docs/screenshots/register-page.png" alt="注册页" width="48%" />
 
 </div>
 
