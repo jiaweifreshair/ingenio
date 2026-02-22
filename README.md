@@ -40,13 +40,21 @@ Ingenio (妙构) 是一个颠覆性的 AI 编程平台。不同于市面上仅�
 <br/>
 
 ### AI 分析执行过程 - 多智能体协作
+
+**Step 1 - 需求语义解析**
 <img src="docs/screenshots/analysis-step1.png" alt="需求语义解析" width="100%" />
 
 <br/>
 
-### 分析步骤 2 & 3
-<img src="docs/screenshots/analysis-step2.png" alt="分析步骤2" width="48%" />
-<img src="docs/screenshots/analysis-step3.png" alt="分析步骤3" width="48%" />
+**Step 2 & Step 3 - 实体建模 & 功能边界**
+<img src="docs/screenshots/analysis-step2.png" alt="实体建模" width="48%" />
+<img src="docs/screenshots/analysis-step3.png" alt="功能边界分析" width="48%" />
+
+<br/>
+
+**Step 4 & Step 5 - 技术选型 & 架构蓝图**
+<img src="docs/screenshots/analysis-step4.png" alt="技术选型" width="48%" />
+<img src="docs/screenshots/analysis-step5.png" alt="架构蓝图" width="48%" />
 
 <br/>
 
