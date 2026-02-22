@@ -202,7 +202,7 @@ ingenio:
       engine: lc4j
 
   # LangChain4j 提供商配置（本地开发）
-  # 默认优先走 Wangsu OpenAPI（Gemini/Claude），DeepSeek 作为兜底
+  # 默认优先走 OpenAPI 网关（Gemini/Claude），DeepSeek 作为兜底
   langchain4j:
     routing:
       codegen:

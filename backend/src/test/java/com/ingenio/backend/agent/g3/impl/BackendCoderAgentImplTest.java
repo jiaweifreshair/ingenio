@@ -737,13 +737,13 @@ class BackendCoderAgentImplTest {
     }
 
     /**
-     * 测试：G3配置为网宿时应映射到ECA Gateway
+     * 测试：G3配置为ECA Gateway时应命中对应Provider
      * 期望：返回ECA Gateway Provider
      */
     @Test
-    void resolveProvider_shouldPreferEcaGatewayWhenG3ProviderIsWangsu() {
+    void resolveProvider_shouldPreferEcaGatewayWhenG3ProviderIsEcaGateway() {
         // GIVEN
-        ReflectionTestUtils.setField(backendCoderAgent, "g3Provider", "wangsu");
+        ReflectionTestUtils.setField(backendCoderAgent, "g3Provider", "eca-gateway");
         when(aiProviderFactory.getProviderByName("eca-gateway")).thenReturn(aiProvider);
         when(aiProvider.isAvailable()).thenReturn(true);
 

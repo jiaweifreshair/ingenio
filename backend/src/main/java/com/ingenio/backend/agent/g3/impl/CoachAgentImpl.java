@@ -424,10 +424,6 @@ public class CoachAgentImpl implements ICoachAgent {
             return null;
         }
         String normalized = g3Provider.trim().toLowerCase();
-        // 兼容网宿（Wangsu）命名，统一映射到 ECA Gateway。
-        if ("wangsu".equals(normalized)) {
-            normalized = "eca-gateway";
-        }
         if ("claude".equals(normalized) || "uniaix".equals(normalized)) {
             if (uniaixAIProvider != null && uniaixAIProvider.isAvailable()) {
                 return uniaixAIProvider;
