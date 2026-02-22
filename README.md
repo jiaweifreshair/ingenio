@@ -39,9 +39,14 @@ Ingenio (妙构) 是一个颠覆性的 AI 编程平台。不同于市面上仅�
 
 <br/>
 
-### 挑战赛示例 & 应用模版
-<img src="docs/screenshots/benchmarks-page.png" alt="挑战赛示例" width="48%" />
-<img src="docs/screenshots/templates-page.png" alt="应用模版" width="48%" />
+### AI 分析执行过程 - 多智能体协作
+<img src="docs/screenshots/analysis-step1.png" alt="需求语义解析" width="100%" />
+
+<br/>
+
+### 分析步骤 2 & 3
+<img src="docs/screenshots/analysis-step2.png" alt="分析步骤2" width="48%" />
+<img src="docs/screenshots/analysis-step3.png" alt="分析步骤3" width="48%" />
 
 <br/>
 
