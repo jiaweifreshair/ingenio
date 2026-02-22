@@ -58,6 +58,11 @@ Ingenio (妙构) 是一个颠覆性的 AI 编程平台。不同于市面上仅�
 
 <br/>
 
+**代码生成预览**
+<img src="docs/screenshots/code-generation.jpg" alt="代码生成预览" width="100%" />
+
+<br/>
+
 ### 登录 & 注册
 <img src="docs/screenshots/login-page.png" alt="登录页" width="48%" />
 <img src="docs/screenshots/register-page.png" alt="注册页" width="48%" />
