@@ -333,6 +333,42 @@ class G3SandboxServiceTest {
         }
 
         /**
+         * 测试：Maven 未安装（mvn: not found）
+         * 期望：识别为环境类错误，避免触发 Coach 修复
+         */
+        @Test
+        void runMavenBuild_whenMavenMissing_shouldClassifyAsEnvironmentError() throws Exception {
+                // GIVEN
+                String sandboxId = "sbx_test_123";
+                String stdout = "/bin/sh: 1: mvn: not found";
+                String stdoutJson = objectMapper.writeValueAsString(stdout);
+
+                String responseBody = """
+                                {
+                                    "exitCode": 127,
+                                    "stdout": %s,
+                                    "stderr": ""
+                                }
+                                """.formatted(stdoutJson);
+
+                mockServer.expect(requestTo("http://localhost:3001/api/sandbox/execute"))
+                                .andExpect(method(HttpMethod.POST))
+                                .andRespond(withSuccess(responseBody, MediaType.APPLICATION_JSON));
+
+                // WHEN
+                G3SandboxService.CompileResult result = sandboxService.runMavenBuild(sandboxId, logConsumer);
+
+                // THEN
+                assertFalse(result.success());
+                assertTrue(result.isEnvironmentError());
+                assertEquals(1, result.errors().size());
+                assertEquals("environment", result.errors().get(0).severity());
+                assertTrue(result.errors().get(0).message().contains("Maven"));
+
+                mockServer.verify();
+        }
+
+        /**
          * 测试：OpenLovable E2BProvider 可能返回 exitCode=0，但在 stdout 中输出真实 returncode
          * 期望：能从 "Return code: N" 解析真实退出码，并按失败处理
          */

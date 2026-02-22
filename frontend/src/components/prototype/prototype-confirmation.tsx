@@ -36,7 +36,7 @@ import type { PlanRoutingResult } from '@/lib/api/plan-routing';
 import { updatePrototypeStatus } from '@/lib/api/plan-routing';
 import type { Template } from '@/types/template';
 import type { G3LogEntry } from '@/types/g3';
-import type { SandboxInfo } from '@/lib/openlovable/sandbox-lifecycle';
+import { isValidUrl, type SandboxInfo } from '@/lib/openlovable/sandbox-lifecycle';
 import { useOpenLovablePreview } from '@/hooks/use-openlovable-preview';
 import { cn } from '@/lib/utils';
 import { PrototypePreview } from './prototype-preview';
@@ -46,9 +46,10 @@ import { RealtimeCodeViewer } from '@/components/code-generation/realtime-code-v
 import { ResizablePanels } from '@/components/ui/resizable-panels';
 import { useToast } from '@/hooks/use-toast';
 import { useSandboxHeartbeat } from '@/hooks/use-sandbox-heartbeat';
-import { useSandboxCleanup } from '@/hooks/use-sandbox-cleanup';
+import { preserveSandboxCleanup, useSandboxCleanup } from '@/hooks/use-sandbox-cleanup';
 import { PaywallGuard } from '@/components/billing/paywall-guard';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { smartFixPrototypeSandbox } from '@/lib/api/prototype';
 
 // ==================== 类型定义 ====================
 
@@ -174,6 +175,7 @@ export function PrototypeConfirmation({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [isSmartFixing, setIsSmartFixing] = useState(false);
   const hasStartedRef = React.useRef(false);
   const historySeededRef = React.useRef(false);
   const [internalChatHistory, setInternalChatHistory] = useState<ChatHistoryItem[]>([]);
@@ -187,8 +189,16 @@ export function PrototypeConfirmation({
 
   // 组合错误信息
   const error = externalError || openLovableError;
-  const effectivePreviewUrl = previewUrl || routingResult.prototypeUrl || null;
-  const canConfirm = (stage === 'complete' || routingResult.prototypeGenerated) && !error;
+  const effectivePreviewUrl =
+    previewUrl ||
+    (isValidUrl(routingResult.prototypeUrl) ? (routingResult.prototypeUrl ?? null) : null);
+  const invalidPreviewUrl =
+    (sandboxInfo?.url && !isValidUrl(sandboxInfo.url) ? sandboxInfo.url : null) ||
+    (routingResult.prototypeUrl && !isValidUrl(routingResult.prototypeUrl) ? routingResult.prototypeUrl : null);
+  const canConfirm =
+    !error &&
+    ((stage === 'complete' && !!effectivePreviewUrl) ||
+      (routingResult.prototypeGenerated && isValidUrl(routingResult.prototypeUrl)));
   const isGenerating = stage === 'sandbox' || stage === 'generating';
   const currentSandboxId = sandboxInfo?.sandboxId || null;
 
@@ -203,6 +213,55 @@ export function PrototypeConfirmation({
    * 作用：记录是否正在自愈与上次触发时间，防止并发重启
    */
   const autoRecoverRef = React.useRef({ inFlight: false, lastAt: 0 });
+
+  /**
+   * 确认设计前的沙箱保留处理
+   *
+   * 是什么：在确认设计跳转前标记当前沙箱可暂时保留。
+   * 做什么：避免组件卸载时自动清理，确保下载链路可用。
+   * 为什么：下载前端代码依赖沙箱内容，过早清理会导致下载失败。
+   */
+  const handleConfirmDesign = React.useCallback(async () => {
+    if (currentSandboxId) {
+      preserveSandboxCleanup(currentSandboxId);
+    }
+
+    // 设计分支兜底：在确认设计前确保原型状态已写回后端（否则 confirmDesign 可能失败）
+    if (
+      routingResult.appSpecId &&
+      !routingResult.prototypeGenerated &&
+      stage === 'complete' &&
+      sandboxInfo?.sandboxId &&
+      sandboxInfo?.url &&
+      isValidUrl(sandboxInfo.url)
+    ) {
+      try {
+        await updatePrototypeStatus(routingResult.appSpecId.toString(), {
+          sandboxId: sandboxInfo.sandboxId,
+          previewUrl: sandboxInfo.url,
+          provider: sandboxInfo.provider || 'e2b',
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : '原型状态同步失败';
+        toast({
+          title: '无法确认设计',
+          description: msg,
+          variant: 'destructive',
+        });
+        return;
+      }
+    }
+
+    await onConfirm();
+  }, [
+    currentSandboxId,
+    onConfirm,
+    routingResult.appSpecId,
+    routingResult.prototypeGenerated,
+    sandboxInfo,
+    stage,
+    toast,
+  ]);
 
   /**
    * 心跳异常处理
@@ -298,6 +357,7 @@ export function PrototypeConfirmation({
         stage === 'complete' &&
         sandboxInfo?.sandboxId &&
         sandboxInfo?.url &&
+        isValidUrl(sandboxInfo.url) &&
         routingResult.appSpecId &&
         !hasUpdatedPrototypeRef.current
       ) {
@@ -370,11 +430,19 @@ export function PrototypeConfirmation({
     }
     try {
       await sendIterationMessage(message);
+      // 迭代成功后刷新预览
+      if (previewUrl) {
+        setTimeout(() => setIframeKey(prev => prev + 1), 2000);
+      }
+    } catch (e) {
+      const errorMsg = e instanceof Error ? e.message : '修改失败';
+      toast({
+        title: '修改失败',
+        description: errorMsg,
+        variant: 'destructive',
+      });
     } finally {
       setActiveHistoryId(null);
-    }
-    if (previewUrl) {
-      setTimeout(() => setIframeKey(prev => prev + 1), 2000);
     }
   };
 
@@ -397,6 +465,75 @@ export function PrototypeConfirmation({
     if (!effectivePreviewUrl) return;
     window.open(effectivePreviewUrl, '_blank', 'noopener,noreferrer');
   };
+
+  /**
+   * 预览加载失败回调
+   *
+   * 是什么：iframe 加载失败或超时的提示入口。
+   * 做什么：通知用户当前预览不可用并给出错误信息。
+   * 为什么：避免用户误以为系统卡顿，提供明确反馈。
+   */
+  const handlePreviewError = React.useCallback((error: Error) => {
+    toast({
+      title: '预览加载失败',
+      description: error.message,
+      variant: 'destructive',
+    });
+  }, [toast]);
+
+  /**
+   * 预览运行时错误回调
+   *
+   * 是什么：沙箱运行时错误的反馈入口。
+   * 做什么：提示运行时异常并引导用户触发修复。
+   * 为什么：运行时错误常导致白屏，需要快速可见的告警。
+   */
+  const handleRuntimeError = React.useCallback((error: Error) => {
+    toast({
+      title: '预览运行时错误',
+      description: error.message,
+      variant: 'destructive',
+    });
+  }, [toast]);
+
+  /**
+   * 白屏兜底修复
+   *
+   * 是什么：调用后端智能修复接口检查入口挂载并生成兜底 App。
+   * 做什么：在预览白屏时允许用户主动触发修复并刷新 iframe。
+   * 为什么：部分白屏不会触发 onError，需要提供可操作的恢复路径。
+   */
+  const handleSmartFix = React.useCallback(async () => {
+    if (!currentSandboxId) {
+      toast({
+        title: '无法修复',
+        description: '缺少沙箱ID，无法执行白屏修复',
+        variant: 'destructive',
+      });
+      return;
+    }
+    if (isSmartFixing) return;
+
+    setIsSmartFixing(true);
+    try {
+      const result = await smartFixPrototypeSandbox(currentSandboxId);
+      const touchedCount = result.filesCreated.length + result.filesUpdated.length;
+      toast({
+        title: result.fixed ? '白屏已修复' : '已执行白屏修复',
+        description: result.message || `已处理 ${touchedCount} 个文件`,
+      });
+      await reloadPreview();
+      setTimeout(() => setIframeKey((prev) => prev + 1), 1500);
+    } catch (error) {
+      toast({
+        title: '白屏修复失败',
+        description: error instanceof Error ? error.message : '智能修复失败',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSmartFixing(false);
+    }
+  }, [currentSandboxId, isSmartFixing, reloadPreview, toast]);
 
   // ========== 渲染子组件 ==========
 
@@ -468,7 +605,7 @@ export function PrototypeConfirmation({
             variant="ghost"
             size="icon"
             onClick={handleRefresh}
-            disabled={loading || isReloading || !effectivePreviewUrl}
+            disabled={loading || isReloading || isGenerating || !currentSandboxId}
             title={t('ui.refresh_preview')}
             data-testid="refresh-preview-button"
           >
@@ -524,6 +661,24 @@ export function PrototypeConfirmation({
                  </div>
                </div>
              )}
+             {invalidPreviewUrl && (
+               <div className="border-b bg-amber-50 text-amber-900 px-4 py-2 text-xs flex items-center justify-between gap-3">
+                 <div className="flex-1 min-w-0">
+                   <span className="font-medium">预览地址无效：</span>
+                   <span className="font-mono truncate inline-block align-bottom max-w-[65%]">{invalidPreviewUrl}</span>
+                   <span className="ml-2 text-amber-800/80">（可能处于 Mock sandbox 环境，可尝试刷新或切换真实沙箱）</span>
+                 </div>
+                 <Button
+                   size="sm"
+                   variant="outline"
+                   className="h-7 text-[11px] border-amber-300 bg-amber-50 hover:bg-amber-100"
+                   onClick={handleRefresh}
+                   disabled={loading || isReloading || isGenerating || !currentSandboxId}
+                 >
+                   刷新预览
+                 </Button>
+               </div>
+             )}
              <div className="flex-1 relative">
                 <PrototypePreview
                   previewUrl={effectivePreviewUrl}
@@ -532,6 +687,10 @@ export function PrototypeConfirmation({
                   stage={stage}
                   iframeKey={iframeKey}
                   streamedCode={streamedCode}
+                  onSmartFix={currentSandboxId ? handleSmartFix : undefined}
+                  smartFixing={isSmartFixing}
+                  onPreviewError={handlePreviewError}
+                  onRuntimeError={handleRuntimeError}
                 />
              </div>
           </div>
@@ -561,7 +720,7 @@ export function PrototypeConfirmation({
       <ConfirmationDialog
         isOpen={showConfirmDialog}
         onClose={() => setShowConfirmDialog(false)}
-        onConfirm={onConfirm}
+        onConfirm={handleConfirmDesign}
         loading={loading}
         g3Logs={g3Logs}
       />

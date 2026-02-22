@@ -17,6 +17,9 @@ import com.ingenio.backend.mapper.AppSpecMapper;
 import com.ingenio.backend.mapper.IndustryTemplateMapper;
 import com.ingenio.backend.mapper.GenerationTaskMapper;
 import com.ingenio.backend.mapper.GenerationVersionMapper;
+import com.ingenio.backend.service.NLRequirementAnalyzer;
+import com.ingenio.backend.service.ProjectCapabilityConfigService;
+import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.VersionSnapshotService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -74,6 +77,26 @@ class G3OrchestratorIntegrationTest {
      * SessionMemory 持久化 Mock：避免依赖外部存储。
      */
     @Mock private G3MemoryPersistenceService memoryPersistenceService;
+    /**
+     * 日志流服务 Mock：避免触发真实 SSE 输出。
+     */
+    @Mock private G3LogStreamService g3LogStreamService;
+    /**
+     * 前端 API 生成器 Mock：避免触发真实协议生成。
+     */
+    @Mock private FrontendApiClientGenerator frontendApiClientGenerator;
+    /**
+     * 需求分析器 Mock：避免触发 NLP 解析。
+     */
+    @Mock private NLRequirementAnalyzer nlRequirementAnalyzer;
+    /**
+     * 项目服务 Mock：用于能力配置读取链路。
+     */
+    @Mock private ProjectService projectService;
+    /**
+     * 项目能力配置 Mock：用于注入能力清单。
+     */
+    @Mock private ProjectCapabilityConfigService projectCapabilityConfigService;
     @Mock private BlueprintValidator blueprintValidator;
     
     @Mock private IArchitectAgent architectAgent;

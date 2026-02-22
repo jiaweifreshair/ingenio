@@ -5,11 +5,22 @@ spring:
       api-key: test-key-for-integration-tests
       chat:
         enabled: false
-  
+    # Spring AI OpenAI 兼容配置兜底（避免测试上下文缺少 API key 启动失败）
+    openai:
+      api-key: ${SPRING_AI_OPENAI_API_KEY:${GACCODE_OPENAPI_API_KEY:test-api-key-placeholder}}
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:${GACCODE_OPENAPI_BASE_URL:https://gaccodeapi.com/v1}}
+      chat:
+        enabled: true
+
+  # Flyway 测试兜底（当本地测试库已有历史表结构但缺少 flyway_schema_history 时自动基线化）
+  flyway:
+    baseline-on-migrate: true
+    placeholder-replacement: false
+
   datasource:
-    url: jdbc:postgresql://localhost:5432/test_db
-    username: test
-    password: test
+    url: jdbc:postgresql://${TEST_DB_HOST:${DB_HOST:localhost}}:${TEST_DB_PORT:${DB_PORT:5432}}/${TEST_DB_NAME:${POSTGRES_DB:${DB_NAME:ingenio}}}?stringtype=unspecified
+    username: ${TEST_DB_USERNAME:${POSTGRES_USER:${DB_USER:postgres}}}
+    password: ${TEST_DB_PASSWORD:${POSTGRES_PASSWORD:${DB_PASSWORD:ingenio_20251122}}}
 
 minio:
   endpoint: http://localhost:9000
@@ -26,3 +37,37 @@ sa-token:
   token-name: Authorization
   timeout: 604800
   jwt-secret-key: test-jwt-secret-key
+
+# LangChain4j 测试配置（避免测试上下文因缺少 provider 而启动失败）
+ingenio:
+  tenant:
+    default-tenant-id: 00000000-0000-0000-0000-000000000002
+  langchain4j:
+    providers:
+      claude:
+        base-url: ${TEST_LC4J_CLAUDE_BASE_URL:${GACCODE_OPENAPI_BASE_URL:https://gaccodeapi.com/v1}}
+        api-key: ${TEST_LC4J_CLAUDE_API_KEY:${GACCODE_OPENAPI_API_KEY:test-api-key-placeholder}}
+        model: ${TEST_LC4J_CLAUDE_MODEL:claude-opus-4-5-20251101}
+        temperature: 0.2
+        max-tokens: 2048
+        timeout-seconds: 30
+        max-retries: 1
+
+
+# 微信登录测试占位配置（避免占位符缺失导致上下文启动失败）
+wechat:
+  appid: test-appid
+  secret: test-secret
+  redirect-uri: http://localhost:3000/auth/callback
+
+
+# OAuth 测试占位配置（避免占位符缺失导致上下文启动失败）
+oauth:
+  google:
+    client-id: test-google-client-id
+    client-secret: test-google-client-secret
+    redirect-uri: http://localhost:3000/auth/google/callback
+  github:
+    client-id: test-github-client-id
+    client-secret: test-github-client-secret
+    redirect-uri: http://localhost:3000/auth/github/callback

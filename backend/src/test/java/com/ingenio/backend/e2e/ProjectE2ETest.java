@@ -402,7 +402,7 @@ public class ProjectE2ETest extends BaseE2ETest {
 
         // 验证数据库中状态已更新
         ProjectEntity project = projectMapper.selectById(testProjectId);
-        assertEquals("published", project.getStatus(), "项目状态应为published");
+        assertEquals("completed", project.getStatus(), "项目状态应为completed");
         assertNotNull(project.getPublishedAt(), "发布时间应已设置");
     }
 

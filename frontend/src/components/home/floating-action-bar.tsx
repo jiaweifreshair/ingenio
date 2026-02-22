@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Sparkles, Maximize2, Minimize2, ArrowUp, Wand2, Link as LinkIcon, ChevronDown, Check, Zap, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PaywallGuard } from "@/components/billing/paywall-guard";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -291,13 +292,15 @@ export function FloatingActionBar({
                 </Button>
 
                 {/* Generate Button */}
-                <Button
-                    onClick={handleGenerate}
-                    className="bg-[#0f172a] hover:bg-[#1e293b] text-white dark:bg-white dark:text-black dark:hover:bg-slate-200 h-9 px-4 text-sm font-medium rounded-xl shadow-sm transition-all hover:scale-105"
-                >
-                    <Sparkles className="w-3.5 h-3.5 mr-2" />
-                    {t('hero.btn_generate')}
-                </Button>
+                <PaywallGuard requiredCredits={1}>
+                  <Button
+                      onClick={handleGenerate}
+                      className="bg-[#0f172a] hover:bg-[#1e293b] text-white dark:bg-white dark:text-black dark:hover:bg-slate-200 h-9 px-4 text-sm font-medium rounded-xl shadow-sm transition-all hover:scale-105"
+                  >
+                      <Sparkles className="w-3.5 h-3.5 mr-2" />
+                      {t('hero.btn_generate')}
+                  </Button>
+                </PaywallGuard>
            </div>
         </div>
         

@@ -173,12 +173,12 @@ ingenio:
   # 参考 open-lovable-cn 的实现：使用更合理的重试机制
   # deepseek-v3 模型的 RPM 限制相对宽松（约 30-60 RPM）
   ai:
-    # Primary AI 配置（优先使用）：Claude via 本地代理
+    # Primary AI 配置（默认关闭，按需开启 OpenAPI 直连）
     primary:
-      enabled: true
-      base-url: http://127.0.0.1:8045/v1
-      api-key: your-api-key-here
-      model: claude-opus-4-5-thinking
+      enabled: ${INGENIO_AI_PRIMARY_ENABLED:false}
+      base-url: ${INGENIO_AI_PRIMARY_BASE_URL:${GACCODE_OPENAPI_BASE_URL:https://gaccodeapi.com/v1}}
+      api-key: ${INGENIO_AI_PRIMARY_API_KEY:${GACCODE_OPENAPI_API_KEY:your-openapi-key-here}}
+      model: ${INGENIO_AI_PRIMARY_MODEL:claude-opus-4-5-20251101}
     # 速率限制配置
     rate-limit:
       # 每分钟最大请求数：30 RPM（deepseek-v3 的限制约 60 RPM，留余量）
@@ -201,33 +201,55 @@ ingenio:
     agent:
       engine: lc4j
 
-  # LangChain4j 提供商配置（本地开发硬编码，避免环境变量问题）
+  # LangChain4j 提供商配置（本地开发）
+  # 默认优先走 Wangsu OpenAPI（Gemini/Claude），DeepSeek 作为兜底
   langchain4j:
+    routing:
+      codegen:
+        - claude
+        - gemini
+        - deepseek
+      repair:
+        - claude
+        - gemini
+        - deepseek
+      analysis:
+        - claude
+        - gemini
+        - deepseek
     providers:
+      qiniu:
+        base-url: ${INGENIO_LC4J_QINIU_BASE_URL:${QINIU_CLOUD_BASE_URL:https://api.qnaigc.com}}
+        api-key: ${INGENIO_LC4J_QINIU_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:sk-placeholder}}}
+        model: ${INGENIO_LC4J_QINIU_MODEL:deepseek-v3}
+        temperature: ${INGENIO_LC4J_QINIU_TEMPERATURE:0.2}
+        max-tokens: ${INGENIO_LC4J_QINIU_MAX_TOKENS:6000}
+        timeout-seconds: ${INGENIO_LC4J_QINIU_TIMEOUT_SECONDS:180}
+        max-retries: ${INGENIO_LC4J_QINIU_MAX_RETRIES:2}
       uniaix:
         base-url: https://www.uniaix.com
         api-key: your-api-key-here
         embedding-model: doubao-embedding-text-240715
         embedding-dimension: 2048
       claude:
-        base-url: https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01
-        api-key: your-api-key-here
+        base-url: ${INGENIO_LC4J_CLAUDE_BASE_URL:${GACCODE_OPENAPI_BASE_URL:https://gaccodeapi.com/v1}}
+        api-key: ${INGENIO_LC4J_CLAUDE_API_KEY:${GACCODE_OPENAPI_API_KEY:your-openapi-key-here}}
         model: claude-opus-4-5-20251101
         temperature: 0.2
         max-tokens: 12000
         timeout-seconds: 180
         max-retries: 2
       gemini:
-        base-url: https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01
-        api-key: your-api-key-here
+        base-url: ${INGENIO_LC4J_GEMINI_BASE_URL:${GACCODE_OPENAPI_BASE_URL:https://gaccodeapi.com/v1}}
+        api-key: ${INGENIO_LC4J_GEMINI_API_KEY:${GACCODE_OPENAPI_API_KEY:your-openapi-key-here}}
         model: gemini-3-pro-high
         temperature: 0.2
         max-tokens: 6000
         timeout-seconds: 180
         max-retries: 2
       deepseek:
-        base-url: https://api.qnaigc.com/v1
-        api-key: your-api-key-here
+        base-url: ${INGENIO_LC4J_DEEPSEEK_BASE_URL:https://api.qnaigc.com/v1}
+        api-key: ${INGENIO_LC4J_DEEPSEEK_API_KEY:your-deepseek-api-key-here}
         model: deepseek-r1-0528
         temperature: 0.2
         max-tokens: 6000

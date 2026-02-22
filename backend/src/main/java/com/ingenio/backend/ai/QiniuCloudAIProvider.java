@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -66,6 +67,7 @@ public class QiniuCloudAIProvider implements AIProvider {
      * - deepseek-v3：代码和推理能力强，RPM限制相对宽松（推荐）
      * - qwen-max：通义千问旗舰模型
      * - qwen-plus：性价比高
+     * - gemini-3.0-pro-preview：Gemini思考模式（需配合reasoning_effort）
      * - z-ai/glm-4.7：智谱AI最新模型
      * - qwen3-235b-a22b-instruct-2507：通义千问3-235B（RPM限制严格）
      */
@@ -110,6 +112,24 @@ public class QiniuCloudAIProvider implements AIProvider {
      * 速率限制获取许可的超时时间（毫秒）- 5分钟
      */
     private static final long RATE_LIMIT_ACQUIRE_TIMEOUT_MS = 300_000;
+
+    /**
+     * 请求体保留字段集合。
+     *
+     * 是什么：OpenAI兼容请求体中的关键字段集合。
+     * 做什么：避免extraParams覆盖模型/消息/采样等核心字段。
+     * 为什么：防止调用方误传扩展参数导致请求体冲突。
+     */
+    private static final Set<String> RESERVED_REQUEST_KEYS = Set.of(
+            "model",
+            "messages",
+            "temperature",
+            "max_tokens",
+            "top_p",
+            "stop",
+            "stream",
+            "reasoning_effort"
+    );
 
     /**
      * 七牛云API Key
@@ -272,9 +292,12 @@ public class QiniuCloudAIProvider implements AIProvider {
      */
     @Override
     public AIResponse generate(String prompt, AIRequest request) throws AIException {
-        // 验证提示词
-        if (prompt == null || prompt.isBlank()) {
-            throw new AIException("提示词不能为空", getProviderName());
+        // 验证提示词或消息列表
+        boolean hasMessages = request != null
+                && request.messages() != null
+                && !request.messages().isEmpty();
+        if ((prompt == null || prompt.isBlank()) && !hasMessages) {
+            throw new AIException("提示词或messages不能为空", getProviderName());
         }
 
         AIException lastException = null;
@@ -418,32 +441,95 @@ public class QiniuCloudAIProvider implements AIProvider {
      */
     private String buildRequestBody(String prompt, AIRequest request, String targetModel) throws AIException {
         try {
-            Map<String, Object> requestBody = new HashMap<>();
-
-            // 模型名称 (优先使用传入的 targetModel)
-            requestBody.put("model", targetModel != null ? targetModel : getDefaultModel());
-
-            // 消息列表（OpenAI格式）
-            List<Map<String, String>> messages = new ArrayList<>();
-            messages.add(Map.of("role", "user", "content", prompt));
-            requestBody.put("messages", messages);
-
-            // 生成参数
-            if (request.temperature() != null)
-                requestBody.put("temperature", request.temperature());
-            if (request.maxTokens() != null)
-                requestBody.put("max_tokens", request.maxTokens());
-            if (request.topP() != null)
-                requestBody.put("top_p", request.topP());
-            if (request.stopSequence() != null)
-                requestBody.put("stop", request.stopSequence());
-
-            requestBody.put("stream", false);
-
+            Map<String, Object> requestBody = buildRequestBodyMap(prompt, request, targetModel);
             return objectMapper.writeValueAsString(requestBody);
         } catch (Exception e) {
             throw new AIException("构建请求Body失败: " + e.getMessage(), getProviderName(), e);
         }
+    }
+
+    /**
+     * 构建请求体Map（单元测试可复用）。
+     *
+     * 是什么：生成OpenAI兼容的请求体Map。
+     * 做什么：合并model/messages/采样参数与扩展字段。
+     * 为什么：便于测试多模态与reasoning_effort场景。
+     */
+    static Map<String, Object> buildRequestBodyMap(String prompt, AIRequest request, String targetModel)
+            throws AIException {
+        Map<String, Object> requestBody = new HashMap<>();
+
+        // 模型名称 (优先使用传入的 targetModel)
+        requestBody.put("model", targetModel != null && !targetModel.isBlank() ? targetModel : FALLBACK_MODEL);
+
+        // 消息列表（OpenAI格式）
+        requestBody.put("messages", resolveMessages(prompt, request));
+
+        // 生成参数
+        if (request != null) {
+            if (request.temperature() != null) {
+                requestBody.put("temperature", request.temperature());
+            }
+            if (request.maxTokens() != null) {
+                requestBody.put("max_tokens", request.maxTokens());
+            }
+            if (request.topP() != null) {
+                requestBody.put("top_p", request.topP());
+            }
+            if (request.stopSequence() != null) {
+                requestBody.put("stop", request.stopSequence());
+            }
+            if (request.reasoningEffort() != null && !request.reasoningEffort().isBlank()) {
+                requestBody.put("reasoning_effort", request.reasoningEffort());
+            }
+            appendExtraParams(requestBody, request.extraParams());
+        }
+
+        requestBody.put("stream", false);
+
+        return requestBody;
+    }
+
+    /**
+     * 解析请求消息列表。
+     *
+     * 是什么：将prompt或messages转换为OpenAI兼容的messages结构。
+     * 做什么：优先使用AIRequest.messages，缺失时回退prompt。
+     * 为什么：支持Gemini多模态消息与传统文本提示共存。
+     */
+    private static List<?> resolveMessages(String prompt, AIRequest request) throws AIException {
+        if (request != null && request.messages() != null && !request.messages().isEmpty()) {
+            return request.messages();
+        }
+        if (prompt == null || prompt.isBlank()) {
+            throw new AIException("提示词或messages不能为空", "qiniu");
+        }
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "user", "content", prompt));
+        return messages;
+    }
+
+    /**
+     * 合并扩展参数。
+     *
+     * 是什么：将extraParams写入请求体。
+     * 做什么：过滤保留字段并忽略空值。
+     * 为什么：避免扩展字段覆盖核心请求参数。
+     */
+    private static void appendExtraParams(Map<String, Object> requestBody, Map<String, Object> extraParams) {
+        if (extraParams == null || extraParams.isEmpty()) {
+            return;
+        }
+        extraParams.forEach((key, value) -> {
+            if (value == null) {
+                return;
+            }
+            if (RESERVED_REQUEST_KEYS.contains(key)) {
+                log.debug("[AI Provider] extraParams包含保留字段，已忽略: {}", key);
+                return;
+            }
+            requestBody.put(key, value);
+        });
     }
 
     /**
@@ -502,12 +588,11 @@ public class QiniuCloudAIProvider implements AIProvider {
             JsonNode jsonResponse = objectMapper.readTree(responseBody);
 
             // 提取生成的内容
-            String content = jsonResponse
+            JsonNode messageNode = jsonResponse
                     .path("choices")
-                    .get(0)
-                    .path("message")
-                    .path("content")
-                    .asText();
+                    .path(0)
+                    .path("message");
+            String content = extractMessageContent(messageNode);
 
             if (content == null || content.isBlank()) {
                 throw new AIException(
@@ -544,6 +629,27 @@ public class QiniuCloudAIProvider implements AIProvider {
                     getProviderName(),
                     e);
         }
+    }
+
+    /**
+     * 提取消息内容。
+     *
+     * 是什么：从message节点抽取可用内容。
+     * 做什么：兼容文本与结构化JSON内容。
+     * 为什么：支持Gemini结构化输出场景不丢失内容。
+     */
+    static String extractMessageContent(JsonNode messageNode) {
+        if (messageNode == null || messageNode.isMissingNode()) {
+            return null;
+        }
+        JsonNode contentNode = messageNode.path("content");
+        if (contentNode.isMissingNode() || contentNode.isNull()) {
+            return null;
+        }
+        if (contentNode.isTextual()) {
+            return contentNode.asText();
+        }
+        return contentNode.toString();
     }
 
     /**

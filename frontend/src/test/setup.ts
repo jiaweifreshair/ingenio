@@ -57,24 +57,49 @@ if (timeout > 0) {
   // 这里仅作为环境变量的参考
 }
 
-// 禁用console.error在测试中的输出（减少噪音）
-// 但保留console.warn以便发现潜在问题
+// 原始console.error：保存引用以便测试结束后恢复，避免污染全局环境
 const originalError = console.error;
-beforeAll(() => {
+// 原始console.log：保存引用以便测试结束后恢复，压制stdout噪音
+const originalLog = console.log;
+// 原始console.warn：保存引用以便测试结束后恢复，压制告警噪音
+const originalWarn = console.warn;
+// 是否静默测试期控制台输出（默认开启，可通过 VITEST_SILENCE_CONSOLE=0 关闭）
+const silenceConsole = process.env.VITEST_SILENCE_CONSOLE !== "0";
+/**
+ * 应用控制台静默策略
+ *
+ * 是什么：测试环境下的 console 输出拦截器。
+ * 做什么：过滤已知噪音并按需静默 log/warn/error。
+ * 为什么：避免控制台告警污染测试输出。
+ */
+const applyConsoleSilence = () => {
   console.error = (...args: unknown[]) => {
-    // 过滤掉React Testing Library的某些已知警告
     if (
       typeof args[0] === "string" &&
       (args[0].includes("Not implemented: HTMLFormElement.prototype.submit") ||
-        args[0].includes("Could not parse CSS stylesheet"))
+        args[0].includes("Could not parse CSS stylesheet") ||
+        args[0].includes("轮询任务状态失败") ||
+        args[0].includes("刷新任务状态失败") ||
+        args[0].includes("取消任务失败") ||
+        args[0].includes("[useGenerationFlow] SSE分析失败") ||
+        args[0].includes("[useGenerationFlow] 路由失败") ||
+        args[0].includes("[useGenerationFlow] 生成失败"))
     ) {
       return;
     }
-    originalError.call(console, ...args);
+    if (!silenceConsole) {
+      originalError.call(console, ...args);
+    }
   };
-});
+  console.warn = silenceConsole ? () => {} : originalWarn;
+  console.log = silenceConsole ? () => {} : originalLog;
+};
+
+applyConsoleSilence();
 
 // 清理：测试结束后恢复console.error
 afterAll(() => {
   console.error = originalError;
+  console.warn = originalWarn;
+  console.log = originalLog;
 });

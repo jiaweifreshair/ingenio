@@ -238,6 +238,116 @@ public class OpenLovableGenerateRequest {
         prompt.append(
                 "3. **TypeScript**: Prefer TypeScript (`.ts`/`.tsx`) for all generated code unless explicitly requested otherwise.\n");
 
+        // === Supabase Integration (V2.0新增：BaaS模式后端集成) ===
+        appendSupabaseIntegrationPrompt(prompt);
+
         return prompt.toString();
+    }
+
+    /**
+     * 追加 Supabase 集成提示词（V2.0新增）
+     *
+     * 当 blueprintFrontendSpec 包含 techStack="React+Supabase" 或 supabaseConfig 时，
+     * 注入 Supabase SDK 使用指令，确保生成的前端代码能正确调用 Supabase API。
+     *
+     * @param prompt 提示词构建器
+     */
+    private void appendSupabaseIntegrationPrompt(StringBuilder prompt) {
+        // 检查是否为 Supabase 技术栈
+        boolean isSupabaseStack = false;
+        String supabaseUrl = null;
+        String supabaseAnonKey = null;
+        String ddlSchema = null;
+
+        if (blueprintFrontendSpec != null) {
+            Object techStack = blueprintFrontendSpec.get("techStack");
+            if (techStack != null && techStack.toString().toLowerCase().contains("supabase")) {
+                isSupabaseStack = true;
+            }
+
+            // 提取 Supabase 配置
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> supabaseConfig = (java.util.Map<String, Object>) blueprintFrontendSpec.get("supabaseConfig");
+            if (supabaseConfig != null) {
+                supabaseUrl = (String) supabaseConfig.get("projectUrl");
+                supabaseAnonKey = (String) supabaseConfig.get("anonKey");
+            }
+
+            // 提取 DDL Schema
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, Object> dataSchema = (java.util.Map<String, Object>) blueprintFrontendSpec.get("dataSchema");
+            if (dataSchema != null) {
+                ddlSchema = (String) dataSchema.get("ddl");
+            }
+        }
+
+        if (!isSupabaseStack) {
+            return;
+        }
+
+        prompt.append("\n\n## Supabase Integration (MANDATORY - BaaS Mode)\n");
+        prompt.append("This application uses **React + Supabase** architecture (BaaS mode). ");
+        prompt.append("You MUST integrate Supabase as the backend. Follow these rules:\n\n");
+
+        prompt.append("### 1. Supabase Client Setup\n");
+        prompt.append("Create a `lib/supabase.ts` file with the following structure:\n");
+        prompt.append("```typescript\n");
+        prompt.append("import { createClient } from '@supabase/supabase-js'\n\n");
+        if (supabaseUrl != null && supabaseAnonKey != null) {
+            prompt.append("const supabaseUrl = '").append(supabaseUrl).append("'\n");
+            prompt.append("const supabaseAnonKey = '").append(supabaseAnonKey).append("'\n");
+        } else {
+            prompt.append("const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!\n");
+            prompt.append("const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!\n");
+        }
+        prompt.append("\nexport const supabase = createClient(supabaseUrl, supabaseAnonKey)\n");
+        prompt.append("```\n\n");
+
+        prompt.append("### 2. CRUD Operations Pattern\n");
+        prompt.append("Generate type-safe CRUD functions for each entity. Example:\n");
+        prompt.append("```typescript\n");
+        prompt.append("// lib/api/posts.ts\n");
+        prompt.append("import { supabase } from '../supabase'\n");
+        prompt.append("import type { Database } from '../database.types'\n\n");
+        prompt.append("type Post = Database['public']['Tables']['posts']['Row']\n");
+        prompt.append("type PostInsert = Database['public']['Tables']['posts']['Insert']\n\n");
+        prompt.append("export async function getPosts() {\n");
+        prompt.append("  const { data, error } = await supabase.from('posts').select('*')\n");
+        prompt.append("  if (error) throw error\n");
+        prompt.append("  return data\n");
+        prompt.append("}\n\n");
+        prompt.append("export async function createPost(post: PostInsert) {\n");
+        prompt.append("  const { data, error } = await supabase.from('posts').insert(post).select().single()\n");
+        prompt.append("  if (error) throw error\n");
+        prompt.append("  return data\n");
+        prompt.append("}\n");
+        prompt.append("```\n\n");
+
+        prompt.append("### 3. Authentication (Optional)\n");
+        prompt.append("If the application requires user authentication:\n");
+        prompt.append("```typescript\n");
+        prompt.append("// Sign up\n");
+        prompt.append("const { data, error } = await supabase.auth.signUp({ email, password })\n\n");
+        prompt.append("// Sign in\n");
+        prompt.append("const { data, error } = await supabase.auth.signInWithPassword({ email, password })\n\n");
+        prompt.append("// Sign out\n");
+        prompt.append("await supabase.auth.signOut()\n\n");
+        prompt.append("// Get current user\n");
+        prompt.append("const { data: { user } } = await supabase.auth.getUser()\n");
+        prompt.append("```\n\n");
+
+        prompt.append("### 4. Critical Rules\n");
+        prompt.append("- **DO NOT** generate any Express/Node.js backend code\n");
+        prompt.append("- **DO NOT** create custom REST APIs - use Supabase's auto-generated APIs\n");
+        prompt.append("- **ALWAYS** handle errors from Supabase calls\n");
+        prompt.append("- **ALWAYS** use TypeScript types generated from the database schema\n");
+        prompt.append("- **ALWAYS** install `@supabase/supabase-js` as a dependency\n\n");
+
+        // 如果提供了 DDL Schema，注入到提示词中
+        if (ddlSchema != null && !ddlSchema.isEmpty()) {
+            prompt.append("### 5. Database Schema\n");
+            prompt.append("The following tables have been created in Supabase. Generate CRUD operations for each:\n");
+            prompt.append("```sql\n").append(ddlSchema).append("\n```\n\n");
+        }
     }
 }

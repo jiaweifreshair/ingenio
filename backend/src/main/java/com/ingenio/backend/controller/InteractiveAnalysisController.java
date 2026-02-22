@@ -119,9 +119,10 @@ public class InteractiveAnalysisController {
             @PathVariable String sessionId,
             @Valid @RequestBody ConfirmStepRequest request) {
 
-        log.info("确认步骤: sessionId={}, step={}", sessionId, request.getStep());
+        log.info("确认步骤: sessionId={}, step={}, selectedStyleId={}",
+                sessionId, request.getStep(), request.getSelectedStyleId());
 
-        analysisService.confirmStep(sessionId, request.getStep());
+        analysisService.confirmStep(sessionId, request.getStep(), request.getSelectedStyleId());
         InteractiveAnalysisSessionEntity session = analysisService.getSession(sessionId);
 
         return Map.of(
@@ -211,6 +212,15 @@ public class InteractiveAnalysisController {
     @Data
     public static class ConfirmStepRequest {
         private int step;
+
+        /**
+         * Step 5 设计风格选择（可选）
+         *
+         * 说明：
+         * - 仅当 step=5 且用户在前端选择了风格时传入；
+         * - 后端会将该选择写入 stepResults/stepFeedback，供后续 Step6 蓝图生成使用。
+         */
+        private String selectedStyleId;
     }
 
     /**

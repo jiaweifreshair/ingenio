@@ -11,7 +11,7 @@ import java.util.UUID;
 /**
  * 生成任务实体类
  */
-@TableName(value = "generation_tasks")
+@TableName(value = "generation_tasks", autoResultMap = true)
 public class GenerationTaskEntity {
 
     @TableId(value = "id", type = IdType.ASSIGN_UUID)

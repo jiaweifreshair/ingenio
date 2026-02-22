@@ -9,8 +9,11 @@ import com.ingenio.backend.dto.ComplexityAssessment.ComplexityLevel;
 import com.ingenio.backend.dto.TechStackRecommendation;
 import com.ingenio.backend.dto.response.AnalysisProgressMessage;
 import com.ingenio.backend.entity.GenerationTaskEntity;
+import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.entity.StructuredRequirementEntity;
+import com.ingenio.backend.enums.DesignStyle;
 import com.ingenio.backend.mapper.StructuredRequirementMapper;
+import com.ingenio.backend.service.analysis.AnalysisStepResultMerger;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
@@ -44,6 +47,15 @@ public class NLRequirementAnalyzer {
      */
     private final AIProviderFactory aiProviderFactory;
 
+    /**
+     * 项目服务
+     *
+     * 是什么：根据 appSpecId 查询项目实体的服务。
+     * 做什么：解析项目级AI配置入口。
+     * 为什么：保留项目级Provider入口，便于后续扩展。
+     */
+    private final ProjectService projectService;
+
     private final StructuredRequirementMapper requirementMapper;
     private final ObjectMapper objectMapper;
 
@@ -60,9 +72,10 @@ public class NLRequirementAnalyzer {
 
         try {
             // 1. 调用AI API进行语义理解
+            AIProvider provider = resolveProvider(task.getAppSpecId());
             String analysisJson = callAIForAnalysisWithRetry(requirement, progress -> {
                 // 空回调
-            });
+            }, provider);
 
             // 2. 解析分析结果
             Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
@@ -78,7 +91,7 @@ public class NLRequirementAnalyzer {
             entity.setRelationships(extractMap(analysisResult, "relationships"));
             entity.setOperations(extractMap(analysisResult, "operations"));
             entity.setConstraints(extractMap(analysisResult, "constraints"));
-            entity.setAiModel(getAiModelName());
+            entity.setAiModel(provider.getProviderName());
             entity.setConfidenceScore(extractConfidenceScore(analysisResult));
             entity.setCreatedAt(Instant.now());
             entity.setUpdatedAt(Instant.now());
@@ -106,10 +119,25 @@ public class NLRequirementAnalyzer {
      * @return 意图识别结果 (Map)
      */
     public Map<String, Object> analyzeIntent(String requirement) {
+        return analyzeIntent(requirement, null);
+    }
+
+    /**
+     * 分析用户需求的意图（项目级）
+     *
+     * 是什么：基于appSpecId的意图识别入口。
+     * 做什么：按项目级AI配置选择Provider执行意图分析。
+     * 为什么：保留项目级扩展点且不影响未配置项目。
+     *
+     * @param requirement 用户需求
+     * @param appSpecId AppSpec ID（可选）
+     * @return 意图识别结果 (Map)
+     */
+    public Map<String, Object> analyzeIntent(String requirement, UUID appSpecId) {
         log.info("开始意图识别: requirementLength={}", requirement.length());
         try {
             String prompt = buildIntentAnalysisPrompt(requirement);
-            AIProvider provider = aiProviderFactory.getProvider();
+            AIProvider provider = resolveProvider(appSpecId);
             AIProvider.AIResponse response = provider.generate(prompt);
             String content = response.content();
             return parseAnalysisResult(content);
@@ -161,6 +189,24 @@ public class NLRequirementAnalyzer {
     private String callAIForAnalysisWithRetry(
             String requirement,
             Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
+        return callAIForAnalysisWithRetry(requirement, progressCallback, aiProviderFactory.getProvider());
+    }
+
+    /**
+     * 带重试和心跳进度的AI API调用（指定Provider）
+     *
+     * 是什么：使用指定AI Provider执行需求分析调用。
+     * 做什么：支持项目级Provider切换并复用重试逻辑。
+     * 为什么：保留项目级扩展点且不影响未配置项目。
+     *
+     * @param requirement 需求文本
+     * @param progressCallback 进度回调
+     * @param provider 指定AI Provider
+     */
+    private String callAIForAnalysisWithRetry(
+            String requirement,
+            Consumer<AnalysisProgressMessage> progressCallback,
+            AIProvider provider) throws Exception {
 
         Exception lastException = null;
 
@@ -197,7 +243,7 @@ public class NLRequirementAnalyzer {
 
                 try {
                     // 调用AI API（使用配置的AI提供商）
-                    String result = callAIForAnalysis(requirement);
+                    String result = callAIForAnalysis(requirement, provider);
 
                     isCompleted.set(true);
                     heartbeat.shutdown();
@@ -313,7 +359,7 @@ public class NLRequirementAnalyzer {
      *
      * 使用AIProviderFactory自动选择可用的AI提供商（七牛云/阿里云等）
      */
-    private String callAIForAnalysis(String requirement) throws Exception {
+    private String callAIForAnalysis(String requirement, AIProvider provider) throws Exception {
         log.info("使用配置的AI提供商进行需求分析");
 
         String systemPrompt = buildAnalysisPrompt();
@@ -324,7 +370,6 @@ public class NLRequirementAnalyzer {
 
         try {
             // 获取可用的AI提供商
-            AIProvider provider = aiProviderFactory.getProvider();
             log.info("使用AI提供商: {}", provider.getProviderDisplayName());
 
             // 调用AI生成（使用默认参数）
@@ -361,7 +406,7 @@ public class NLRequirementAnalyzer {
             case 2 -> buildStep2DataArchitectPrompt();
             case 3 -> buildStep3BusinessAnalystPrompt();
             case 4 -> buildStep4TechLeadPrompt();
-            case 5 -> buildStep5SecurityEngineerPrompt();
+            case 5 -> buildStep5InteractionDesignerPrompt();
             case 6 -> buildStep6ChiefArchitectPrompt();
             default -> buildAnalysisPrompt(); // 回退到通用 Prompt
         };
@@ -399,6 +444,29 @@ public class NLRequirementAnalyzer {
         } catch (Exception e) {
             return "unknown";
         }
+    }
+
+    /**
+     * 获取项目级AI Provider
+     *
+     * 是什么：基于 appSpecId 解析项目并选择AI Provider。
+     * 做什么：通过项目上下文选择Provider入口（当前回退系统默认）。
+     * 为什么：保留项目级扩展点且不影响未配置项目。
+     *
+     * @param appSpecId AppSpec ID
+     * @return 可用的AI Provider
+     */
+    private AIProvider resolveProvider(UUID appSpecId) {
+        if (appSpecId == null) {
+            return aiProviderFactory.getProvider();
+        }
+
+        ProjectEntity project = projectService.findByAppSpecId(appSpecId);
+        if (project == null) {
+            return aiProviderFactory.getProvider();
+        }
+
+        return aiProviderFactory.getProviderForProject(project.getId());
     }
 
     /**
@@ -606,7 +674,16 @@ public class NLRequirementAnalyzer {
                 - 实体之间的关系类型是什么（1:1、1:N、N:M）？
                 - 需要哪些索引和约束？
 
-                ## 📤 输出格式
+                ## ⚠️ 强制要求（必须遵守）
+                1. **必须至少识别1个核心实体**（即使需求很简单）
+                2. **entities字段不能为空对象 `{}`**
+                3. **必须返回完整的JSON结构**（包含 entities、relationships、entitiesCount、relationshipsCount）
+                4. **如果需求过于简单或模糊**：
+                   - 至少返回 User 实体（包含 id, username, email, createdAt 等基础字段）
+                   - entitiesCount 至少为 1
+                   - relationshipsCount 可以为 0
+
+                ## 📤 输出格式（严格遵循）
                 返回 JSON：
                 {
                   "entities": {
@@ -632,6 +709,33 @@ public class NLRequirementAnalyzer {
                   },
                   "entitiesCount": 5,
                   "relationshipsCount": 3
+                }
+
+                ## 🚫 禁止行为
+                - ❌ 不要返回空的 entities 对象：`"entities": {}`
+                - ❌ 不要省略 entities 字段
+                - ❌ 不要返回 null 或 undefined
+                - ❌ 不要返回非JSON格式的内容
+
+                ## ✅ 最小可接受示例（需求过于简单时）
+                {
+                  "entities": {
+                    "User": {
+                      "description": "用户实体",
+                      "tableName": "users",
+                      "fields": [
+                        {"name": "id", "type": "UUID", "required": true, "description": "主键"},
+                        {"name": "username", "type": "VARCHAR(50)", "required": true, "description": "用户名"},
+                        {"name": "email", "type": "VARCHAR(100)", "required": true, "description": "邮箱"},
+                        {"name": "createdAt", "type": "TIMESTAMP", "required": true, "description": "创建时间"}
+                      ],
+                      "primaryKey": "id",
+                      "indexes": ["username", "email"]
+                    }
+                  },
+                  "relationships": {},
+                  "entitiesCount": 1,
+                  "relationshipsCount": 0
                 }
 
                 ## 设计原则
@@ -737,38 +841,174 @@ public class NLRequirementAnalyzer {
     }
 
     /**
-     * Step 5: 安全工程师视角 - 复杂度与风险评估
+     * Step 5: 交互设计师视角 - 交互设计与体验评估
      */
-    private String buildStep5SecurityEngineerPrompt() {
+    private String buildStep5InteractionDesignerPrompt() {
         return """
-                # 🛡️ 安全工程师 - 复杂度与风险评估专家
+                # 👩‍🎨 交互设计师 - 交互设计与体验评估专家
 
                 ## 角色定义
-                你是一位资深安全工程师和项目评估专家，擅长评估项目复杂度和识别风险。
-                基于前面步骤的分析结果，评估项目规模、复杂度和潜在风险。
+                你是一位资深交互设计师和体验评估专家，擅长：
+                - 将需求转化为可落地的交互体验与界面风格决策
+                - 识别影响体验与交付的复杂度与风险点，并给出可执行的缓解措施
 
-                ## 评估规则
+                基于前面步骤的分析结果，请给出“交互选型结论”（推荐设计风格）以及体验风险评估。
+
+                ## 风格候选（必须从 A-G 中选择）
+                - A（modern_minimal / 现代极简）：大留白、卡片式布局、简洁图标，强调内容本身
+                - B（vibrant_fashion / 活力时尚）：渐变色彩、圆角设计、网格布局，充满活力
+                - C（classic_professional / 经典专业）：信息密集、列表布局、商务配色，效率优先
+                - D（future_tech / 未来科技）：深色主题、霓虹色彩、毛玻璃/辉光效果，科技感强
+                - E（immersive_3d / 沉浸式3D）：立体阴影、视差滚动、空间层次，强调沉浸
+                - F（gamified / 游戏化设计）：奖励反馈、成就系统、趣味交互，提升参与度
+                - G（natural_flow / 自然流动）：有机曲线、自然配色、舒缓过渡，强调治愈感
+
+                ## 复杂度评估规则（用于体验与交付可控性）
                 - SIMPLE: ≤3实体，基础CRUD
-                - MEDIUM: 4-8实体，有业务逻辑
-                - COMPLEX: >8实体，复杂业务流程
+                - MEDIUM: 4-8实体，有业务流程与权限等交互
+                - COMPLEX: >8实体，复杂业务流程/多角色协作/多端适配
 
                 ## 📤 输出格式
-                返回 JSON：
+                返回 JSON（不要有任何 markdown 包裹）：
                 {
+                  "intent": "CLONE_EXISTING_WEBSITE|DESIGN_FROM_SCRATCH|HYBRID_CLONE_AND_CUSTOMIZE",
+                  "branch": "CLONE/DESIGN/HYBRID",
+                  "confidence": 0.85,
+                  "selectedStyleId": "A",
+                  "selectedStyleReason": "为什么推荐该风格（1-2句）",
                   "complexityLevel": "SIMPLE/MEDIUM/COMPLEX",
                   "estimatedDays": 5,
                   "estimatedLines": 2000,
                   "confidenceScore": 0.8,
-                  "description": "复杂度评估说明",
+                  "description": "体验复杂度评估说明",
                   "riskFactors": [
                     {"factor": "风险因素", "level": "low/medium/high", "mitigation": "缓解措施"}
                   ],
-                  "securityConsiderations": [
-                    "安全注意事项1",
-                    "安全注意事项2"
-                  ]
+                  "mitigations": ["体验/交付缓解措施1", "缓解措施2"]
                 }
                 """;
+    }
+
+    /**
+     * 生成 Step5 可用的设计风格变体列表
+     *
+     * 是什么：将后端固定的 7 种 DesignStyle 映射为前端 Step5 期望的 styleVariants 结构。
+     * 做什么：输出包含 styleId/styleName/styleCode 的列表，并将推荐项置顶。
+     * 为什么：确保“交互选型结论”在 Step5 即可展示且可由用户选择，不依赖模型自由发挥导致风格代码漂移。
+     */
+    private List<Map<String, Object>> buildStep5StyleVariants(DesignStyle recommendedStyle) {
+        List<Map<String, Object>> variants = new ArrayList<>();
+        for (DesignStyle style : DesignStyle.values()) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("styleId", style.getIdentifier());
+            item.put("styleName", style.getDisplayName());
+            item.put("styleCode", style.getCode());
+            item.put("description", style.getDescription());
+            variants.add(item);
+        }
+
+        // 将推荐项置顶，便于前端默认高亮
+        if (recommendedStyle != null) {
+            variants.sort((a, b) -> {
+                String aId = String.valueOf(a.get("styleId"));
+                String bId = String.valueOf(b.get("styleId"));
+                String recommendedId = recommendedStyle.getIdentifier();
+                if (aId.equals(recommendedId) && !bId.equals(recommendedId)) return -1;
+                if (!aId.equals(recommendedId) && bId.equals(recommendedId)) return 1;
+                return aId.compareTo(bId);
+            });
+        }
+
+        return variants;
+    }
+
+    /**
+     * Step5：解析/兜底推荐风格
+     *
+     * 是什么：风格选型解析器。
+     * 做什么：优先采用模型输出；若缺失或不合法，则从上下文关键字推断。
+     * 为什么：保证 selectedStyleId 永远落在 A-G 可用集合内，并能响应用户对风格的显式偏好。
+     */
+    private DesignStyle resolveStep5SelectedStyle(Map<String, Object> analysisResult, String requirement, String context) {
+        if (analysisResult != null) {
+            Object selectedStyleId = analysisResult.get("selectedStyleId");
+            if (selectedStyleId instanceof String id) {
+                DesignStyle byId = DesignStyle.fromIdentifier(id.trim().toUpperCase());
+                if (byId != null) return byId;
+            }
+
+            Object selectedStyleCode = analysisResult.get("selectedStyleCode");
+            if (selectedStyleCode instanceof String code) {
+                DesignStyle byCode = DesignStyle.fromCode(code.trim());
+                if (byCode != null) return byCode;
+            }
+
+            Object selectedStyleName = analysisResult.get("selectedStyleName");
+            if (selectedStyleName instanceof String name) {
+                for (DesignStyle style : DesignStyle.values()) {
+                    if (name.contains(style.getDisplayName())) return style;
+                }
+            }
+        }
+
+        return chooseStep5RecommendedStyle(requirement, context);
+    }
+
+    /**
+     * Step5：根据文本内容选择推荐风格
+     *
+     * 是什么：轻量的风格选择器（可被模型输出覆盖）。
+     * 做什么：在 A-G 固定风格集合内，选出一个最匹配的推荐项。
+     * 为什么：在模型未输出/输出不合法时，仍能保证交互选型结论可展示且稳定。
+     */
+    private DesignStyle chooseStep5RecommendedStyle(String requirement, String context) {
+        String merged = ((requirement == null ? "" : requirement) + "\n" + (context == null ? "" : context)).trim();
+        String lower = merged.toLowerCase();
+
+        // 1) 显式偏好：styleCode / 中文名 / “风格A” 等
+        for (DesignStyle style : DesignStyle.values()) {
+            if (lower.contains(style.getCode())) return style;
+            if (merged.contains(style.getDisplayName())) return style;
+            if (merged.contains("风格" + style.getIdentifier()) || merged.contains("方案" + style.getIdentifier())) return style;
+        }
+
+        // 2) 关键词启发式：面向“快速给出默认推荐”
+        if (containsAny(lower, "后台", "管理", "erp", "b2b", "报表", "仪表盘", "台账", "审批", "工单", "crm")) {
+            return DesignStyle.CLASSIC_PROFESSIONAL;
+        }
+        if (containsAny(lower, "游戏", "闯关", "徽章", "排行榜", "积分", "成就", "打卡", "任务", "激励")) {
+            return DesignStyle.GAMIFIED;
+        }
+        if (containsAny(lower, "ai", "科技", "未来", "赛博", "cyber", "区块链", "web3", "黑客", "hacker")) {
+            return DesignStyle.FUTURE_TECH;
+        }
+        if (containsAny(lower, "品牌", "营销", "活动", "设计", "时尚", "潮流", "创意")) {
+            return DesignStyle.VIBRANT_FASHION;
+        }
+        if (containsAny(lower, "冥想", "健康", "疗愈", "治愈", "环保", "自然", "瑜伽", "睡眠")) {
+            return DesignStyle.NATURAL_FLOW;
+        }
+        if (containsAny(lower, "3d", "沉浸", "展厅", "展览", "艺术", "博物馆", "体验")) {
+            return DesignStyle.IMMERSIVE_3D;
+        }
+
+        return DesignStyle.MODERN_MINIMAL;
+    }
+
+    /**
+     * 文本包含任一关键词
+     *
+     * 是什么：关键字命中判断工具。
+     * 做什么：在 lower-case 文本中检测任一关键词是否出现。
+     * 为什么：为风格推荐提供可读的启发式规则，避免散落的 contains 判断。
+     */
+    private boolean containsAny(String text, String... keywords) {
+        if (text == null || text.isBlank()) return false;
+        for (String keyword : keywords) {
+            if (keyword == null || keyword.isBlank()) continue;
+            if (text.contains(keyword.toLowerCase())) return true;
+        }
+        return false;
     }
 
     /**
@@ -781,6 +1021,11 @@ public class NLRequirementAnalyzer {
                 ## 角色定义
                 你是一位首席架构师，擅长整合所有分析结果，生成完整的技术实施蓝图。
                 这是最后一步，需要生成可以直接用于代码生成的完整蓝图。
+
+                ## 强约束（必须严格遵守）
+                - 技术栈必须与 Step4 已确认结果一致，禁止自行改写/回退。
+                - UI 风格必须引用 Step5 中用户确认的 selectedStyleId/风格名。
+                - 若上下文包含用户反馈，需转化为明确的实施动作与接入点。
 
                 ## 输出要求
                 生成一份完整的 Markdown 格式技术蓝图，包含：
@@ -806,6 +1051,7 @@ public class NLRequirementAnalyzer {
                 5. **UI 规划**
                    - 页面列表
                    - 核心交互
+                   - UI 风格：必须引用 Step 5 中用户确认的 selectedStyleId/风格名，并给出关键组件与动效原则
 
                 6. **实施路线图**
                    - 开发阶段划分
@@ -855,10 +1101,18 @@ public class NLRequirementAnalyzer {
                 jsonContent = jsonContent.substring(jsonStart, jsonEnd + 1);
             }
 
-            return objectMapper.readValue(jsonContent, Map.class);
+            Map<String, Object> parsed = objectMapper.readValue(jsonContent, Map.class);
+
+            // ⚠️ 验证关键字段是否存在
+            if (!parsed.containsKey("entities") && !parsed.containsKey("operations") && !parsed.containsKey("techStack")) {
+                log.warn("⚠️ AI返回的JSON缺少关键字段（entities/operations/techStack）！解析结果: {}", parsed);
+            }
+
+            return parsed;
         } catch (Exception e) {
-            log.error("解析分析结果失败: {}", e.getMessage());
-            log.debug("原始内容: {}", analysisJson.substring(0, Math.min(500, analysisJson.length())));
+            log.error("❌ 解析分析结果失败: {}", e.getMessage());
+            log.error("❌ 原始内容（前1000字符）: {}", analysisJson.substring(0, Math.min(1000, analysisJson.length())));
+            log.error("❌ 异常堆栈: ", e);
             return new HashMap<>();
         }
     }
@@ -877,9 +1131,12 @@ public class NLRequirementAnalyzer {
 
     private BigDecimal extractConfidenceScore(Map<String, Object> analysisResult) {
         Object confidence = analysisResult.get("confidence");
-        if (confidence instanceof Number) {
-            return new BigDecimal(confidence.toString());
-        }
+        if (confidence instanceof Number) return new BigDecimal(confidence.toString());
+
+        // 兼容部分步骤输出使用 confidenceScore 的情况（例如 Step5/旧版协议）
+        Object confidenceScore = analysisResult.get("confidenceScore");
+        if (confidenceScore instanceof Number) return new BigDecimal(confidenceScore.toString());
+
         return BigDecimal.ZERO;
     }
 
@@ -896,11 +1153,50 @@ public class NLRequirementAnalyzer {
      * @return 技术栈推荐
      */
     public TechStackRecommendation recommendTechStack(Map<String, Object> analysisResult) {
+        return recommendTechStack(analysisResult, null);
+    }
+
+    /**
+     * 从AI分析结果中提取技术栈推荐（带需求强约束覆盖）
+     *
+     * 是什么：在 AI 推荐基础上叠加需求强制关键词规则。
+     * 做什么：当需求明确 Spring Boot/JeecgBoot 时覆盖为企业级后端。
+     * 为什么：避免需求分析阶段误判为 Supabase。
+     *
+     * @param analysisResult AI返回的完整分析结果
+     * @param requirement 原始需求文本（可为空）
+     * @return 技术栈推荐
+     */
+    public TechStackRecommendation recommendTechStack(Map<String, Object> analysisResult, String requirement) {
         Map<String, Object> techStack = extractMap(analysisResult, "techStack");
 
         if (techStack.isEmpty()) {
-            log.warn("AI未返回techStack，使用默认推荐（H5+WebView）");
-            return getDefaultTechStack();
+            // 兼容交互式分析 Step4：部分模型会把 platform/uiFramework/backend/database 放在顶层
+            Object platformTop = analysisResult.get("platform");
+            Object uiFrameworkTop = analysisResult.get("uiFramework");
+            Object frontendTop = analysisResult.get("frontend");
+            Object backendTop = analysisResult.get("backend");
+            Object databaseTop = analysisResult.get("database");
+
+            boolean hasAnyTopLevel =
+                    platformTop != null || uiFrameworkTop != null || frontendTop != null || backendTop != null || databaseTop != null;
+
+            if (!hasAnyTopLevel) {
+                log.warn("AI未返回techStack，使用默认推荐（H5+WebView）");
+                return getDefaultTechStack();
+            }
+
+            techStack = new HashMap<>();
+            if (platformTop != null) techStack.put("platform", platformTop);
+            // 统一到 `frontend` 字段（历史字段名），兼容 uiFramework/frontend 两种命名
+            if (uiFrameworkTop != null) techStack.put("frontend", uiFrameworkTop);
+            if (frontendTop != null) techStack.put("frontend", frontendTop);
+            if (backendTop != null) techStack.put("backend", backendTop);
+            if (databaseTop != null) techStack.put("database", databaseTop);
+            Object reasonTop = analysisResult.get("reason");
+            if (reasonTop != null) techStack.put("reason", reasonTop);
+            Object confidenceTop = analysisResult.get("confidence");
+            if (confidenceTop != null) techStack.put("confidence", confidenceTop);
         }
 
         String platform = getStringValue(techStack, "platform", "H5+WebView");
@@ -925,14 +1221,21 @@ public class NLRequirementAnalyzer {
             log.info("  ⚠️ 需要与用户确认技术选型: {}", reason);
         }
 
-        return TechStackRecommendation.builder()
+        double confidence =
+                techStack.get("confidence") instanceof Number
+                        ? ((Number) techStack.get("confidence")).doubleValue()
+                        : (needsConfirmation ? 0.6 : 0.85); // 需要确认时降低置信度
+
+        TechStackRecommendation base = TechStackRecommendation.builder()
                 .platform(platform)
                 .uiFramework(frontend)
                 .backend(backend)
                 .database(database)
-                .confidence(needsConfirmation ? 0.6 : 0.85) // 需要确认时降低置信度
+                .confidence(confidence)
                 .reason(reason)
                 .build();
+
+        return applyRequirementOverrides(base, requirement);
     }
 
     /**
@@ -940,6 +1243,57 @@ public class NLRequirementAnalyzer {
      */
     public TechStackRecommendation recommendTechStack(StructuredRequirementEntity requirement) {
         return getDefaultTechStack();
+    }
+
+    /**
+     * 根据需求文本覆盖技术栈推荐
+     *
+     * 是什么：识别明确的技术栈关键词并做强制覆盖。
+     * 做什么：检测 Spring Boot/JeecgBoot 时返回企业级后端推荐。
+     * 为什么：避免分析结果偏离用户明确的技术栈诉求。
+     */
+    private TechStackRecommendation applyRequirementOverrides(
+            TechStackRecommendation recommendation,
+            String requirement) {
+        if (recommendation == null) {
+            return null;
+        }
+        if (requirement == null || requirement.isBlank()) {
+            return recommendation;
+        }
+
+        String normalized = requirement.toLowerCase();
+        boolean mentionsSpringBoot =
+                normalized.contains("spring boot")
+                        || normalized.contains("springboot")
+                        || normalized.contains("jeecg")
+                        || normalized.contains("jeecgboot");
+
+        if (!mentionsSpringBoot) {
+            return recommendation;
+        }
+
+        String adjustedReason = recommendation.getReason();
+        String hint = "需求明确提到 Spring Boot/JeecgBoot，已覆盖技术栈推荐";
+        if (adjustedReason == null || adjustedReason.isBlank()) {
+            adjustedReason = hint;
+        } else if (!adjustedReason.contains("Spring Boot") && !adjustedReason.contains("JeecgBoot")) {
+            adjustedReason = adjustedReason + "；" + hint;
+        }
+
+        String database = recommendation.getDatabase();
+        if (database == null || database.isBlank() || database.equalsIgnoreCase("Supabase")) {
+            database = "PostgreSQL";
+        }
+
+        return TechStackRecommendation.builder()
+                .platform("Web")
+                .uiFramework("React")
+                .backend("Spring Boot")
+                .database(database)
+                .confidence(Math.max(recommendation.getConfidence(), 0.85))
+                .reason(adjustedReason)
+                .build();
     }
 
     /**
@@ -971,8 +1325,23 @@ public class NLRequirementAnalyzer {
         Map<String, Object> complexity = extractMap(analysisResult, "complexity");
 
         if (complexity.isEmpty()) {
-            log.warn("AI未返回complexity，使用默认评估");
-            return getDefaultComplexity(analysisResult);
+            // 兼容交互式分析 Step5：部分模型会把 complexityLevel/estimatedDays/estimatedLines 放在顶层
+            Object complexityLevelTop = analysisResult.get("complexityLevel");
+            Object estimatedDaysTop = analysisResult.get("estimatedDays");
+            Object estimatedLinesTop = analysisResult.get("estimatedLines");
+
+            boolean hasAnyTopLevel = complexityLevelTop != null || estimatedDaysTop != null || estimatedLinesTop != null;
+            if (!hasAnyTopLevel) {
+                log.warn("AI未返回complexity，使用默认评估");
+                return getDefaultComplexity(analysisResult);
+            }
+
+            complexity = new HashMap<>();
+            if (complexityLevelTop != null) complexity.put("level", complexityLevelTop);
+            if (estimatedDaysTop != null) complexity.put("estimatedDays", estimatedDaysTop);
+            if (estimatedLinesTop != null) complexity.put("estimatedLines", estimatedLinesTop);
+            Object reasonTop = analysisResult.get("description");
+            if (reasonTop != null) complexity.put("reason", reasonTop);
         }
 
         String levelStr = getStringValue(complexity, "level", "MEDIUM");
@@ -1119,6 +1488,13 @@ public class NLRequirementAnalyzer {
             // 调用AI进行分析（这是最耗时的步骤）
             String analysisJson = callAIForAnalysisWithRetry(requirement, progressCallback);
 
+            // 解析AI返回的JSON，并补齐 Step1 结果
+            Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
+            Step1FallbackResult step1Fallback = ensureStep1Result(requirement, analysisResult);
+            analysisResult = step1Fallback.result();
+            analysisResult.put("rawLength", requirement.length());
+            analysisResult.put("aiModel", getAiModelName());
+
             // 步骤1完成
             progressCallback.accept(AnalysisProgressMessage.builder()
                     .step(1)
@@ -1127,12 +1503,9 @@ public class NLRequirementAnalyzer {
                     .description("AI已成功理解您的需求")
                     .detail("需求解析完成，正在提取结构化信息...")
                     .progress(20)
-                    .result(Map.of("rawLength", requirement.length(), "aiModel", getAiModelName()))
+                    .result(analysisResult)
                     .timestamp(Instant.now())
                     .build());
-
-            // 解析AI返回的JSON
-            Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
 
             // ============ 步骤2：实体关系建模 ============
             progressCallback.accept(AnalysisProgressMessage.builder()
@@ -1147,6 +1520,11 @@ public class NLRequirementAnalyzer {
 
             Map<String, Object> entities = extractMap(analysisResult, "entities");
             Map<String, Object> relationships = extractMap(analysisResult, "relationships");
+            Step2FallbackResult fallbackResult = ensureStep2Entities(requirement, entities, relationships);
+            entities = fallbackResult.entities();
+            relationships = fallbackResult.relationships();
+            analysisResult.put("entities", entities);
+            analysisResult.put("relationships", relationships);
 
             // 模拟处理时间
             Thread.sleep(500);
@@ -1162,7 +1540,9 @@ public class NLRequirementAnalyzer {
                     .result(Map.of(
                             "entitiesCount", entities.size(),
                             "relationshipsCount", relationships.size(),
-                            "entities", entities.keySet()))
+                            "entities", entities.keySet(),
+                            "usedFallback", fallbackResult.usedFallback(),
+                            "assumptions", fallbackResult.assumptions()))
                     .timestamp(Instant.now())
                     .build());
 
@@ -1209,7 +1589,7 @@ public class NLRequirementAnalyzer {
                     .build());
 
             // 从AI分析结果中提取技术栈推荐（真实AI分析结果）
-            TechStackRecommendation techStack = recommendTechStack(analysisResult);
+            TechStackRecommendation techStack = recommendTechStack(analysisResult, requirement);
 
             Thread.sleep(300);
 
@@ -1353,6 +1733,9 @@ public class NLRequirementAnalyzer {
         // ============ 2. UI 设计风格（新增）============
         sb.append("## 2. UI 设计风格\n");
         Map<String, Object> uiStyle = extractMap(analysisResult, "uiStyle");
+        String selectedStyleName = getStringValue(analysisResult, "selectedStyleName", "");
+        String selectedStyleId = getStringValue(analysisResult, "selectedStyleId", "");
+        String selectedStyleCode = getStringValue(analysisResult, "selectedStyleCode", "");
         if (!uiStyle.isEmpty()) {
             String theme = getStringValue(uiStyle, "theme", "");
             String colorScheme = getStringValue(uiStyle, "colorScheme", "");
@@ -1363,6 +1746,12 @@ public class NLRequirementAnalyzer {
                 sb.append("**配色方案**: ").append(colorScheme).append("\n");
             if (!layout.isEmpty())
                 sb.append("**布局模式**: ").append(layout).append("\n");
+        } else if (!selectedStyleName.isEmpty() || !selectedStyleId.isEmpty() || !selectedStyleCode.isEmpty()) {
+            String display = !selectedStyleName.isEmpty() ? selectedStyleName : selectedStyleId;
+            sb.append("**主题风格**: ").append(display).append("\n");
+            if (!selectedStyleCode.isEmpty()) {
+                sb.append("**风格代号**: ").append(selectedStyleCode).append("\n");
+            }
         } else {
             // 根据平台自动推荐 UI 风格
             sb.append("**设计原则**:\n");
@@ -1693,6 +2082,53 @@ public class NLRequirementAnalyzer {
     }
 
     /**
+     * 基于需求文本检测项目能力（JeecgBoot 鉴权/支付等）
+     *
+     * 是什么：从需求中识别需要集成的业务能力代码。
+     * 做什么：输出与 JeecgBoot 能力清单一致的 capability code。
+     * 为什么：让鉴权/支付等能力可直接进入 G3 生成上下文。
+     *
+     * @param requirement 原始需求文本
+     * @return 能力代码列表
+     */
+    public List<String> detectProjectCapabilities(String requirement) {
+        if (requirement == null || requirement.isBlank()) {
+            return new ArrayList<>();
+        }
+
+        List<String> capabilities = new ArrayList<>();
+        String searchText = requirement.toLowerCase();
+
+        Map<String, List<String>> keywordMap = Map.ofEntries(
+                Map.entry("auth", List.of("登录", "鉴权", "权限", "jwt", "oauth", "认证", "单点登录", "sso")),
+                Map.entry("payment_alipay", List.of("支付宝", "alipay")),
+                Map.entry("payment_wechat", List.of("微信支付", "wechat", "wxpay")));
+
+        for (Map.Entry<String, List<String>> entry : keywordMap.entrySet()) {
+            for (String keyword : entry.getValue()) {
+                if (searchText.contains(keyword.toLowerCase())) {
+                    if (!capabilities.contains(entry.getKey())) {
+                        capabilities.add(entry.getKey());
+                    }
+                    break;
+                }
+            }
+        }
+
+        if (searchText.contains("jeecg") || searchText.contains("jeecgboot")) {
+            if (!capabilities.contains("auth")) {
+                capabilities.add("auth");
+            }
+        }
+
+        if (searchText.contains("支付") && capabilities.stream().noneMatch(code -> code.startsWith("payment_"))) {
+            capabilities.add("payment_alipay");
+        }
+
+        return capabilities;
+    }
+
+    /**
      * M3: 从分析结果和操作列表中提取 AI 能力需求
      * 通过关键词匹配识别用户需求中涉及的 AI 能力类型
      */
@@ -1846,7 +2282,7 @@ public class NLRequirementAnalyzer {
                 }
                 case 6 -> {
                     // 步骤6：Ultrathink 深度规划
-                    return executeStep6(requirement, context, progressCallback);
+                    return executeStep6(requirement, context, stepResults, stepFeedback, currentFeedback, progressCallback);
                 }
                 default -> throw new IllegalArgumentException("无效的步骤编号: " + step);
             }
@@ -1914,10 +2350,525 @@ public class NLRequirementAnalyzer {
             case 2 -> "实体关系建模: 基于Step 1的结果,识别数据实体和关系";
             case 3 -> "功能意图识别: 基于前面步骤的结果,分析功能模块和业务逻辑";
             case 4 -> "技术架构选型: 基于前面步骤的结果,推荐技术栈和架构方案";
-            case 5 -> "复杂度与风险评估: 基于前面步骤的结果,评估项目规模和风险";
+            case 5 -> "交互设计与体验评估: 基于前面步骤的结果,给出推荐设计风格与体验风险评估";
             case 6 -> "Ultrathink 深度规划: 基于前面所有步骤的结果,生成完整的技术实施蓝图";
             default -> "未知步骤";
         };
+    }
+
+    /**
+     * Step1 兜底结果
+     *
+     * 是什么：用于在 PM 解析结果为空时返回的结构化结果。
+     * 做什么：携带补齐后的 Step1 结果、兜底标记与假设说明。
+     * 为什么：避免 Step1 返回空结果导致用户无法理解分析结论。
+     */
+    record Step1FallbackResult(
+            Map<String, Object> result,
+            boolean usedFallback,
+            java.util.List<String> assumptions) {
+    }
+
+    /**
+     * Step1 兜底补齐
+     *
+     * 是什么：当 Step1 解析结果为空或字段缺失时的补齐逻辑。
+     * 做什么：补充 summary/entities/actions/businessScenario，并输出兜底假设。
+     * 为什么：确保“产品经理”步骤始终给出可读结论，减少用户困惑。
+     */
+    Step1FallbackResult ensureStep1Result(String requirement, Map<String, Object> analysisResult) {
+        Map<String, Object> result = analysisResult != null ? new LinkedHashMap<>(analysisResult) : new LinkedHashMap<>();
+        java.util.LinkedHashSet<String> assumptions = new java.util.LinkedHashSet<>();
+        boolean usedFallback = false;
+
+        String requirementText = requirement != null ? requirement.trim() : "";
+        String requirementLower = requirementText.toLowerCase();
+
+        String summary = getStringValue(result, "summary", "").trim();
+        if (summary.isBlank()) {
+            if (!requirementText.isBlank()) {
+                summary = requirementText.length() > 120 ? requirementText.substring(0, 120) + "..." : requirementText;
+                assumptions.add("需求解析未返回摘要，已使用原始需求生成摘要。");
+            } else {
+                summary = "需求解析完成，但未提供摘要信息。";
+                assumptions.add("需求文本为空，已返回默认摘要。");
+            }
+            result.put("summary", summary);
+            usedFallback = true;
+        }
+
+        java.util.LinkedHashSet<String> entityLabels = new java.util.LinkedHashSet<>();
+        Object rawEntities = result.get("entities");
+        if (rawEntities instanceof Map<?, ?> rawEntityMap) {
+            for (Object key : rawEntityMap.keySet()) {
+                if (key != null && !String.valueOf(key).isBlank()) {
+                    entityLabels.add(String.valueOf(key));
+                }
+            }
+        } else if (rawEntities instanceof java.util.List<?> entityList) {
+            for (Object item : entityList) {
+                if (item instanceof Map<?, ?> entityRecord) {
+                    Object name = entityRecord.get("name");
+                    Object displayName = entityRecord.get("displayName");
+                    Object description = entityRecord.get("description");
+                    if (displayName instanceof String text && !text.isBlank()) {
+                        entityLabels.add(text.trim());
+                    } else if (description instanceof String text && !text.isBlank()) {
+                        entityLabels.add(text.trim());
+                    } else if (name instanceof String text && !text.isBlank()) {
+                        entityLabels.add(text.trim());
+                    }
+                } else if (item != null && !String.valueOf(item).isBlank()) {
+                    entityLabels.add(String.valueOf(item).trim());
+                }
+            }
+        } else if (rawEntities instanceof String entityText && !entityText.isBlank()) {
+            entityLabels.add(entityText.trim());
+        }
+
+        if (entityLabels.isEmpty()) {
+            Step2FallbackResult fallbackEntities = ensureStep2Entities(requirementText, new HashMap<>(), new HashMap<>());
+            entityLabels.addAll(fallbackEntities.entities().keySet());
+            assumptions.addAll(fallbackEntities.assumptions());
+            usedFallback = true;
+        }
+        result.put("entities", new java.util.ArrayList<>(entityLabels));
+
+        java.util.LinkedHashSet<String> actionLabels = new java.util.LinkedHashSet<>();
+        Object rawActions = result.get("actions");
+        if (rawActions instanceof Map<?, ?> actionMap) {
+            for (Object key : actionMap.keySet()) {
+                if (key != null && !String.valueOf(key).isBlank()) {
+                    actionLabels.add(String.valueOf(key));
+                }
+            }
+        } else if (rawActions instanceof java.util.List<?> actionList) {
+            for (Object item : actionList) {
+                if (item instanceof Map<?, ?> actionRecord) {
+                    Object name = actionRecord.get("name");
+                    Object description = actionRecord.get("description");
+                    if (name instanceof String text && !text.isBlank()) {
+                        actionLabels.add(text.trim());
+                    } else if (description instanceof String text && !text.isBlank()) {
+                        actionLabels.add(text.trim());
+                    }
+                } else if (item != null && !String.valueOf(item).isBlank()) {
+                    actionLabels.add(String.valueOf(item).trim());
+                }
+            }
+        } else if (rawActions instanceof String actionText && !actionText.isBlank()) {
+            actionLabels.add(actionText.trim());
+        }
+
+        if (actionLabels.isEmpty()) {
+            Object rawOperations = result.get("operations");
+            if (rawOperations instanceof Map<?, ?> operationMap) {
+                for (Object key : operationMap.keySet()) {
+                    if (key != null && !String.valueOf(key).isBlank()) {
+                        actionLabels.add(String.valueOf(key));
+                    }
+                }
+            } else if (rawOperations instanceof java.util.List<?> operationList) {
+                for (Object item : operationList) {
+                    if (item instanceof Map<?, ?> operationRecord) {
+                        Object name = operationRecord.get("name");
+                        Object description = operationRecord.get("description");
+                        if (name instanceof String text && !text.isBlank()) {
+                            actionLabels.add(text.trim());
+                        } else if (description instanceof String text && !text.isBlank()) {
+                            actionLabels.add(text.trim());
+                        }
+                    } else if (item != null && !String.valueOf(item).isBlank()) {
+                        actionLabels.add(String.valueOf(item).trim());
+                    }
+                }
+            }
+        }
+
+        if (actionLabels.isEmpty()) {
+            Object rawFeatures = result.get("features");
+            if (rawFeatures instanceof Map<?, ?> featureMap) {
+                Object core = featureMap.get("core");
+                Object enhanced = featureMap.get("enhanced");
+                java.util.List<?> featureLists = java.util.List.of(core, enhanced);
+                for (Object featureGroup : featureLists) {
+                    if (featureGroup instanceof java.util.List<?> list) {
+                        for (Object item : list) {
+                            if (item instanceof Map<?, ?> featureRecord) {
+                                Object name = featureRecord.get("name");
+                                Object description = featureRecord.get("description");
+                                if (name instanceof String text && !text.isBlank()) {
+                                    actionLabels.add(text.trim());
+                                } else if (description instanceof String text && !text.isBlank()) {
+                                    actionLabels.add(text.trim());
+                                }
+                            } else if (item != null && !String.valueOf(item).isBlank()) {
+                                actionLabels.add(String.valueOf(item).trim());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (actionLabels.isEmpty()) {
+            if (containsAny(requirementLower, "交换", "交易", "订单", "支付", "旧物", "物品")) {
+                actionLabels.addAll(java.util.List.of("发布物品", "发起交换", "确认交易"));
+            } else if (containsAny(requirementLower, "海报", "poster", "宣传", "设计")) {
+                actionLabels.addAll(java.util.List.of("上传素材", "生成海报", "下载海报"));
+            } else if (containsAny(requirementLower, "流程", "逻辑", "判断", "步骤", "节点")) {
+                actionLabels.addAll(java.util.List.of("输入数据", "执行流程", "输出结果"));
+            } else if (containsAny(requirementLower, "城市", "指挥", "事件", "调度")) {
+                actionLabels.addAll(java.util.List.of("监测事件", "指挥处置", "生成报告"));
+            } else if (containsAny(requirementLower, "校园", "学生", "学校")) {
+                actionLabels.addAll(java.util.List.of("提交需求", "处理审核", "查看结果"));
+            } else if (containsAny(requirementLower, "社区", "帖子", "评论", "论坛")) {
+                actionLabels.addAll(java.util.List.of("发布内容", "浏览内容", "互动评论"));
+            } else {
+                actionLabels.addAll(java.util.List.of("创建", "查看", "管理"));
+            }
+            assumptions.add("需求解析未返回关键动作，已补充通用操作。");
+            usedFallback = true;
+        }
+
+        result.put("actions", new java.util.ArrayList<>(actionLabels));
+
+        String businessScenario = getStringValue(result, "businessScenario", "").trim();
+        if (businessScenario.isBlank()) {
+            Object scenarios = result.get("businessScenarios");
+            if (scenarios instanceof java.util.List<?> scenarioList && !scenarioList.isEmpty()) {
+                Object first = scenarioList.get(0);
+                if (first instanceof Map<?, ?> scenarioRecord) {
+                    Object userStory = scenarioRecord.get("userStory");
+                    Object description = scenarioRecord.get("description");
+                    Object name = scenarioRecord.get("name");
+                    if (userStory instanceof String text && !text.isBlank()) {
+                        businessScenario = text.trim();
+                    } else if (description instanceof String text && !text.isBlank()) {
+                        businessScenario = text.trim();
+                    } else if (name instanceof String text && !text.isBlank()) {
+                        businessScenario = text.trim();
+                    }
+                } else if (first != null && !String.valueOf(first).isBlank()) {
+                    businessScenario = String.valueOf(first).trim();
+                }
+            } else if (!requirementText.isBlank()) {
+                businessScenario = requirementText;
+            } else if (!summary.isBlank()) {
+                businessScenario = summary;
+            } else {
+                businessScenario = "用户在系统中完成核心任务。";
+            }
+            assumptions.add("需求解析未返回业务场景，已使用需求文本补齐。");
+            usedFallback = true;
+        }
+        result.put("businessScenario", businessScenario);
+
+        if (!assumptions.isEmpty()) {
+            result.put("assumptions", new java.util.ArrayList<>(assumptions));
+        }
+        result.put("usedFallback", usedFallback);
+        return new Step1FallbackResult(result, usedFallback, new java.util.ArrayList<>(assumptions));
+    }
+
+    /**
+     * Step2 实体兜底结果
+     *
+     * 是什么：用于在实体为空时返回“最小可用”的实体与关系集合。
+     * 做什么：携带兜底后的 entities / relationships / 假设说明。
+     * 为什么：避免 Step2 输出空实体导致分析流程中断或用户误以为系统失效。
+     */
+    record Step2FallbackResult(
+            Map<String, Object> entities,
+            Map<String, Object> relationships,
+            boolean usedFallback,
+            java.util.List<String> assumptions) {
+    }
+
+    /**
+     * Step2 空实体兜底
+     *
+     * 是什么：当 AI 返回实体为空时的兜底方案。
+     * 做什么：根据需求关键词补充最小实体/关系，并给出假设说明。
+     * 为什么：提升交互式分析的可用性，避免空结果导致用户迷惑。
+     */
+    Step2FallbackResult ensureStep2Entities(
+            String requirement,
+            Map<String, Object> entities,
+            Map<String, Object> relationships) {
+        Map<String, Object> safeEntities = entities != null ? entities : new HashMap<>();
+        Map<String, Object> safeRelationships = relationships != null ? relationships : new HashMap<>();
+        if (!safeEntities.isEmpty()) {
+            return new Step2FallbackResult(safeEntities, safeRelationships, false, java.util.List.of());
+        }
+
+        String requirementText = requirement != null ? requirement.trim() : "";
+        String requirementLower = requirementText.toLowerCase();
+        Map<String, Object> fallbackEntities = new LinkedHashMap<>();
+        Map<String, Object> fallbackRelationships = new LinkedHashMap<>();
+        java.util.List<String> assumptions = new java.util.ArrayList<>();
+
+        fallbackEntities.put("User", buildEntityDefinition(
+                "用户",
+                "用户实体",
+                "users",
+                java.util.List.of(
+                        buildField("id", "UUID", true, "主键"),
+                        buildField("username", "VARCHAR(50)", true, "用户名"),
+                        buildField("email", "VARCHAR(100)", true, "邮箱"),
+                        buildField("createdAt", "TIMESTAMP", true, "创建时间")),
+                "id",
+                java.util.List.of("username", "email")));
+        assumptions.add("需求描述较简略，已补充基础用户体系以便继续分析。");
+
+        boolean containsTrade = containsAnyKeyword(requirementText, requirementLower,
+                "交换", "交易", "订单", "支付", "旧物", "物品", "商品");
+        boolean containsPoster = containsAnyKeyword(requirementText, requirementLower,
+                "海报", "poster", "宣传", "设计");
+        boolean containsFlow = containsAnyKeyword(requirementText, requirementLower,
+                "流程", "步骤", "节点", "逻辑", "流程图");
+        boolean containsCity = containsAnyKeyword(requirementText, requirementLower,
+                "城市", "大脑", "指挥", "交通", "应急");
+        boolean containsCampus = containsAnyKeyword(requirementText, requirementLower,
+                "校园", "学生", "学校");
+        boolean containsCommunity = containsAnyKeyword(requirementText, requirementLower,
+                "社区", "论坛", "帖子", "评论");
+        boolean containsLocation = containsAnyKeyword(requirementText, requirementLower,
+                "地图", "位置", "地理", "定位", "gps");
+
+        if (containsTrade) {
+            java.util.List<Map<String, Object>> fields = new java.util.ArrayList<>(java.util.List.of(
+                    buildField("id", "UUID", true, "主键"),
+                    buildField("title", "VARCHAR(255)", true, "物品标题"),
+                    buildField("description", "TEXT", false, "物品描述"),
+                    buildField("status", "VARCHAR(50)", true, "物品状态"),
+                    buildField("ownerId", "UUID", true, "发布用户ID"),
+                    buildField("createdAt", "TIMESTAMP", true, "创建时间")));
+            if (containsLocation) {
+                fields.add(buildField("location", "VARCHAR(255)", false, "位置描述"));
+            }
+            fallbackEntities.put("Item", buildEntityDefinition(
+                    "物品",
+                    "闲置物品/交换标的",
+                    "items",
+                    fields,
+                    "id",
+                    java.util.List.of("ownerId", "status")));
+            fallbackRelationships.put("UserItems", buildRelationshipDefinition(
+                    "User",
+                    "Item",
+                    "one-to-many",
+                    "owner_id",
+                    "用户发布多个物品"));
+            assumptions.add("根据“旧物/交换/交易”关键词补充物品实体及用户关联关系。");
+        } else if (containsPoster) {
+            fallbackEntities.put("Poster", buildEntityDefinition(
+                    "海报",
+                    "宣传海报",
+                    "posters",
+                    java.util.List.of(
+                            buildField("id", "UUID", true, "主键"),
+                            buildField("title", "VARCHAR(255)", true, "海报标题"),
+                            buildField("imageUrl", "VARCHAR(500)", false, "海报图片链接"),
+                            buildField("style", "VARCHAR(100)", false, "设计风格"),
+                            buildField("ownerId", "UUID", true, "创建用户ID"),
+                            buildField("createdAt", "TIMESTAMP", true, "创建时间")),
+                    "id",
+                    java.util.List.of("ownerId")));
+            fallbackRelationships.put("UserPosters", buildRelationshipDefinition(
+                    "User",
+                    "Poster",
+                    "one-to-many",
+                    "owner_id",
+                    "用户创建多个海报"));
+            assumptions.add("根据“海报/设计”关键词补充海报实体与用户关联关系。");
+        } else if (containsFlow) {
+            fallbackEntities.put("FlowNode", buildEntityDefinition(
+                    "流程节点",
+                    "业务流程节点",
+                    "flow_nodes",
+                    java.util.List.of(
+                            buildField("id", "UUID", true, "主键"),
+                            buildField("name", "VARCHAR(200)", true, "节点名称"),
+                            buildField("stepIndex", "INTEGER", true, "步骤序号"),
+                            buildField("createdAt", "TIMESTAMP", true, "创建时间")),
+                    "id",
+                    java.util.List.of("stepIndex")));
+            fallbackRelationships.put("UserFlowNodes", buildRelationshipDefinition(
+                    "User",
+                    "FlowNode",
+                    "one-to-many",
+                    "user_id",
+                    "用户创建多个流程节点"));
+            assumptions.add("根据“流程/步骤”关键词补充流程节点实体。");
+        } else if (containsCity) {
+            fallbackEntities.put("Event", buildEntityDefinition(
+                    "城市事件",
+                    "城市级事件/告警",
+                    "city_events",
+                    java.util.List.of(
+                            buildField("id", "UUID", true, "主键"),
+                            buildField("title", "VARCHAR(255)", true, "事件标题"),
+                            buildField("severity", "VARCHAR(50)", false, "事件等级"),
+                            buildField("status", "VARCHAR(50)", true, "事件状态"),
+                            buildField("occurredAt", "TIMESTAMP", true, "发生时间")),
+                    "id",
+                    java.util.List.of("status", "occurredAt")));
+            assumptions.add("根据“城市/指挥”关键词补充城市事件实体。");
+        } else if (containsCampus) {
+            fallbackEntities.put("Student", buildEntityDefinition(
+                    "学生",
+                    "校园用户",
+                    "students",
+                    java.util.List.of(
+                            buildField("id", "UUID", true, "主键"),
+                            buildField("name", "VARCHAR(50)", true, "学生姓名"),
+                            buildField("grade", "VARCHAR(20)", false, "年级"),
+                            buildField("createdAt", "TIMESTAMP", true, "创建时间")),
+                    "id",
+                    java.util.List.of("grade")));
+            assumptions.add("根据“校园/学生”关键词补充学生实体。");
+        } else if (containsCommunity) {
+            fallbackEntities.put("Post", buildEntityDefinition(
+                    "帖子",
+                    "社区帖子",
+                    "posts",
+                    java.util.List.of(
+                            buildField("id", "UUID", true, "主键"),
+                            buildField("title", "VARCHAR(255)", true, "标题"),
+                            buildField("content", "TEXT", false, "内容"),
+                            buildField("authorId", "UUID", true, "作者ID"),
+                            buildField("createdAt", "TIMESTAMP", true, "创建时间")),
+                    "id",
+                    java.util.List.of("authorId")));
+            fallbackRelationships.put("UserPosts", buildRelationshipDefinition(
+                    "User",
+                    "Post",
+                    "one-to-many",
+                    "author_id",
+                    "用户发布多个帖子"));
+            assumptions.add("根据“社区/论坛”关键词补充帖子实体。");
+        } else if (containsLocation) {
+            fallbackEntities.put("Location", buildEntityDefinition(
+                    "位置",
+                    "地理位置",
+                    "locations",
+                    java.util.List.of(
+                            buildField("id", "UUID", true, "主键"),
+                            buildField("name", "VARCHAR(200)", true, "位置名称"),
+                            buildField("latitude", "DECIMAL(9,6)", true, "纬度"),
+                            buildField("longitude", "DECIMAL(9,6)", true, "经度"),
+                            buildField("createdAt", "TIMESTAMP", true, "创建时间")),
+                    "id",
+                    java.util.List.of("latitude", "longitude")));
+            assumptions.add("根据“位置/地图”关键词补充位置实体。");
+        } else {
+            fallbackEntities.put("Record", buildEntityDefinition(
+                    "业务记录",
+                    "通用业务记录",
+                    "records",
+                    java.util.List.of(
+                            buildField("id", "UUID", true, "主键"),
+                            buildField("title", "VARCHAR(255)", true, "记录标题"),
+                            buildField("status", "VARCHAR(50)", true, "状态"),
+                            buildField("createdAt", "TIMESTAMP", true, "创建时间")),
+                    "id",
+                    java.util.List.of("status")));
+            assumptions.add("需求未包含明显业务对象，已补充通用记录实体。");
+        }
+
+        if (fallbackEntities.size() == 1) {
+            assumptions.add("建议补充明确的业务对象与数据字段，以便完善数据模型。");
+        }
+
+        return new Step2FallbackResult(fallbackEntities, fallbackRelationships, true, assumptions);
+    }
+
+    /**
+     * 构建实体定义
+     *
+     * 是什么：生成 Step2 实体的结构化描述。
+     * 做什么：封装实体描述、表名、字段、主键与索引信息。
+     * 为什么：保证前端展示与后端存储的数据结构一致。
+     */
+    private Map<String, Object> buildEntityDefinition(
+            String displayName,
+            String description,
+            String tableName,
+            java.util.List<Map<String, Object>> fields,
+            String primaryKey,
+            java.util.List<String> indexes) {
+        Map<String, Object> entity = new LinkedHashMap<>();
+        entity.put("displayName", displayName);
+        entity.put("description", description);
+        entity.put("tableName", tableName);
+        entity.put("fields", fields);
+        entity.put("primaryKey", primaryKey);
+        entity.put("indexes", indexes);
+        return entity;
+    }
+
+    /**
+     * 构建字段定义
+     *
+     * 是什么：生成实体字段的结构化描述。
+     * 做什么：统一字段 name/type/required/description 格式。
+     * 为什么：避免前端解析字段结构时出现不一致。
+     */
+    private Map<String, Object> buildField(String name, String type, boolean required, String description) {
+        Map<String, Object> field = new LinkedHashMap<>();
+        field.put("name", name);
+        field.put("type", type);
+        field.put("required", required);
+        field.put("description", description);
+        return field;
+    }
+
+    /**
+     * 构建关系定义
+     *
+     * 是什么：生成实体关系的结构化描述。
+     * 做什么：统一 from/to/type/foreignKey/description 格式。
+     * 为什么：便于前端绘制关系并提示业务含义。
+     */
+    private Map<String, Object> buildRelationshipDefinition(
+            String from,
+            String to,
+            String type,
+            String foreignKey,
+            String description) {
+        Map<String, Object> relationship = new LinkedHashMap<>();
+        relationship.put("from", from);
+        relationship.put("to", to);
+        relationship.put("type", type);
+        relationship.put("foreignKey", foreignKey);
+        relationship.put("description", description);
+        return relationship;
+    }
+
+    /**
+     * 判断文本是否包含关键词
+     *
+     * 是什么：关键字匹配工具。
+     * 做什么：同时检查原始文本与小写文本，兼容中英文。
+     * 为什么：为 Step2 兜底实体选择提供轻量语义判断。
+     */
+    private boolean containsAnyKeyword(String origin, String lowerOrigin, String... keywords) {
+        if ((origin == null || origin.isBlank()) && (lowerOrigin == null || lowerOrigin.isBlank())) {
+            return false;
+        }
+        for (String keyword : keywords) {
+            if (keyword == null || keyword.isBlank()) {
+                continue;
+            }
+            if (origin != null && origin.contains(keyword)) {
+                return true;
+            }
+            if (lowerOrigin != null && lowerOrigin.contains(keyword.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Object executeStep1(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
@@ -1935,6 +2886,8 @@ public class NLRequirementAnalyzer {
         // 使用专属 Prompt 调用 AI（Step 1：产品经理视角）
         String analysisJson = callAIForAnalysisWithRetry(context, 1, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
+        Step1FallbackResult fallbackResult = ensureStep1Result(requirement, analysisResult);
+        Map<String, Object> normalizedResult = fallbackResult.result();
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(1)
@@ -1943,11 +2896,11 @@ public class NLRequirementAnalyzer {
                 .description("AI已成功理解您的需求")
                 .detail("需求解析完成，正在提取结构化信息...")
                 .progress(100)
-                .result(analysisResult)
+                .result(normalizedResult)
                 .timestamp(Instant.now())
                 .build());
 
-        return analysisResult;
+        return normalizedResult;
     }
 
     private Object executeStep2(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
@@ -1968,13 +2921,21 @@ public class NLRequirementAnalyzer {
         Map<String, Object> entities = extractMap(analysisResult, "entities");
         Map<String, Object> relationships = extractMap(analysisResult, "relationships");
 
+        Step2FallbackResult fallbackResult = ensureStep2Entities(requirement, entities, relationships);
+        entities = fallbackResult.entities();
+        relationships = fallbackResult.relationships();
+
         Thread.sleep(500);
 
-        Map<String, Object> result = Map.of(
+        Map<String, Object> result = new HashMap<>(Map.of(
                 "entities", entities,
                 "relationships", relationships,
                 "entitiesCount", entities.size(),
-                "relationshipsCount", relationships.size());
+                "relationshipsCount", relationships.size()));
+        if (!fallbackResult.assumptions().isEmpty()) {
+            result.put("assumptions", fallbackResult.assumptions());
+        }
+        result.put("usedFallback", fallbackResult.usedFallback());
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(2)
@@ -2052,7 +3013,7 @@ public class NLRequirementAnalyzer {
         // 使用专属 Prompt 调用 AI（Step 4：技术负责人视角）
         String analysisJson = callAIForAnalysisWithRetry(context, 4, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
-        TechStackRecommendation techStack = recommendTechStack(analysisResult);
+        TechStackRecommendation techStack = recommendTechStack(analysisResult, requirement);
 
         Thread.sleep(300);
 
@@ -2083,15 +3044,15 @@ public class NLRequirementAnalyzer {
             throws Exception {
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(5)
-                .stepName("复杂度与风险评估")
+                .stepName("交互设计与体验评估")
                 .status(AnalysisProgressMessage.StepStatus.RUNNING)
-                .description("正在从AI分析结果中提取复杂度评估...")
-                .detail("基于前面步骤的结果,评估项目规模和风险")
+                .description("正在生成交互设计选型与体验评估...")
+                .detail("基于前面步骤的结果,推荐设计风格并评估体验风险")
                 .progress(85)
                 .timestamp(Instant.now())
                 .build());
 
-        // 使用专属 Prompt 调用 AI（Step 5：安全工程师视角）
+        // 使用专属 Prompt 调用 AI（Step 5：交互设计师视角）
         String analysisJson = callAIForAnalysisWithRetry(context, 5, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
         ComplexityAssessment complexity = assessComplexity(analysisResult);
@@ -2099,20 +3060,61 @@ public class NLRequirementAnalyzer {
 
         Thread.sleep(300);
 
-        Map<String, Object> result = Map.of(
-                "complexityLevel", complexity.getLevel().name(),
-                "estimatedDays", complexity.getEstimatedDays(),
-                "estimatedLines", complexity.getEstimatedLines(),
-                "confidenceScore", confidenceScore,
-                "description", complexity.getDescription());
+        DesignStyle selectedStyle = resolveStep5SelectedStyle(analysisResult, requirement, context);
+
+        String intent = getStringValue(analysisResult, "intent", "");
+        String branch = getStringValue(analysisResult, "branch", "");
+        if (branch.isBlank() && !intent.isBlank()) {
+            branch = switch (intent) {
+                case "CLONE_EXISTING_WEBSITE" -> "CLONE";
+                case "DESIGN_FROM_SCRATCH" -> "DESIGN";
+                case "HYBRID_CLONE_AND_CUSTOMIZE" -> "HYBRID";
+                default -> "";
+            };
+        }
+
+        double designConfidence =
+                analysisResult.get("confidence") instanceof Number
+                        ? ((Number) analysisResult.get("confidence")).doubleValue()
+                        : 0.0;
+        if (designConfidence <= 0.0 && confidenceScore != null && confidenceScore.compareTo(BigDecimal.ZERO) > 0) {
+            designConfidence = confidenceScore.doubleValue();
+        }
+        if (designConfidence <= 0.0) designConfidence = 0.8;
+
+        Map<String, Object> result = new HashMap<>();
+        if (!intent.isBlank()) result.put("intent", intent);
+        if (!branch.isBlank()) result.put("branch", branch);
+        result.put("confidence", designConfidence);
+
+        result.put("selectedStyleId", selectedStyle.getIdentifier());
+        String selectedStyleReason = getStringValue(analysisResult, "selectedStyleReason", "");
+        if (!selectedStyleReason.isBlank()) result.put("selectedStyleReason", selectedStyleReason);
+        result.put("styleVariants", buildStep5StyleVariants(selectedStyle));
+
+        // 体验复杂度与交付风险（保持前端兼容字段名）
+        result.put("complexityLevel", complexity.getLevel().name());
+        result.put("estimatedDays", complexity.getEstimatedDays());
+        result.put("estimatedLines", complexity.getEstimatedLines());
+        result.put("confidenceScore", confidenceScore);
+        result.put("description", complexity.getDescription());
+
+        Object riskFactors = analysisResult.get("riskFactors");
+        if (riskFactors != null) result.put("riskFactors", riskFactors);
+        Object mitigations = analysisResult.get("mitigations");
+        if (mitigations != null) result.put("mitigations", mitigations);
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(5)
-                .stepName("复杂度与风险评估")
+                .stepName("交互设计与体验评估")
                 .status(AnalysisProgressMessage.StepStatus.COMPLETED)
-                .description("评估完成")
-                .detail(String.format("复杂度: %s，预计 %d 天，约 %d 行代码",
-                        complexity.getLevel(), complexity.getEstimatedDays(), complexity.getEstimatedLines()))
+                .description("交互选型结论已生成")
+                .detail(String.format("推荐风格: %s-%s | 复杂度: %s，预计 %d 天，约 %d 行代码",
+                        selectedStyle.getIdentifier(),
+                        selectedStyle.getDisplayName(),
+                        complexity.getLevel(),
+                        complexity.getEstimatedDays(),
+                        complexity.getEstimatedLines()))
                 .progress(100)
                 .result(result)
                 .timestamp(Instant.now())
@@ -2121,8 +3123,13 @@ public class NLRequirementAnalyzer {
         return result;
     }
 
-    private Object executeStep6(String requirement, String context, Consumer<AnalysisProgressMessage> progressCallback)
-            throws Exception {
+    private Object executeStep6(
+            String requirement,
+            String context,
+            Map<Integer, Object> stepResults,
+            Map<Integer, String> stepFeedback,
+            String currentFeedback,
+            Consumer<AnalysisProgressMessage> progressCallback) throws Exception {
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(6)
                 .stepName("Ultrathink 深度规划")
@@ -2136,15 +3143,37 @@ public class NLRequirementAnalyzer {
         // 使用专属 Prompt 调用 AI（Step 6：首席架构师视角）
         String analysisJson = callAIForAnalysisWithRetry(context, 6, progressCallback);
         Map<String, Object> analysisResult = parseAnalysisResult(analysisJson);
-        TechStackRecommendation techStack = recommendTechStack(analysisResult);
-        ComplexityAssessment complexity = assessComplexity(analysisResult);
-        String technicalBlueprint = generateTechnicalBlueprint(analysisResult, techStack, complexity);
+
+        // 优先使用模型返回的 blueprint（包含 Step1-5 上下文与用户风格选择，信息更完整）
+        String blueprintFromAi = getStringValue(analysisResult, "blueprint", "");
+        int sectionsFromAi = getIntValue(analysisResult, "sections", 0);
+
+        Map<String, Object> mergedContext = AnalysisStepResultMerger.mergeStepResults(
+                stepResults, stepFeedback, currentFeedback);
+        Map<String, Object> blueprintContext = mergedContext.isEmpty() ? analysisResult : mergedContext;
+
+        String technicalBlueprint;
+        int blueprintSections;
+        if (blueprintFromAi != null
+                && !blueprintFromAi.isBlank()
+                && !AnalysisStepResultMerger.shouldOverrideBlueprint(blueprintFromAi, blueprintContext)) {
+            technicalBlueprint = blueprintFromAi;
+            blueprintSections = sectionsFromAi > 0 ? sectionsFromAi : 6;
+        } else {
+            // 兜底：若模型未返回 blueprint，则使用本地规则生成（信息可能不如模型完整）
+            TechStackRecommendation techStack = recommendTechStack(blueprintContext, requirement);
+            ComplexityAssessment complexity = assessComplexity(blueprintContext);
+            technicalBlueprint = generateTechnicalBlueprint(blueprintContext, techStack, complexity);
+            blueprintSections = 10;
+        }
+
+        technicalBlueprint = appendUserFeedbackToBlueprint(technicalBlueprint, currentFeedback);
 
         Thread.sleep(800);
 
         Map<String, Object> result = Map.of(
                 "blueprint", technicalBlueprint,
-                "sections", 10);
+                "sections", blueprintSections);
 
         progressCallback.accept(AnalysisProgressMessage.builder()
                 .step(6)
@@ -2158,6 +3187,31 @@ public class NLRequirementAnalyzer {
                 .build());
 
         return result;
+    }
+
+    /**
+     * 追加用户补充约束到蓝图
+     *
+     * 是什么：将用户在 Step6 的反馈追加到蓝图末尾。
+     * 做什么：把多行反馈转换为条目列表，便于后续生成引擎读取。
+     * 为什么：确保用户通过聊天修改的上下文不会被蓝图忽略。
+     */
+    private String appendUserFeedbackToBlueprint(String blueprint, String userFeedback) {
+        if (blueprint == null) {
+            return "";
+        }
+        if (userFeedback == null || userFeedback.isBlank()) {
+            return blueprint;
+        }
+        StringBuilder sb = new StringBuilder(blueprint);
+        sb.append("\n\n## 用户补充约束\n");
+        for (String line : userFeedback.split("\\r?\\n")) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                sb.append("- ").append(trimmed).append("\n");
+            }
+        }
+        return sb.toString();
     }
 
     // ========================================================================
@@ -2262,7 +3316,44 @@ public class NLRequirementAnalyzer {
         Map<String, Object> result = (Map<String, Object>) step1Result;
 
         // 产品摘要
-        builder.productSummary(getStringOrNull(result, "summary"));
+        Object summaryValue = result.get("summary");
+        String summary = null;
+        if (summaryValue instanceof String text) {
+            summary = text.trim();
+        } else if (summaryValue instanceof List<?> summaryList) {
+            java.util.List<String> summaryParts = new java.util.ArrayList<>();
+            for (Object item : summaryList) {
+                if (item == null) {
+                    continue;
+                }
+                String text = String.valueOf(item).trim();
+                if (!text.isBlank()) {
+                    summaryParts.add(text);
+                }
+            }
+            if (!summaryParts.isEmpty()) {
+                summary = String.join("；", summaryParts);
+            }
+        } else if (summaryValue != null) {
+            String text = String.valueOf(summaryValue).trim();
+            if (!text.isBlank()) {
+                summary = text;
+            }
+        }
+        if (summary == null || summary.isBlank()) {
+            Object scenarioValue = result.get("businessScenario");
+            if (scenarioValue instanceof String text && !text.isBlank()) {
+                summary = text.trim();
+            } else if (scenarioValue != null) {
+                String text = String.valueOf(scenarioValue).trim();
+                if (!text.isBlank()) {
+                    summary = text;
+                }
+            }
+        }
+        if (summary != null && !summary.isBlank()) {
+            builder.productSummary(summary);
+        }
 
         // 目标用户
         if (result.get("targetUsers") instanceof Map) {
@@ -2280,22 +3371,49 @@ public class NLRequirementAnalyzer {
         if (result.get("features") instanceof Map) {
             Map<String, Object> features = (Map<String, Object>) result.get("features");
             if (features.get("core") instanceof List) {
-                List<Map<String, Object>> coreList = (List<Map<String, Object>>) features.get("core");
-                List<String> coreNames = coreList.stream()
-                        .map(f -> getStringOrNull(f, "name"))
-                        .filter(n -> n != null)
-                        .toList();
+                List<?> coreList = (List<?>) features.get("core");
+                List<String> coreNames = new java.util.ArrayList<>();
+                for (Object item : coreList) {
+                    if (item instanceof Map<?, ?> feature) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> featureMap = (Map<String, Object>) feature;
+                        String name = getStringOrNull(featureMap, "name");
+                        if (name == null) {
+                            name = getStringOrNull(featureMap, "description");
+                        }
+                        if (name != null && !name.isBlank()) {
+                            coreNames.add(name);
+                        }
+                    } else if (item instanceof String text && !text.isBlank()) {
+                        coreNames.add(text.trim());
+                    }
+                }
                 builder.coreFeatures(coreNames);
             }
         }
 
         // 实体列表
         if (result.get("entities") instanceof List) {
-            List<Map<String, Object>> entityList = (List<Map<String, Object>>) result.get("entities");
-            List<String> entityNames = entityList.stream()
-                    .map(e -> getStringOrNull(e, "name"))
-                    .filter(n -> n != null)
-                    .toList();
+            List<?> entityList = (List<?>) result.get("entities");
+            List<String> entityNames = new java.util.ArrayList<>();
+            for (Object item : entityList) {
+                if (item instanceof Map<?, ?> entity) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> entityMap = (Map<String, Object>) entity;
+                    String name = getStringOrNull(entityMap, "name");
+                    if (name == null) {
+                        name = getStringOrNull(entityMap, "displayName");
+                    }
+                    if (name == null) {
+                        name = getStringOrNull(entityMap, "description");
+                    }
+                    if (name != null && !name.isBlank()) {
+                        entityNames.add(name);
+                    }
+                } else if (item instanceof String text && !text.isBlank()) {
+                    entityNames.add(text.trim());
+                }
+            }
             builder.entities(entityNames);
         }
     }
@@ -2387,7 +3505,7 @@ public class NLRequirementAnalyzer {
     }
 
     /**
-     * 提取 Step 5 摘要（安全工程师视角）
+     * 提取 Step 5 摘要（交互设计师视角）
      */
     @SuppressWarnings("unchecked")
     private void extractStep5Summary(Object step5Result,
@@ -2403,6 +3521,16 @@ public class NLRequirementAnalyzer {
         Object confidence = result.get("confidenceScore");
         if (confidence instanceof Number) {
             builder.confidenceScore(((Number) confidence).doubleValue());
+        }
+
+        // 交互选型结论：设计意图与推荐风格（供压缩上下文/下游生成使用）
+        String intent = getStringOrNull(result, "intent");
+        if (intent != null) {
+            builder.designIntent(intent);
+        }
+        String selectedStyleId = getStringOrNull(result, "selectedStyleId");
+        if (selectedStyleId != null && !selectedStyleId.isBlank()) {
+            builder.recommendedStyles(java.util.List.of(selectedStyleId));
         }
     }
 

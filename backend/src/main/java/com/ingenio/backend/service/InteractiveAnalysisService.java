@@ -3,6 +3,7 @@ package com.ingenio.backend.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.ingenio.backend.dto.response.AnalysisProgressMessage;
 import com.ingenio.backend.entity.InteractiveAnalysisSessionEntity;
+import com.ingenio.backend.enums.DesignStyle;
 import com.ingenio.backend.mapper.InteractiveAnalysisSessionMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -115,9 +116,10 @@ public class InteractiveAnalysisService {
      *
      * @param sessionId 会话ID
      * @param step      确认的步骤编号
+     * @param selectedStyleId Step5 设计风格选择（可选）
      */
     @Transactional
-    public void confirmStep(String sessionId, int step) {
+    public void confirmStep(String sessionId, int step, String selectedStyleId) {
         // 重试机制：最多等待3秒，每500ms检查一次
         // 解决前端收到COMPLETED消息后立即发送确认请求，但后端事务还未提交的竞态问题
         int maxRetries = 6;
@@ -164,6 +166,61 @@ public class InteractiveAnalysisService {
         }
 
         log.info("用户确认步骤 {}: sessionId={}, 当前状态={}", step, sessionId, session.getStatus());
+
+        // Step5：若用户在前端选择了设计风格，则写入结果用于后续 Step6 蓝图生成
+        if (step == 5 && selectedStyleId != null && !selectedStyleId.isBlank()) {
+            DesignStyle style = DesignStyle.fromIdentifier(selectedStyleId.trim().toUpperCase());
+            if (style == null) {
+                log.warn("Step5 风格选择无效，忽略: sessionId={}, selectedStyleId={}", sessionId, selectedStyleId);
+            } else {
+                // 1) 写入 Step5 结果（供前端回看 + Step6 上下文拼接）
+                Object step5Result = session.getStepResults().get(5);
+                if (step5Result instanceof Map<?, ?> rawMap) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> resultMap = (Map<String, Object>) rawMap;
+                    resultMap.put("selectedStyleId", style.getIdentifier());
+                    resultMap.put("selectedStyleCode", style.getCode());
+                    resultMap.put("selectedStyleName", style.getDisplayName());
+
+                    // 2) 将用户选择置顶，保证前端默认高亮与“结论”一致
+                    Object variants = resultMap.get("styleVariants");
+                    if (variants instanceof java.util.List<?> list && !list.isEmpty()) {
+                        java.util.List<Object> reordered = new java.util.ArrayList<>(list.size());
+
+                        // 先放入命中的项
+                        for (Object item : list) {
+                            if (item instanceof Map<?, ?> vMap) {
+                                Object id = vMap.get("styleId");
+                                if (id != null && style.getIdentifier().equals(String.valueOf(id))) {
+                                    reordered.add(item);
+                                }
+                            }
+                        }
+                        // 再放入其他项（保持原顺序）
+                        for (Object item : list) {
+                            if (item instanceof Map<?, ?> vMap) {
+                                Object id = vMap.get("styleId");
+                                if (id != null && style.getIdentifier().equals(String.valueOf(id))) {
+                                    continue;
+                                }
+                            }
+                            reordered.add(item);
+                        }
+                        resultMap.put("styleVariants", reordered);
+                    }
+
+                    session.getStepResults().put(5, resultMap);
+                }
+
+                // 3) 写入 Step5 用户反馈（供 Step6 上下文拼接，便于模型稳定采纳）
+                if (session.getStepFeedback() != null) {
+                    session.getStepFeedback().put(5, "用户确认设计风格：" + style.getIdentifier() + "-" + style.getDisplayName());
+                }
+
+                log.info("Step5 已保存用户风格选择: sessionId={}, style={}-{}",
+                        sessionId, style.getIdentifier(), style.getDisplayName());
+            }
+        }
 
         // 如果是最后一步,标记为完成
         if (step == 6) {

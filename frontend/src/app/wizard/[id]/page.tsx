@@ -8,7 +8,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
@@ -19,15 +19,17 @@ import {
   FileText,
   Sparkles,
   Palette,
-  Clock
+  Clock,
+  Download
 } from 'lucide-react';
-import { getAppSpec, type AppSpec } from '@/lib/api/appspec';
+import { getAppSpec, getBackendPackageDownload, type AppSpec } from '@/lib/api/appspec';
 import {
   createAsyncGenerationTask,
   type AsyncGenerateRequest,
   type TaskStatusResponse
 } from '@/lib/api/generate';
 import { updateProjectRequirement, regenerateProject } from '@/lib/api/projects'; // Import new API methods
+import { downloadG3Artifacts, getG3JobStatus } from '@/lib/api/g3';
 import { GenerationConfig, AgentType, AgentState, type AgentExecutionStatus } from '@/types/wizard';
 import { SplitLayout } from '@/components/wizard/split-layout';
 import { ConfigurationPanel } from '@/components/wizard/configuration-panel'; // Ensure this is imported
@@ -39,8 +41,9 @@ import { GenerationStats, type GenerationStats as GenerationStatsType } from '@/
 import { useGenerationTask } from '@/hooks/use-generation-task';
 import { useGenerationWebSocket } from '@/hooks/use-generation-websocket';
 import { useToast } from '@/hooks/use-toast';
-import { getToken } from '@/lib/auth/token';
-import { getApiBaseUrl } from '@/lib/api/base-url';
+import { createOpenLovableZip } from '@/lib/api/openlovable';
+import { generatePrototypeForAppSpec } from '@/lib/api/plan-routing';
+import { G3Console } from '@/components/g3/g3-console';
 
 /**
  * 生成任务状态
@@ -67,6 +70,7 @@ interface AppSpecWithPlan {
   requirement?: string;
   model?: string;
   qualityScore?: number;
+  metadata?: Record<string, unknown>;
   planResult?: {
     modules: Array<{
       name: string;
@@ -84,7 +88,9 @@ interface AppSpecWithPlan {
 export default function WizardPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const appSpecId = params.id as string;
+  const g3JobIdFromQuery = searchParams.get('g3JobId');
   const { toast } = useToast();
 
   // 使用任务状态管理Hook
@@ -159,13 +165,21 @@ export default function WizardPage() {
   const [appSpec, setAppSpec] = useState<AppSpecWithPlan | null>(null);
   const [pageLoading, setPageLoading] = useState(true);
   
+  // G3 任务恢复
+  const [g3JobId, setG3JobId] = useState<string | null>(null);
+  const [g3Status, setG3Status] = useState<'COMPLETED' | 'FAILED' | 'RUNNING' | null>(null);
+
   // 当前UI展示的步骤索引 (0: Plan, 1: Execute, 2: Validate)
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   // 是否显示成功完成页面
   const [isSuccessView, setIsSuccessView] = useState(false);
 
-  // 处理下载
-  const handleDownload = useCallback(async () => {
+  // 下载状态
+  const [isDownloadingFrontend, setIsDownloadingFrontend] = useState(false);
+  const [isDownloadingBackend, setIsDownloadingBackend] = useState(false);
+
+  // 下载前端代码包（OpenLovable）
+  const handleFrontendDownload = useCallback(async () => {
     const currentAppSpecId = task.appSpecId || taskStatus?.appSpecId || appSpec?.id || appSpecId;
     if (!currentAppSpecId) {
       toast({
@@ -176,64 +190,191 @@ export default function WizardPage() {
       return;
     }
 
+    let sandboxId =
+      typeof appSpec?.metadata?.['sandboxId'] === 'string'
+        ? (appSpec.metadata?.['sandboxId'] as string)
+        : null;
+
+    setIsDownloadingFrontend(true);
     try {
-      toast({
-        title: '正在打包下载...',
-        description: '请稍候，正在生成ZIP文件',
-      });
-
-      const token = getToken();
-      const baseUrl = getApiBaseUrl();
-      const url = `${baseUrl}/v1/timemachine/appspec/${currentAppSpecId}/download-latest`;
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': token || '',
-        },
-      });
-
-      if (!response.ok) {
-        const text = await response.text();
-        console.error('Download failed:', text);
-        throw new Error(response.statusText || '下载失败');
-      }
-
-      const blob = await response.blob();
-      const downloadUrl = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = downloadUrl;
-
-      // 从响应头获取文件名
-      const disposition = response.headers.get('Content-Disposition');
-      let filename = `ingenio-app-${currentAppSpecId}.zip`;
-      if (disposition && disposition.indexOf('attachment') !== -1) {
-        const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-        const matches = filenameRegex.exec(disposition);
-        if (matches != null && matches[1]) {
-          filename = matches[1].replace(/['"]/g, '');
+      /**
+       * 触发浏览器下载（封装为函数便于失败后重试）
+       *
+       * 是什么：调用后端 create-zip 生成 dataUrl，然后创建 <a> 触发下载。
+       * 做什么：把“生成 zip + 下载”这段逻辑可复用化，支持“先失败再重试”。
+       * 为什么：OpenLovable 沙箱可能已过期/不可达，需要重建后再下载。
+       */
+      const downloadZipForSandbox = async (resolvedSandboxId: string): Promise<string> => {
+        const resp = await createOpenLovableZip(resolvedSandboxId);
+        if (!resp.success || !resp.data?.dataUrl) {
+          throw new Error(resp.error || resp.message || '生成ZIP失败');
         }
+
+        const dataUrl = resp.data.dataUrl;
+        const fileName = resp.data.fileName || `frontend-${appSpecId}.zip`;
+
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        return fileName;
+      };
+
+      // 缺失 sandboxId 时，自动触发后端生成原型并写回 AppSpec（避免用户必须手动走确认流程）
+      if (!sandboxId) {
+        const genResp = await generatePrototypeForAppSpec(currentAppSpecId);
+        const generatedSandboxId = genResp.data?.sandboxId;
+        const previewUrl = genResp.data?.previewUrl;
+        if (!genResp.success || !generatedSandboxId || !previewUrl) {
+          throw new Error(genResp.error || genResp.message || '自动生成原型失败');
+        }
+
+        sandboxId = generatedSandboxId;
+        setAppSpec((prev) => {
+          if (!prev) return prev;
+          const nextMetadata: Record<string, unknown> = {
+            ...(prev.metadata ?? {}),
+            sandboxId: generatedSandboxId,
+            sandboxProvider: genResp.data?.provider || 'e2b',
+          };
+          return {
+            ...prev,
+            metadata: nextMetadata,
+            frontendPrototypeUrl: previewUrl,
+          };
+        });
       }
 
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(downloadUrl);
-      document.body.removeChild(a);
+      if (!sandboxId) {
+        throw new Error('未找到前端沙箱信息，请先完成原型生成');
+      }
+
+      let fileName: string;
+      try {
+        fileName = await downloadZipForSandbox(sandboxId);
+      } catch (firstError) {
+        // 兜底：若下载失败（常见原因：沙箱已过期/不可达），自动重建原型后再重试一次
+        const genResp = await generatePrototypeForAppSpec(currentAppSpecId);
+        const regeneratedSandboxId = genResp.data?.sandboxId;
+        const previewUrl = genResp.data?.previewUrl;
+        if (!genResp.success || !regeneratedSandboxId || !previewUrl) {
+          throw firstError;
+        }
+
+        sandboxId = regeneratedSandboxId;
+        setAppSpec((prev) => {
+          if (!prev) return prev;
+          const nextMetadata: Record<string, unknown> = {
+            ...(prev.metadata ?? {}),
+            sandboxId: regeneratedSandboxId,
+            sandboxProvider: genResp.data?.provider || 'e2b',
+          };
+          return {
+            ...prev,
+            metadata: nextMetadata,
+            frontendPrototypeUrl: previewUrl,
+          };
+        });
+
+        fileName = await downloadZipForSandbox(sandboxId);
+      }
 
       toast({
         title: '下载成功',
-        description: '文件已开始下载',
+        description: `已下载 ${fileName}`,
       });
+    } catch (e) {
+      toast({
+        variant: 'destructive',
+        title: '下载失败',
+        description: e instanceof Error ? e.message : '无法下载前端代码',
+      });
+    } finally {
+      setIsDownloadingFrontend(false);
+    }
+  }, [appSpec?.id, appSpec?.metadata, appSpecId, task.appSpecId, taskStatus?.appSpecId, toast]);
+
+  // 下载服务端代码包（G3 或 Serverless 配置包）
+  const handleBackendDownload = useCallback(async () => {
+    const currentAppSpecId = task.appSpecId || taskStatus?.appSpecId || appSpec?.id || appSpecId;
+    if (!currentAppSpecId) {
+      toast({
+        variant: 'destructive',
+        title: '下载失败',
+        description: '未找到应用ID',
+      });
+      return;
+    }
+
+    /**
+     * 技术栈判定：H5/Supabase 优先走服务端配置包
+     *
+     * 目的：
+     * - 避免在 Serverless 场景下载到 Spring Boot 产物
+     * - 保证“服务端代码”下载与技术栈一致
+     */
+    const techStackType =
+      typeof appSpec?.metadata?.['techStackType'] === 'string'
+        ? (appSpec.metadata?.['techStackType'] as string)
+        : null;
+    const techStackCode =
+      typeof appSpec?.metadata?.['techStackCode'] === 'string'
+        ? (appSpec.metadata?.['techStackCode'] as string)
+        : null;
+    const isServerless =
+      techStackType === 'H5_WEBVIEW' ||
+      techStackType === 'REACT_SUPABASE' ||
+      (techStackCode?.toLowerCase().includes('supabase') ?? false) ||
+      (techStackCode?.toLowerCase().includes('webview') ?? false);
+
+    if (!isServerless && g3Status === 'RUNNING') {
+      toast({
+        variant: 'destructive',
+        title: '生成中',
+        description: 'G3 任务尚未完成，请稍后再试',
+      });
+      return;
+    }
+
+    setIsDownloadingBackend(true);
+    try {
+      if (!isServerless && g3JobId) {
+        const resp = await downloadG3Artifacts(g3JobId);
+        if (resp.success && resp.data?.downloadUrl) {
+          window.open(resp.data.downloadUrl, '_blank');
+          toast({
+            title: '下载已开始',
+            description: `正在下载 ${resp.data.fileCount} 个文件`,
+          });
+          return;
+        }
+      }
+
+      const fallbackResp = await getBackendPackageDownload(currentAppSpecId);
+      if (fallbackResp.success && fallbackResp.data?.downloadUrl) {
+        window.open(fallbackResp.data.downloadUrl, '_blank');
+        toast({
+          title: '下载已开始',
+          description: `已生成服务端配置包（${fallbackResp.data.fileCount} 个文件）`,
+        });
+        return;
+      }
+
+      throw new Error(fallbackResp.error || fallbackResp.message || '下载失败');
     } catch (e) {
       console.error(e);
       toast({
         variant: 'destructive',
         title: '下载失败',
-        description: '无法下载应用代码，请稍后重试',
+        description: e instanceof Error ? e.message : '无法下载服务端代码',
       });
+    } finally {
+      setIsDownloadingBackend(false);
     }
-  }, [appSpec?.id, appSpecId, task.appSpecId, taskStatus?.appSpecId, toast]);
+  }, [appSpec?.id, appSpecId, g3JobId, g3Status, task.appSpecId, taskStatus?.appSpecId, toast]);
 
   // 获取初始数据
   useEffect(() => {
@@ -263,6 +404,14 @@ export default function WizardPage() {
             const response = await getAppSpec(appSpecId);
             if (response.success && response.data) {
               const fullAppSpec = response.data as AppSpec;
+              const metadata = fullAppSpec.metadata || {};
+              const latestJobId =
+                typeof metadata['latestG3JobId'] === 'string'
+                  ? (metadata['latestG3JobId'] as string)
+                  : typeof metadata['latestGenerationTaskId'] === 'string'
+                    ? (metadata['latestGenerationTaskId'] as string)
+                    : null;
+              const resolvedJobId = latestJobId || g3JobIdFromQuery;
               setAppSpec({
                 id: fullAppSpec.id,
                 requirement: fullAppSpec.userRequirement,
@@ -272,8 +421,10 @@ export default function WizardPage() {
                 frontendPrototype: fullAppSpec.frontendPrototype as Record<string, unknown>,
 
                 frontendPrototypeUrl: fullAppSpec.frontendPrototypeUrl,
-                projectId: fullAppSpec.projectId // Map projectId
+                projectId: fullAppSpec.projectId, // Map projectId
+                metadata,
               });
+              setG3JobId(resolvedJobId);
               setTask(prev => ({
                 ...prev,
                 config: { ...prev.config, requirement: fullAppSpec.userRequirement || '' },
@@ -285,8 +436,10 @@ export default function WizardPage() {
                   estimatedHours: fullAppSpec.planResult?.estimatedHours || 48,
                 }
               }));
-              // 如果已完成，显示成功页面
-              setIsSuccessView(true);
+              // 如无G3任务，直接展示成功页；有任务则等待状态确认
+              if (!resolvedJobId) {
+                setIsSuccessView(true);
+              }
             }
           } catch (error) {
             console.error(error);
@@ -304,7 +457,41 @@ export default function WizardPage() {
     };
 
     fetchInitialData();
-  }, [appSpecId]);
+  }, [appSpecId, g3JobIdFromQuery]);
+
+  // 检查 G3 任务状态（用于断线恢复）
+  useEffect(() => {
+    if (!g3JobId) return;
+
+    let cancelled = false;
+    const checkStatus = async () => {
+      try {
+        const resp = await getG3JobStatus(g3JobId);
+        if (!resp.success || !resp.data) {
+          return;
+        }
+        const status = resp.data.status;
+        if (cancelled) return;
+        if (status === 'COMPLETED') {
+          setG3Status('COMPLETED');
+          setIsSuccessView(true);
+        } else if (status === 'FAILED') {
+          setG3Status('FAILED');
+          setIsSuccessView(false);
+        } else {
+          setG3Status('RUNNING');
+          setIsSuccessView(false);
+        }
+      } catch (err) {
+        console.warn('获取G3状态失败:', err);
+      }
+    };
+
+    checkStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [g3JobId]);
 
   const handleStartGeneration = useCallback(async () => {
     if (!task.config.requirement?.trim()) {
@@ -498,6 +685,29 @@ export default function WizardPage() {
     );
   }
 
+  // G3 任务执行中：优先展示实时控制台
+  if (g3JobId && g3Status !== 'COMPLETED') {
+    return (
+      <div className="min-h-screen bg-background p-6">
+        <G3Console
+          initialRequirement={appSpec?.requirement || task.config.requirement}
+          appSpecId={appSpecId}
+          resumeJobId={g3JobId}
+          autoStart={false}
+          onComplete={(task) => {
+            if (task.status === 'FAILED') {
+              setG3Status('FAILED');
+              setIsSuccessView(false);
+              return;
+            }
+            setG3Status('COMPLETED');
+            setIsSuccessView(true);
+          }}
+        />
+      </div>
+    );
+  }
+
   // 成功视图
   if (isSuccessView) {
      const currentAppSpec = appSpec || (taskStatus?.appSpecId ? { id: taskStatus.appSpecId } as AppSpecWithPlan : null);
@@ -549,10 +759,51 @@ export default function WizardPage() {
               <QuickActionCards
                 appId={task.appSpecId || taskStatus?.appSpecId || appSpec?.id || appSpecId}
                 projectId={task.appSpecId || taskStatus?.appSpecId || appSpec?.id || appSpecId}
-                onDownload={handleDownload}
+                onDownload={handleBackendDownload}
                 onShare={() => {}}
               />
             </div>
+
+            <Card className="mb-8">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Download className="w-5 h-5" />
+                  产物下载
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex flex-col md:flex-row gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={handleFrontendDownload}
+                    disabled={isDownloadingFrontend}
+                    className="flex-1"
+                  >
+                    {isDownloadingFrontend ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4 mr-2" />
+                    )}
+                    下载前端页面
+                  </Button>
+                  <Button
+                    onClick={handleBackendDownload}
+                    disabled={isDownloadingBackend}
+                    className="flex-1"
+                  >
+                    {isDownloadingBackend ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="w-4 h-4 mr-2" />
+                    )}
+                    下载服务端代码
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  前端包来自原型生成沙箱；服务端包根据技术栈选择 G3 产物或配置模板。
+                </p>
+              </CardContent>
+            </Card>
 
             {/* 模块列表 */}
             {currentAppSpec && currentAppSpec.planResult?.modules && currentAppSpec.planResult.modules.length > 0 && (

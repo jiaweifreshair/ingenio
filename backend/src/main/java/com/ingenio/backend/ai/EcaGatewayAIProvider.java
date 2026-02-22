@@ -32,9 +32,9 @@ import java.util.concurrent.TimeUnit;
 public class EcaGatewayAIProvider implements AIProvider {
 
     /**
-     * 默认 Base URL（ECA Gateway）
+     * 默认 Base URL（OpenAI 兼容网关）
      */
-    private static final String DEFAULT_BASE_URL = "https://aigateway.edgecloudapp.com/v1/6a346ca84941b743a3ea49cd6db8d004/xinbang01";
+    private static final String DEFAULT_BASE_URL = "https://gaccodeapi.com/v1";
 
     /**
      * 默认模型
@@ -57,6 +57,21 @@ public class EcaGatewayAIProvider implements AIProvider {
      * 最大重试次数
      */
     private static final int MAX_RETRIES = 3;
+
+    /**
+     * 请求体保留字段（extraParams不可覆盖）。
+     *
+     * 注意：top_p 不在此列表中，因为它需要根据 temperature 是否存在来动态处理。
+     */
+    private static final Set<String> RESERVED_REQUEST_KEYS = Set.of(
+            "model",
+            "messages",
+            "stream",
+            "temperature",
+            "max_tokens",
+            "stop",
+            "reasoning_effort"
+    );
 
     /**
      * 基础重试间隔（毫秒）
@@ -133,8 +148,11 @@ public class EcaGatewayAIProvider implements AIProvider {
 
     @Override
     public AIResponse generate(String prompt, AIRequest request) throws AIException {
-        if (prompt == null || prompt.isBlank()) {
-            throw new AIException("提示词不能为空", getProviderName());
+        boolean hasMessages = request != null
+                && request.messages() != null
+                && !request.messages().isEmpty();
+        if ((prompt == null || prompt.isBlank()) && !hasMessages) {
+            throw new AIException("提示词或messages不能为空", getProviderName());
         }
 
         if (!isAvailable()) {
@@ -234,34 +252,105 @@ public class EcaGatewayAIProvider implements AIProvider {
      */
     private String buildRequestBody(String prompt, AIRequest request, String targetModel) throws AIException {
         try {
-            Map<String, Object> requestBody = new LinkedHashMap<>();
-
-            // 模型名称
-            requestBody.put("model", targetModel);
-
-            // 消息列表（OpenAI 格式）
-            List<Map<String, Object>> messages = new ArrayList<>();
-            messages.add(Map.of("role", "user", "content", prompt));
-            requestBody.put("messages", messages);
-
-            // 生成参数
-            if (request.temperature() != null) {
-                requestBody.put("temperature", request.temperature());
-            }
-            if (request.maxTokens() != null) {
-                requestBody.put("max_tokens", request.maxTokens());
-            }
-            if (request.topP() != null) {
-                requestBody.put("top_p", request.topP());
-            }
-
-            // 非流式
-            requestBody.put("stream", false);
-
+            Map<String, Object> requestBody = buildRequestBodyMap(prompt, request, targetModel);
             return objectMapper.writeValueAsString(requestBody);
         } catch (Exception e) {
             throw new AIException("构建请求 Body 失败: " + e.getMessage(), getProviderName(), e);
         }
+    }
+
+    /**
+     * 构建请求体Map（单元测试可复用）。
+     *
+     * 是什么：生成ECA Gateway兼容的请求体Map。
+     * 做什么：合并model/messages/采样参数/思考参数与扩展字段。
+     * 为什么：支持网宿ECA的RAG/搜索等扩展参数。
+     */
+    static Map<String, Object> buildRequestBodyMap(String prompt, AIRequest request, String targetModel)
+            throws AIException {
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+
+        // 模型名称
+        requestBody.put("model", targetModel);
+
+        // 消息列表（OpenAI 格式）
+        requestBody.put("messages", resolveMessages(prompt, request));
+
+        // 生成参数
+        if (request != null) {
+            if (request.temperature() != null) {
+                // ECA 网关禁止 temperature 与 top_p 同时传入，优先保留 temperature。
+                requestBody.put("temperature", request.temperature());
+            } else if (request.topP() != null) {
+                requestBody.put("top_p", request.topP());
+            }
+            if (request.maxTokens() != null) {
+                requestBody.put("max_tokens", request.maxTokens());
+            }
+            if (request.stopSequence() != null) {
+                requestBody.put("stop", request.stopSequence());
+            }
+            if (request.reasoningEffort() != null && !request.reasoningEffort().isBlank()) {
+                requestBody.put("reasoning_effort", request.reasoningEffort());
+            }
+            appendExtraParams(requestBody, request.extraParams());
+        }
+
+        // 非流式
+        requestBody.put("stream", false);
+
+        return requestBody;
+    }
+
+    /**
+     * 合并扩展参数。
+     *
+     * 是什么：将extraParams写入请求体。
+     * 做什么：过滤保留字段并忽略空值。
+     * 为什么：避免扩展字段覆盖核心请求参数。
+     */
+    private static void appendExtraParams(Map<String, Object> requestBody, Map<String, Object> extraParams) {
+        if (extraParams == null || extraParams.isEmpty()) {
+            return;
+        }
+
+        // 检查是否已设置 temperature，如果是，则需要过滤掉 top_p
+        boolean hasTemperature = requestBody.containsKey("temperature");
+
+        extraParams.forEach((key, value) -> {
+            if (value == null) {
+                return;
+            }
+            if (RESERVED_REQUEST_KEYS.contains(key)) {
+                log.debug("[ECA Gateway] extraParams包含保留字段，已忽略: {}", key);
+                return;
+            }
+            // 如果已设置 temperature，则忽略 top_p（ECA Gateway 不允许同时设置）
+            if (hasTemperature && "top_p".equals(key)) {
+                log.debug("[ECA Gateway] 已设置temperature，忽略extraParams中的top_p");
+                return;
+            }
+            requestBody.put(key, value);
+        });
+    }
+
+    /**
+     * 解析请求消息列表。
+     *
+     * 是什么：将prompt或messages转换为OpenAI兼容的messages结构。
+     * 做什么：优先使用AIRequest.messages，缺失时回退prompt。
+     * 为什么：保持ECA Gateway与多模态请求的基本兼容性。
+     */
+    private static List<?> resolveMessages(String prompt, AIRequest request) throws AIException {
+        if (request != null && request.messages() != null && !request.messages().isEmpty()) {
+            return request.messages();
+        }
+        if (prompt == null || prompt.isBlank()) {
+            throw new AIException("提示词或messages不能为空", "eca-gateway");
+        }
+        List<Map<String, Object>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "user", "content", prompt));
+        return messages;
     }
 
     /**
@@ -375,13 +464,33 @@ public class EcaGatewayAIProvider implements AIProvider {
     }
 
     /**
-     * 标准化 URL（移除末尾斜杠）
+     * 标准化 URL 并兼容 OpenAI Chat Completions 路径。
+     *
+     * 是什么：网关请求地址规范化方法。
+     * 做什么：自动补齐 /v1/chat/completions，兼容 OpenAI 标准网关；同时保留 ECA /v1/{project}/{app} 直连地址。
+     * 为什么：同一 Provider 需同时支持历史 ECA 网关和新的 OpenAPI 网关，避免因路径格式差异导致 404。
      */
     private String normalizeUrl(String url) {
-        if (url == null || url.isBlank()) {
-            return DEFAULT_BASE_URL;
+        String normalized = (url == null || url.isBlank()) ? DEFAULT_BASE_URL : url;
+        normalized = normalized.replaceAll("/+$", "");
+
+        String lower = normalized.toLowerCase();
+        if (lower.endsWith("/chat/completions")) {
+            return normalized;
         }
-        return url.replaceAll("/+$", "");
+
+        // OpenAI 标准 base-url（.../v1）
+        if (lower.endsWith("/v1")) {
+            return normalized + "/chat/completions";
+        }
+
+        // 纯域名或非 v1 地址，按 OpenAI 兼容规范补齐 /v1/chat/completions
+        if (!lower.contains("/v1/")) {
+            return normalized + "/v1/chat/completions";
+        }
+
+        // 兼容历史 ECA 路径（.../v1/{project}/{app}）
+        return normalized;
     }
 
     /**

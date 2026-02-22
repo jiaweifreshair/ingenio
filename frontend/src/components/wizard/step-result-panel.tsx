@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider';
 import { CheckCircle2, FileCode, AlertTriangle, Layout, Database, Server, Settings } from 'lucide-react';
 import { AgentExecutionStatus, GenerationConfig } from '@/types/wizard';
+import { isValidUrl } from '@/lib/openlovable/sandbox-lifecycle';
 
 interface Module {
   name: string;
@@ -186,10 +187,14 @@ export function StepResultPanel({
          )
     }
 
+    const prototypeUrl = appSpec?.frontendPrototypeUrl ?? null;
+    const validPrototypeUrl = isValidUrl(prototypeUrl) ? prototypeUrl : null;
+    const invalidPrototypeUrl = prototypeUrl && !validPrototypeUrl ? prototypeUrl : null;
+
     return (
       <div className="space-y-6">
         {/* V2.0 OpenLovable Preview Integration */}
-        {appSpec?.frontendPrototypeUrl && (
+        {validPrototypeUrl && (
           <Card className="border-purple-200 dark:border-purple-800 overflow-hidden">
             <CardHeader className="bg-purple-50 dark:bg-purple-900/10 pb-3">
               <div className="flex items-center justify-between">
@@ -201,7 +206,7 @@ export function StepResultPanel({
                   variant="outline" 
                   size="sm" 
                   className="h-8 text-xs"
-                  onClick={() => window.open(appSpec.frontendPrototypeUrl, '_blank')}
+                  onClick={() => window.open(validPrototypeUrl, '_blank')}
                 >
                   新窗口打开
                 </Button>
@@ -209,11 +214,25 @@ export function StepResultPanel({
             </CardHeader>
             <div className="aspect-video w-full bg-gray-100 dark:bg-gray-900 relative">
               <iframe 
-                src={appSpec.frontendPrototypeUrl} 
+                src={validPrototypeUrl} 
                 className="absolute inset-0 w-full h-full border-0"
                 title="Prototype Preview"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-modals allow-popups"
               />
             </div>
+          </Card>
+        )}
+        {invalidPrototypeUrl && (
+          <Card className="border-amber-200 dark:border-amber-800 overflow-hidden">
+            <CardHeader className="bg-amber-50 dark:bg-amber-900/10 pb-3">
+              <CardTitle className="text-base flex items-center gap-2 text-amber-900 dark:text-amber-200">
+                <AlertTriangle className="h-4 w-4" />
+                原型预览不可用
+              </CardTitle>
+              <CardDescription className="text-amber-800 dark:text-amber-300">
+                预览地址无效：<span className="font-mono">{invalidPrototypeUrl}</span>。请刷新原型或切换到真实沙箱环境后重试。
+              </CardDescription>
+            </CardHeader>
           </Card>
         )}
 

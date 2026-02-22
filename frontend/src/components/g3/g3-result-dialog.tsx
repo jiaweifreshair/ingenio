@@ -2,15 +2,16 @@
 
 import { useMemo, useState } from "react";
 import type { G3JobStatusResponse } from "@/lib/api/g3";
-import { getG3ArtifactContent } from "@/lib/api/g3";
+import { getG3ArtifactContent, downloadG3Artifacts } from "@/lib/api/g3";
 import type { G3ArtifactContent, G3ArtifactSummary } from "@/types/g3";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { CheckCircle2, FileText, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { CheckCircle2, FileText, Loader2, RefreshCw, XCircle, Download } from "lucide-react";
 import { FileTree } from "./file-tree";
+import { toast } from "@/hooks/use-toast";
 
 /**
  * G3 结果展示对话框
@@ -46,8 +47,39 @@ export function G3ResultDialog({
   const [contentCache, setContentCache] = useState<Record<string, G3ArtifactContent>>({});
   const [loadingId, setLoadingId] = useState<string | null>(null);
   const [contentError, setContentError] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const selected = selectedId ? contentCache[selectedId] : null;
+
+  /**
+   * 下载所有产物
+   */
+  async function handleDownload() {
+    if (!jobId) return;
+
+    setIsDownloading(true);
+    try {
+      const resp = await downloadG3Artifacts(jobId);
+      if (!resp.success || !resp.data) {
+        throw new Error(resp.error || resp.message || "下载失败");
+      }
+
+      // 打开下载链接
+      window.open(resp.data.downloadUrl, '_blank');
+      toast({
+        title: "下载已开始",
+        description: `正在下载 ${resp.data.fileCount} 个文件`,
+      });
+    } catch (e) {
+      toast({
+        title: "下载失败",
+        description: e instanceof Error ? e.message : "下载失败",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDownloading(false);
+    }
+  }
 
   const statusBadge = useMemo(() => {
     const status = jobInfo?.status;
@@ -120,6 +152,23 @@ export function G3ResultDialog({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
+        {/* 下载按钮 */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={handleDownload}
+          disabled={!jobId || isDownloading || artifacts.length === 0}
+          className="text-white/70 hover:text-white hover:bg-white/[0.06]"
+          title="下载代码包"
+        >
+          {isDownloading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Download className="w-4 h-4" />
+          )}
+          <span className="ml-1 text-xs">下载</span>
+        </Button>
+
         <Button
           variant="ghost"
           size="sm"

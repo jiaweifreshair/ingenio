@@ -144,5 +144,29 @@ describe('SmartWizard', () => {
 
     expect(screen.queryByTestId('mock-prototype-confirmation')).not.toBeInTheDocument();
   });
-});
 
+  /**
+   * 严格模式下的启动流程不应重复触发。
+   *
+   * 是什么：模拟 React.StrictMode 的双调用行为。
+   * 做什么：确保 startSession / routeRequirement 只执行一次。
+   * 为什么：避免开发态触发重复会话导致确认步骤错乱。
+   */
+  it('StrictMode 下仅触发一次会话启动', async () => {
+    render(
+      <React.StrictMode>
+        <LanguageProvider>
+          <SmartWizard
+            initialRequirement="创建一个校园安全小卫士应用，包含扫描、分析、发现隐患与修复方案"
+            onBack={() => {}}
+          />
+        </LanguageProvider>
+      </React.StrictMode>
+    );
+
+    await waitFor(() => {
+      expect(mockStartSession).toHaveBeenCalledTimes(1);
+      expect(mockRouteRequirement).toHaveBeenCalledTimes(1);
+    });
+  });
+});

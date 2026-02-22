@@ -1,5 +1,8 @@
 package com.ingenio.backend.ai;
 
+import java.util.List;
+import java.util.Map;
+
 /**
  * AI提供商抽象接口
  *
@@ -76,16 +79,35 @@ public interface AIProvider {
     }
 
     /**
+     * 对话消息对象
+     *
+     * 是什么：描述一条对话消息的角色与内容。
+     * 做什么：支持多模态消息（文本/图片/视频/文件）序列化到OpenAI兼容格式。
+     * 为什么：Gemini 3.0 Pro Preview 需要使用结构化 messages 传入多模态内容。
+     */
+    record ChatMessage(
+            String role,     // 消息角色（system/user/assistant/tool）
+            Object content   // 消息内容（字符串或多模态内容数组）
+    ) {}
+
+    /**
      * AI请求参数
      *
      * 使用Builder模式构建，支持链式调用。
+     *
+     * @param messages        是什么：多模态对话消息列表；做什么：承载结构化messages输入；为什么：Gemini 3.0 通过messages表达多模态内容
+     * @param reasoningEffort 是什么：思考强度标识；做什么：控制模型思考程度；为什么：七牛云Gemini仅允许low/high
+     * @param extraParams     是什么：扩展参数透传容器；做什么：附加safety_settings等字段；为什么：保持OpenAPI兼容与演进空间
      */
     record AIRequest(
             String model,          // 模型名称（null则使用默认模型）
             Double temperature,    // 温度参数 [0.0, 2.0]，控制随机性
             Integer maxTokens,     // 最大生成token数
             Double topP,           // 核采样参数 [0.0, 1.0]
-            String stopSequence    // 停止序列（可选）
+            String stopSequence,   // 停止序列（可选）
+            List<ChatMessage> messages,  // 多模态对话消息列表（优先于prompt）
+            String reasoningEffort,      // 思考强度（Gemini仅支持 low/high）
+            Map<String, Object> extraParams // 扩展参数（safety_settings/response_format等）
     ) {
         public static Builder builder() {
             return new Builder();
@@ -97,6 +119,9 @@ public interface AIProvider {
             private Integer maxTokens = 4096;      // 默认最大token数
             private Double topP = 1.0;             // 默认不使用核采样
             private String stopSequence;
+            private List<ChatMessage> messages;
+            private String reasoningEffort;
+            private Map<String, Object> extraParams;
 
             public Builder model(String model) {
                 this.model = model;
@@ -123,8 +148,53 @@ public interface AIProvider {
                 return this;
             }
 
+            /**
+             * 设置多模态对话消息列表。
+             *
+             * 是什么：用于替代prompt的完整messages数组。
+             * 做什么：支持文本/图片/视频/文件等内容组合输入。
+             * 为什么：Gemini 3.0 Pro Preview 通过messages承载多模态请求。
+             */
+            public Builder messages(List<ChatMessage> messages) {
+                this.messages = messages;
+                return this;
+            }
+
+            /**
+             * 设置思考强度。
+             *
+             * 是什么：Gemini思考模式的强度标识。
+             * 做什么：控制模型思考投入（low/high）。
+             * 为什么：七牛云Gemini 3.0 Pro Preview仅支持该参数控制思考程度。
+             */
+            public Builder reasoningEffort(String reasoningEffort) {
+                this.reasoningEffort = reasoningEffort;
+                return this;
+            }
+
+            /**
+             * 设置扩展参数。
+             *
+             * 是什么：额外透传的请求参数集合。
+             * 做什么：传递safety_settings、response_format等未收敛字段。
+             * 为什么：保持对七牛云OpenAPI扩展字段的兼容性。
+             */
+            public Builder extraParams(Map<String, Object> extraParams) {
+                this.extraParams = extraParams;
+                return this;
+            }
+
             public AIRequest build() {
-                return new AIRequest(model, temperature, maxTokens, topP, stopSequence);
+                return new AIRequest(
+                        model,
+                        temperature,
+                        maxTokens,
+                        topP,
+                        stopSequence,
+                        messages,
+                        reasoningEffort,
+                        extraParams
+                );
             }
         }
     }

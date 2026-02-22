@@ -5,10 +5,10 @@ import com.ingenio.backend.common.exception.ErrorCode;
 import com.ingenio.backend.dto.auth.VerificationType;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBucket;
 import org.redisson.api.RedissonClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
@@ -36,14 +36,19 @@ import java.util.concurrent.TimeUnit;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class VerificationCodeService {
 
-    private final JavaMailSender mailSender;
+    @Autowired(required = false)
+    private JavaMailSender mailSender;
+
     private final RedissonClient redissonClient;
 
-    @Value("${spring.mail.username}")
+    @Value("${spring.mail.username:noreply@ingenio.ai}")
     private String fromEmail;
+
+    public VerificationCodeService(RedissonClient redissonClient) {
+        this.redissonClient = redissonClient;
+    }
 
     private static final int CODE_LENGTH = 6;
     private static final int CODE_EXPIRE_MINUTES = 5;
@@ -59,6 +64,12 @@ public class VerificationCodeService {
      * @throws BusinessException 业务异常（防刷、发送失败等）
      */
     public void sendCode(String email, VerificationType type) {
+        // 检查邮件服务是否可用
+        if (mailSender == null) {
+            log.warn("邮件服务未配置，无法发送验证码: email={}, type={}", email, type);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "邮件服务未配置，请联系管理员");
+        }
+
         // 1. 检查防刷机制
         checkRateLimit(email);
 

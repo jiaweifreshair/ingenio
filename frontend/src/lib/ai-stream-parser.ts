@@ -267,3 +267,47 @@ export function parseFilesFromResponse(text: string): { files: GeneratedFile[]; 
 
   return { files, currentFile };
 }
+
+/**
+ * 合并生成文件列表
+ *
+ * 是什么：在已有文件列表的基础上合并新的文件结果。
+ * 做什么：保留未改动文件，覆盖同路径文件，并把新增文件追加到末尾。
+ * 为什么：迭代修复通常只返回少量文件，直接替换会造成文件丢失与白屏。
+ */
+export function mergeGeneratedFiles<T extends GeneratedFile>(previous: T[], next: T[]): T[] {
+  const prevList = Array.isArray(previous) ? previous : [];
+  const nextList = Array.isArray(next) ? next : [];
+
+  if (prevList.length === 0) {
+    return [...nextList];
+  }
+  if (nextList.length === 0) {
+    return [...prevList];
+  }
+
+  const merged = new Map<string, T>();
+  const order: string[] = [];
+
+  for (const file of prevList) {
+    if (!file?.path) {
+      continue;
+    }
+    if (!merged.has(file.path)) {
+      order.push(file.path);
+    }
+    merged.set(file.path, file);
+  }
+
+  for (const file of nextList) {
+    if (!file?.path) {
+      continue;
+    }
+    if (!merged.has(file.path)) {
+      order.push(file.path);
+    }
+    merged.set(file.path, file);
+  }
+
+  return order.map(path => merged.get(path)).filter(Boolean) as T[];
+}

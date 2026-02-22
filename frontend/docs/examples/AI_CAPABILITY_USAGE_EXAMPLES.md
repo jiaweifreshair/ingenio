@@ -1096,7 +1096,7 @@ class GraphExporter {
 5. 复制密钥到local.properties
 
 # local.properties
-QWEN_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+QWEN_API_KEY=your_qwen_api_key_here
 ```
 
 #### Google Gemini
@@ -1110,7 +1110,7 @@ QWEN_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 5. 创建API密钥
 
 # local.properties
-GEMINI_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+GEMINI_API_KEY=your_gemini_api_key_here
 ```
 
 ### 成本优化建议

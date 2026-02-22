@@ -298,20 +298,232 @@ export async function generatePrototype(
 }
 
 /**
- * 修改原型（占位实现）
+ * 修改原型请求参数
+ */
+export interface ModifyPrototypeRequest {
+  /** 沙箱ID */
+  sandboxId: string;
+  /** 用户的修改请求描述 */
+  modificationRequest: string;
+  /** 原始需求（可选，用于上下文） */
+  originalRequirement?: string;
+  /** 设计风格（可选） */
+  designStyle?: string;
+}
+
+/**
+ * 修改原型 - 使用isEdit模式让AI基于现有代码进行修改
+ *
+ * 功能说明：
+ * - 调用 /v1/openlovable/generate/stream 接口，传入 isEdit=true
+ * - AI 会基于现有沙箱代码进行修改，而不是从零生成
+ * - 修改完成后自动 apply 到沙箱
+ *
+ * @param request 修改请求参数
+ * @param onProgress 进度回调
+ */
+export async function modifyPrototypeStream(
+  request: ModifyPrototypeRequest,
+  onProgress?: (event: SSEProgressEvent) => void
+): Promise<GeneratePrototypeResponse> {
+  const startTime = Date.now();
+  const { sandboxId, modificationRequest, originalRequirement, designStyle } = request;
+
+  try {
+    const apiBaseUrl = getApiBaseUrl();
+    const url = `${apiBaseUrl}/v1/openlovable/generate/stream`;
+    const token = getToken();
+
+    // 构建修改请求的 prompt
+    const modifyPrompt = buildModifyPrompt(modificationRequest, originalRequirement);
+
+    const payload = {
+      sandboxId,
+      prompt: modifyPrompt,
+      isEdit: true, // 关键：使用编辑模式
+      designStyle: designStyle || undefined,
+      // 不传 fastPreview，让 AI 有足够时间理解现有代码
+    };
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), PROTOTYPE_GENERATION_TIMEOUT_MS);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream',
+        'x-trace-id': generateTraceId(),
+        ...(token ? { Authorization: token } : {}),
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+      credentials: 'include',
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorText = `HTTP ${response.status}: ${response.statusText}`;
+      try {
+        const errorBody = await response.json();
+        if (typeof errorBody?.message === 'string') {
+          errorText = errorBody.message;
+        } else if (typeof errorBody?.error === 'string') {
+          errorText = errorBody.error;
+        }
+      } catch {
+        // 忽略解析失败
+      }
+      throw new Error(errorText);
+    }
+
+    if (!response.body) {
+      throw new Error('Response body is null');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let currentData = '';
+    let sandboxUrl: string | null = null;
+    let provider: string | undefined;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r\n|\r|\n/);
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith(':')) continue;
+
+        if (line.trim() === '') {
+          if (currentData) {
+            try {
+              const event: SSEProgressEvent = JSON.parse(currentData);
+
+              if (event.type === 'sandbox') {
+                sandboxUrl = event.sandboxUrl || null;
+                provider = event.provider;
+              }
+
+              if (onProgress) {
+                onProgress(event);
+              }
+
+              if (event.type === 'error') {
+                throw new Error(event.error || '原型修改失败');
+              }
+            } catch (parseError) {
+              // 降级处理多行JSON
+              const subLines = currentData.split('\n');
+              if (subLines.length > 1) {
+                try {
+                  for (const subLine of subLines) {
+                    if (!subLine.trim()) continue;
+                    const event: SSEProgressEvent = JSON.parse(subLine);
+                    if (event.type === 'sandbox') {
+                      sandboxUrl = event.sandboxUrl || null;
+                      provider = event.provider;
+                    }
+                    if (onProgress) onProgress(event);
+                    if (event.type === 'error') {
+                      throw new Error(event.error || '原型修改失败');
+                    }
+                  }
+                } catch {
+                  console.warn('[Prototype SSE] 修改流解析失败:', currentData, parseError);
+                }
+              }
+            }
+            currentData = '';
+          }
+          continue;
+        }
+
+        if (line.startsWith('data:')) {
+          if (currentData) currentData += '\n';
+          currentData += line.replace(/^data:\s?/, '');
+        }
+      }
+    }
+
+    // 修改成功，返回原沙箱URL（代码已apply）
+    return {
+      success: true,
+      sandboxUrl: sandboxUrl || `https://${sandboxId}.e2b.dev`,
+      sandboxId,
+      provider,
+      generationTime: Date.now() - startTime,
+    };
+  } catch (error) {
+    console.error('[Prototype SSE] 修改流失败', error);
+
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return {
+        success: false,
+        sandboxUrl: null,
+        generationTime: Date.now() - startTime,
+        error: '原型修改超时（3分钟）。修改内容可能较复杂，请稍后重试',
+      };
+    }
+
+    return {
+      success: false,
+      sandboxUrl: null,
+      generationTime: Date.now() - startTime,
+      error: error instanceof Error ? error.message : '原型修改失败',
+    };
+  }
+}
+
+/**
+ * 构建修改提示词
+ *
+ * @param modificationRequest 用户的修改请求
+ * @param originalRequirement 原始需求（可选）
+ */
+function buildModifyPrompt(modificationRequest: string, originalRequirement?: string): string {
+  let prompt = `请根据以下用户反馈修改现有代码：
+
+## 用户修改请求
+${modificationRequest}
+`;
+
+  if (originalRequirement) {
+    prompt += `
+## 原始需求（参考）
+${originalRequirement}
+`;
+  }
+
+  prompt += `
+## 修改要求
+1. 仅修改与用户请求相关的部分，保持其他代码不变
+2. 确保修改后的代码可以正常运行
+3. 保持代码风格一致
+4. 如果用户反馈涉及错误修复，请彻底解决问题
+`;
+
+  return prompt;
+}
+
+/**
+ * 修改原型（简化版，不带进度回调）
  */
 export async function modifyPrototype(
-  _sandboxId: string,
-  _modificationRequest: string
+  sandboxId: string,
+  modificationRequest: string,
+  originalRequirement?: string
 ): Promise<GeneratePrototypeResponse> {
-  console.warn('[Prototype API] modifyPrototype 功能尚未实现');
-
-  return {
-    success: false,
-    sandboxUrl: null,
-    generationTime: 0,
-    error: '原型修改功能将在后续版本实现',
-  };
+  return modifyPrototypeStream({
+    sandboxId,
+    modificationRequest,
+    originalRequirement,
+  });
 }
 
 /**

@@ -8,6 +8,7 @@ import com.ingenio.backend.entity.GenerationTaskEntity;
 import com.ingenio.backend.entity.GenerationVersionEntity;
 import com.ingenio.backend.entity.IndustryTemplateEntity;
 import com.ingenio.backend.entity.ProjectEntity;
+import com.ingenio.backend.entity.ProjectCapabilityConfigEntity;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3ErrorSignature;
 import com.ingenio.backend.entity.g3.G3JobEntity;
@@ -24,6 +25,7 @@ import com.ingenio.backend.mapper.g3.G3JobMapper;
 import com.ingenio.backend.mapper.g3.G3ValidationResultMapper;
 import com.ingenio.backend.dto.VersionType;
 import com.ingenio.backend.service.VersionSnapshotService;
+import com.ingenio.backend.service.ProjectCapabilityConfigService;
 import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.blueprint.BlueprintComplianceResult;
 import com.ingenio.backend.service.blueprint.BlueprintValidator;
@@ -39,6 +41,7 @@ import reactor.core.publisher.Flux;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -68,13 +71,22 @@ public class G3OrchestratorService {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(G3OrchestratorService.class);
 
     /**
-     * 匿名任务默认用户ID。
+     * 默认匿名用户ID
      *
-     * 是什么：匿名任务的占位用户ID。
-     * 做什么：在 userId 为空时填充 generation_tasks.user_id。
-     * 为什么：generation_tasks 表 user_id 不允许为空。
+     * 是什么：匿名任务的用户占位ID。
+     * 做什么：用于缺失用户时兜底写入 generation_tasks。
+     * 为什么：避免 user_id 非空约束导致落库失败。
      */
     private static final UUID DEFAULT_ANONYMOUS_USER_ID = UUID.fromString("00000000-0000-0000-0000-000000000000");
+
+    /**
+     * 默认租户ID
+     *
+     * 是什么：无租户上下文时的兜底租户。
+     * 做什么：保证 generation_tasks 与快照链路不因空租户失败。
+     * 为什么：兼容匿名/快速体验流程的落库约束。
+     */
+    private static final UUID DEFAULT_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     /**
      * 自引用，用于通过Spring代理调用@Async方法
@@ -110,6 +122,23 @@ public class G3OrchestratorService {
     private final com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer;
     private final G3LogStreamService g3LogStreamService;
     private final ProjectService projectService;
+    /**
+     * 项目能力配置服务
+     *
+     * 是什么：读取项目已配置的 JeecgBoot 能力清单与配置字段。
+     * 做什么：在 G3 任务启动前注入 capabilities，供规划与生成使用。
+     * 为什么：让鉴权/支付等能力可以显式进入生成上下文。
+     */
+    private final ProjectCapabilityConfigService projectCapabilityConfigService;
+
+    /**
+     * 失败诊断服务
+     *
+     * 是什么：用于生成失败诊断摘要与行动项。
+     * 做什么：在任务失败时输出可执行的修复方案。
+     * 为什么：提升失败场景的可恢复性与用户反馈质量。
+     */
+    private final G3FailureDiagnosisService failureDiagnosisService;
 
     /**
      * 最大修复轮次
@@ -143,7 +172,9 @@ public class G3OrchestratorService {
             FrontendApiClientGenerator frontendApiClientGenerator,
             com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer,
             G3LogStreamService g3LogStreamService,
-            ProjectService projectService) {
+            ProjectService projectService,
+            ProjectCapabilityConfigService projectCapabilityConfigService,
+            G3FailureDiagnosisService failureDiagnosisService) {
         this.jobMapper = jobMapper;
         this.artifactMapper = artifactMapper;
         this.validationResultMapper = validationResultMapper;
@@ -169,6 +200,8 @@ public class G3OrchestratorService {
         this.nlRequirementAnalyzer = nlRequirementAnalyzer;
         this.g3LogStreamService = g3LogStreamService;
         this.projectService = projectService;
+        this.projectCapabilityConfigService = projectCapabilityConfigService;
+        this.failureDiagnosisService = failureDiagnosisService;
     }
 
     /**
@@ -223,6 +256,7 @@ public class G3OrchestratorService {
                 .matchedTemplateId(resolvedContext.matchedTemplateId())
                 .blueprintSpec(resolvedContext.blueprintSpec())
                 .blueprintModeEnabled(resolvedContext.blueprintModeEnabled())
+                .analysisContextJson(resolvedContext.analysisContextJson())
                 .status(G3JobEntity.Status.QUEUED.getValue())
                 .currentRound(0)
                 .maxRounds(maxRoundsOverride != null ? maxRoundsOverride : maxRounds)
@@ -233,6 +267,9 @@ public class G3OrchestratorService {
         jobMapper.insert(job);
 
         log.info("[G3] 任务创建成功: jobId={}", job.getId());
+
+        // 更新 AppSpec 元数据（用于前端恢复与下载）
+        updateAppSpecJobMetadata(job);
 
         // 同步创建generation_tasks记录，确保时光机版本链可用
         ensureGenerationTask(job);
@@ -309,19 +346,54 @@ public class G3OrchestratorService {
         }
 
         // M3: 增强 - 检测并注入 AI 能力（防止分析阶段未正确传递）
-        if (resolvedBlueprintSpec != null && !resolvedBlueprintSpec.isEmpty()) {
-            @SuppressWarnings("unchecked")
-            List<String> caps = (List<String>) resolvedBlueprintSpec.get("aiCapabilities");
-            if (caps == null || caps.isEmpty()) {
-                List<String> detected = nlRequirementAnalyzer.detectAiCapabilities(resolvedRequirement);
-                if (!detected.isEmpty()) {
-                    // 必须使用可变Map
-                    if (!(resolvedBlueprintSpec instanceof java.util.HashMap)) {
-                        resolvedBlueprintSpec = new java.util.HashMap<>(resolvedBlueprintSpec);
-                    }
-                    resolvedBlueprintSpec.put("aiCapabilities", detected);
-                    log.info("[G3] 自动注入 AI 能力: {}", detected);
-                }
+        List<String> detectedAiCaps = nlRequirementAnalyzer != null
+                ? nlRequirementAnalyzer.detectAiCapabilities(resolvedRequirement)
+                : List.of();
+        if (detectedAiCaps != null && !detectedAiCaps.isEmpty()) {
+            if (resolvedBlueprintSpec == null) {
+                resolvedBlueprintSpec = new java.util.HashMap<>();
+            } else if (!(resolvedBlueprintSpec instanceof java.util.HashMap)) {
+                resolvedBlueprintSpec = new java.util.HashMap<>(resolvedBlueprintSpec);
+            }
+            List<String> mergedAiCaps = mergeStringList(
+                    readStringList(resolvedBlueprintSpec.get("aiCapabilities")),
+                    detectedAiCaps);
+            resolvedBlueprintSpec.put("aiCapabilities", mergedAiCaps);
+            log.info("[G3] 自动注入 AI 能力: {}", mergedAiCaps);
+        }
+
+        // M4.5: 增强 - 基于需求检测项目能力（鉴权/支付等）
+        List<String> detectedProjectCaps = nlRequirementAnalyzer != null
+                ? nlRequirementAnalyzer.detectProjectCapabilities(resolvedRequirement)
+                : List.of();
+        if (detectedProjectCaps != null && !detectedProjectCaps.isEmpty()) {
+            if (resolvedBlueprintSpec == null) {
+                resolvedBlueprintSpec = new java.util.HashMap<>();
+            } else if (!(resolvedBlueprintSpec instanceof java.util.HashMap)) {
+                resolvedBlueprintSpec = new java.util.HashMap<>(resolvedBlueprintSpec);
+            }
+            List<String> mergedCaps = mergeStringList(
+                    readStringList(resolvedBlueprintSpec.get("capabilities")),
+                    detectedProjectCaps);
+            resolvedBlueprintSpec.put("capabilities", mergedCaps);
+        }
+
+        // M4: 增强 - 注入项目能力（JeecgBoot 鉴权/支付等）
+        ProjectCapabilitySnapshot capabilitySnapshot = fetchProjectCapabilities(resolvedAppSpecId);
+        if (!capabilitySnapshot.codes().isEmpty()) {
+            if (resolvedBlueprintSpec == null) {
+                resolvedBlueprintSpec = new java.util.HashMap<>();
+            } else if (!(resolvedBlueprintSpec instanceof java.util.HashMap)) {
+                resolvedBlueprintSpec = new java.util.HashMap<>(resolvedBlueprintSpec);
+            }
+
+            List<String> mergedCaps = mergeStringList(
+                    readStringList(resolvedBlueprintSpec.get("capabilities")),
+                    capabilitySnapshot.codes());
+            resolvedBlueprintSpec.put("capabilities", mergedCaps);
+
+            if (!capabilitySnapshot.configKeys().isEmpty()) {
+                resolvedBlueprintSpec.put("capabilityConfigKeys", capabilitySnapshot.configKeys());
             }
         }
 
@@ -343,6 +415,64 @@ public class G3OrchestratorService {
                     log.debug("[G3] 从 AppSpec 加载 analysisContext");
                 }
             }
+
+            // 修复：从 AppSpec metadata 读取技术栈信息并注入到 analysisContext
+            if (appSpec != null && appSpec.getMetadata() != null) {
+                String techStackType = (String) appSpec.getMetadata().get("techStackType");
+                String techStackCode = (String) appSpec.getMetadata().get("techStackCode");
+                String techStackDescription = (String) appSpec.getMetadata().get("techStackDescription");
+
+                if (techStackType != null) {
+                    if (resolvedAnalysisContext == null) {
+                        resolvedAnalysisContext = new java.util.HashMap<>();
+                    }
+                    resolvedAnalysisContext.put("techStackType", techStackType);
+                    resolvedAnalysisContext.put("techStackCode", techStackCode);
+                    resolvedAnalysisContext.put("techStackDescription", techStackDescription);
+                    log.info("[G3] 从 AppSpec metadata 读取技术栈: techStackType={}, techStackCode={}",
+                            techStackType, techStackCode);
+                }
+            }
+        }
+
+        if (!capabilitySnapshot.codes().isEmpty()) {
+            if (resolvedAnalysisContext == null) {
+                resolvedAnalysisContext = new java.util.HashMap<>();
+            }
+            List<String> mergedCaps = mergeStringList(
+                    readStringList(resolvedAnalysisContext.get("capabilities")),
+                    capabilitySnapshot.codes());
+            resolvedAnalysisContext.put("capabilities", mergedCaps);
+            if (!capabilitySnapshot.configKeys().isEmpty()) {
+                resolvedAnalysisContext.put("capabilityConfigKeys", capabilitySnapshot.configKeys());
+            }
+        }
+
+        if (detectedProjectCaps != null && !detectedProjectCaps.isEmpty()) {
+            if (resolvedAnalysisContext == null) {
+                resolvedAnalysisContext = new java.util.HashMap<>();
+            }
+            List<String> mergedCaps = mergeStringList(
+                    readStringList(resolvedAnalysisContext.get("capabilities")),
+                    detectedProjectCaps);
+            resolvedAnalysisContext.put("capabilities", mergedCaps);
+        }
+
+        if (detectedAiCaps != null && !detectedAiCaps.isEmpty()) {
+            if (resolvedAnalysisContext == null) {
+                resolvedAnalysisContext = new java.util.HashMap<>();
+            }
+            List<String> mergedAiCaps = mergeStringList(
+                    readStringList(resolvedAnalysisContext.get("aiCapabilities")),
+                    detectedAiCaps);
+            resolvedAnalysisContext.put("aiCapabilities", mergedAiCaps);
+        }
+
+        if (resolvedTenantId == null) {
+            resolvedTenantId = DEFAULT_TENANT_ID;
+        }
+        if (resolvedUserId == null) {
+            resolvedUserId = resolvedTenantId;
         }
 
         return new ResolvedJobContext(
@@ -1257,11 +1387,12 @@ public class G3OrchestratorService {
 
         GenerationTaskEntity task = new GenerationTaskEntity();
         task.setId(job.getId());
-        task.setTenantId(job.getTenantId());
+        UUID resolvedTenantId = job.getTenantId() != null ? job.getTenantId() : DEFAULT_TENANT_ID;
+        task.setTenantId(resolvedTenantId);
         // 匿名任务 userId 为空时使用 tenantId 或默认占位，避免落库失败
         UUID resolvedUserId = job.getUserId() != null
                 ? job.getUserId()
-                : (job.getTenantId() != null ? job.getTenantId() : DEFAULT_ANONYMOUS_USER_ID);
+                : resolvedTenantId;
         task.setUserId(resolvedUserId);
 
         String requirement = job.getRequirement() != null ? job.getRequirement().trim() : "";
@@ -1408,8 +1539,8 @@ public class G3OrchestratorService {
      * @param logConsumer 日志回调
      */
     private void archiveAndSnapshot(G3JobEntity job, Consumer<G3LogEntry> logConsumer) {
-        if (job == null || job.getId() == null || job.getTenantId() == null) {
-            logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR, "归档跳过：缺少任务或租户信息"));
+        if (job == null || job.getId() == null) {
+            logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR, "归档跳过：缺少任务信息"));
             return;
         }
 
@@ -1418,6 +1549,9 @@ public class G3OrchestratorService {
             logConsumer.accept(G3LogEntry.warn(G3LogEntry.Role.EXECUTOR, "归档跳过：产物为空"));
             return;
         }
+
+        UUID resolvedTenantId = job.getTenantId() != null ? job.getTenantId() : DEFAULT_TENANT_ID;
+        UUID resolvedUserId = job.getUserId() != null ? job.getUserId() : resolvedTenantId;
 
         long totalSizeBytes = 0L;
         for (G3ArtifactEntity artifact : artifacts) {
@@ -1434,13 +1568,13 @@ public class G3OrchestratorService {
 
         GenerationVersionEntity version = snapshotService.createSnapshot(
                 job.getId(),
-                job.getTenantId(),
+                resolvedTenantId,
                 VersionType.CODE,
                 snapshot);
 
         G3CodeArchiveService.ArchiveBuildResult archiveResult = codeArchiveService.buildAndUploadArchive(
-                job.getTenantId(),
-                job.getUserId(),
+                resolvedTenantId,
+                resolvedUserId,
                 job.getId(),
                 version.getVersionNumber(),
                 artifacts);
@@ -1566,10 +1700,31 @@ public class G3OrchestratorService {
                     completed ? "已完成" : "失败",
                     G3PlanningFileEntity.UPDATER_SYSTEM);
             if (!completed && error != null && !error.isBlank()) {
+                String solution = "查看控制台日志与产物列表定位问题";
+                G3ValidationResultEntity latestResult = null;
+                if (validationResultMapper != null) {
+                    List<G3ValidationResultEntity> results = validationResultMapper.selectByJobId(jobId);
+                    if (results != null && !results.isEmpty()) {
+                        latestResult = results.stream()
+                                .filter(r -> r.getValidationType() == null
+                                        || "COMPILE".equalsIgnoreCase(r.getValidationType()))
+                                .max(Comparator.comparing(G3ValidationResultEntity::getCreatedAt,
+                                        Comparator.nullsLast(Comparator.naturalOrder())))
+                                .orElse(results.get(results.size() - 1));
+                    }
+                }
+                if (failureDiagnosisService != null) {
+                    G3FailureDiagnosisService.DiagnosisResult diagnosis =
+                            failureDiagnosisService.buildDiagnosis(latestResult, error);
+                    String actionPlanText = failureDiagnosisService.buildActionPlanText(diagnosis);
+                    if (actionPlanText != null && !actionPlanText.isBlank()) {
+                        solution = actionPlanText;
+                    }
+                }
                 planningFileService.appendError(
                         jobId,
                         error,
-                        "查看控制台日志与产物列表定位问题",
+                        solution,
                         G3PlanningFileEntity.UPDATER_SYSTEM);
             }
         } catch (Exception e) {
@@ -1812,10 +1967,24 @@ public class G3OrchestratorService {
      */
     private static List<String> inferCapabilities(G3JobEntity job) {
         Map<String, Object> spec = job != null ? job.getBlueprintSpec() : null;
-        if (spec == null)
-            return List.of();
+        List<String> fromSpec = readStringList(spec != null ? spec.get("capabilities") : null);
+        if (!fromSpec.isEmpty()) {
+            return fromSpec;
+        }
 
-        Object raw = spec.get("capabilities");
+        Map<String, Object> analysisContext = job != null ? job.getAnalysisContextJson() : null;
+        List<String> fromContext = readStringList(analysisContext != null ? analysisContext.get("capabilities") : null);
+        return fromContext;
+    }
+
+    /**
+     * 读取能力列表
+     *
+     * 是什么：将 raw 转为字符串列表的安全工具。
+     * 做什么：兼容 List / String / null 多种形态。
+     * 为什么：避免能力注入时出现类型不匹配或空指针。
+     */
+    private static List<String> readStringList(Object raw) {
         if (raw instanceof List<?> list) {
             return list.stream()
                     .filter(Objects::nonNull)
@@ -1829,6 +1998,132 @@ public class G3OrchestratorService {
             return List.of(s.trim());
         }
         return List.of();
+    }
+
+    /**
+     * 合并能力列表
+     *
+     * 是什么：合并已有能力与新增能力的工具方法。
+     * 做什么：去重并保留稳定顺序（先已有，后新增）。
+     * 为什么：避免重复能力造成上下文噪音。
+     */
+    private static List<String> mergeStringList(List<String> existing, List<String> extra) {
+        List<String> merged = new ArrayList<>();
+        if (existing != null) {
+            for (String value : existing) {
+                if (value != null && !value.isBlank() && !merged.contains(value.trim())) {
+                    merged.add(value.trim());
+                }
+            }
+        }
+        if (extra != null) {
+            for (String value : extra) {
+                if (value != null && !value.isBlank() && !merged.contains(value.trim())) {
+                    merged.add(value.trim());
+                }
+            }
+        }
+        return merged;
+    }
+
+    /**
+     * 项目能力配置快照
+     *
+     * 是什么：封装项目能力 code 与配置字段 key。
+     * 做什么：用于注入 G3 任务上下文和 Blueprint。
+     * 为什么：避免泄露敏感值，同时让能力显式可追踪。
+     */
+    private record ProjectCapabilitySnapshot(List<String> codes, Map<String, List<String>> configKeys) {
+        private static ProjectCapabilitySnapshot empty() {
+            return new ProjectCapabilitySnapshot(List.of(), Map.of());
+        }
+    }
+
+    /**
+     * 读取项目已配置能力
+     *
+     * 是什么：从项目配置表中提取能力 code 与配置字段名。
+     * 做什么：为 G3 生成流程提供能力列表与配置提示。
+     * 为什么：保证鉴权/支付等能力能进入规划与生成上下文。
+     */
+    private ProjectCapabilitySnapshot fetchProjectCapabilities(UUID appSpecId) {
+        if (appSpecId == null || projectCapabilityConfigService == null || projectService == null) {
+            return ProjectCapabilitySnapshot.empty();
+        }
+
+        ProjectEntity project = projectService.findByAppSpecId(appSpecId);
+        if (project == null) {
+            return ProjectCapabilitySnapshot.empty();
+        }
+
+        List<ProjectCapabilityConfigEntity> configs = projectCapabilityConfigService.listByProject(project.getId());
+        if (configs == null || configs.isEmpty()) {
+            return ProjectCapabilitySnapshot.empty();
+        }
+
+        List<String> codes = new ArrayList<>();
+        Map<String, List<String>> configKeys = new HashMap<>();
+
+        for (ProjectCapabilityConfigEntity config : configs) {
+            if (config == null || config.getCapabilityCode() == null || config.getCapabilityCode().isBlank()) {
+                continue;
+            }
+            String code = config.getCapabilityCode().trim();
+            codes.add(code);
+
+            Map<String, Object> values = config.getConfigValues();
+            if (values != null && !values.isEmpty()) {
+                List<String> keys = values.keySet().stream()
+                        .filter(Objects::nonNull)
+                        .map(Object::toString)
+                        .map(String::trim)
+                        .filter(s -> !s.isBlank())
+                        .sorted()
+                        .toList();
+                if (!keys.isEmpty()) {
+                    configKeys.put(code, keys);
+                }
+            }
+        }
+
+        List<String> distinctCodes = codes.stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isBlank())
+                .distinct()
+                .toList();
+
+        if (distinctCodes.isEmpty()) {
+            return ProjectCapabilitySnapshot.empty();
+        }
+
+        return new ProjectCapabilitySnapshot(distinctCodes, configKeys);
+    }
+
+    /**
+     * 更新 AppSpec 与 G3 job 的关联信息
+     *
+     * 是什么：将最新 jobId 写入 AppSpec.metadata。
+     * 做什么：便于前端在页面关闭后恢复任务与下载。
+     * 为什么：避免用户刷新后丢失 G3 任务追踪入口。
+     */
+    private void updateAppSpecJobMetadata(G3JobEntity job) {
+        if (job == null || job.getAppSpecId() == null) {
+            return;
+        }
+
+        AppSpecEntity appSpec = appSpecMapper.selectById(job.getAppSpecId());
+        if (appSpec == null) {
+            return;
+        }
+
+        Map<String, Object> metadata = appSpec.getMetadata() != null
+                ? new HashMap<>(appSpec.getMetadata())
+                : new HashMap<>();
+        metadata.put("latestG3JobId", job.getId().toString());
+        metadata.put("latestG3JobSubmittedAt", Instant.now().toString());
+        appSpec.setMetadata(metadata);
+        appSpecMapper.updateById(appSpec);
     }
 
     /**

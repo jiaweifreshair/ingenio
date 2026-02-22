@@ -25,6 +25,7 @@ import type {
   Step2Result,
   Step3Result,
   Step4Result,
+  StepConfirmPayload,
   Step5Result,
   StepResult
 } from '@/types/analysis-step-results';
@@ -33,7 +34,7 @@ export interface StepResultDisplayProps {
   /** 步骤结果数据 */
   result: StepResult;
   /** 确认回调 */
-  onConfirm: () => void;
+  onConfirm: (payload?: StepConfirmPayload) => void;
   /** 修改回调 */
   onModify: () => void;
   /** 是否正在加载 */
@@ -94,7 +95,7 @@ function Step1Display({
   showModifyButton = true,
 }: {
   data: Step1Result;
-  onConfirm: () => void;
+  onConfirm: (payload?: StepConfirmPayload) => void;
   onModify: () => void;
   loading?: boolean;
   confirmLabel?: string;
@@ -158,7 +159,7 @@ function Step1Display({
         )}
         {showConfirmButton && (
           <Button
-            onClick={onConfirm}
+            onClick={() => onConfirm()}
             disabled={loading}
             className={showModifyButton ? 'flex-1' : 'w-full'}
           >
@@ -186,7 +187,7 @@ function Step2Display({
   showModifyButton = true,
 }: {
   data: Step2Result;
-  onConfirm: () => void;
+  onConfirm: (payload?: StepConfirmPayload) => void;
   onModify: () => void;
   loading?: boolean;
   confirmLabel?: string;
@@ -194,6 +195,17 @@ function Step2Display({
   showConfirmButton?: boolean;
   showModifyButton?: boolean;
 }) {
+  // 检测是否为空结果
+  const isEmpty = data.entities.length === 0 && data.relationships.length === 0;
+  /**
+   * 兜底提示开关
+   *
+   * 是什么：标记是否展示“兜底实体”提示。
+   * 做什么：当后端返回兜底假设时展示说明。
+   * 为什么：避免用户误以为实体结果是完整且精确的。
+   */
+  const showFallbackHint = Boolean(data.usedFallback || (data.assumptions && data.assumptions.length > 0));
+
   return (
     <Card className="p-6 space-y-6 border-2 border-purple-200 dark:border-purple-800 bg-purple-50/30 dark:bg-purple-900/10">
       <div className="flex items-center gap-3 pb-4 border-b border-purple-200 dark:border-purple-800">
@@ -201,53 +213,107 @@ function Step2Display({
         <h3 className="text-xl font-semibold">实体关系建模结果</h3>
       </div>
 
-      {/* 核心实体列表 */}
-      <div className="space-y-3">
-        <h4 className="text-sm font-medium text-muted-foreground">📊 核心实体列表</h4>
-        <div className="space-y-3">
-          {data.entities.map((entity, index) => (
-            <Card key={index} className="p-4 bg-background">
-              <div className="flex items-center justify-between mb-2">
-                <h5 className="font-semibold">{entity.displayName} ({entity.name})</h5>
-              </div>
-              <div className="space-y-1">
-                {entity.fields.map((field, fieldIndex) => (
-                  <div key={fieldIndex} className="text-sm text-muted-foreground flex items-center gap-2">
-                    <span className="font-mono text-xs">•</span>
-                    <span className="font-mono">{field.name}</span>
-                    <span>:</span>
-                    <span className="text-blue-600 dark:text-blue-400">{field.type}</span>
-                    {field.description && (
-                      <span className="text-xs">({field.description})</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </Card>
-          ))}
+      {/* ⚠️ 空结果警告提示 */}
+      {isEmpty && (
+        <div className="p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+          <div className="flex items-start gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div className="flex-1 space-y-2">
+              <h4 className="font-semibold text-yellow-800 dark:text-yellow-200">
+                未识别到数据实体
+              </h4>
+              <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                AI未能从需求中识别出数据实体。可能的原因：
+              </p>
+              <ul className="text-sm text-yellow-700 dark:text-yellow-300 list-disc list-inside space-y-1">
+                <li>需求描述过于简单或模糊</li>
+                <li>AI模型返回格式异常（已记录日志）</li>
+                <li>需求中缺少明确的业务对象</li>
+              </ul>
+              <p className="text-sm text-yellow-700 dark:text-yellow-300 mt-2">
+                建议：点击&ldquo;修改实体&rdquo;重新描述需求，或联系技术支持查看后端日志。
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* ℹ️ 兜底实体提示 */}
+      {showFallbackHint && !isEmpty && (
+        <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <div className="flex items-start gap-3">
+            <span className="text-xl">ℹ️</span>
+            <div className="flex-1 space-y-2">
+              <h4 className="font-semibold text-blue-800 dark:text-blue-200">已自动补充最小实体</h4>
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                当前需求描述偏概括，为保证分析连续性，系统自动补充了最小可用数据实体。
+              </p>
+              {data.assumptions && data.assumptions.length > 0 && (
+                <ul className="text-sm text-blue-700 dark:text-blue-300 list-disc list-inside space-y-1">
+                  {data.assumptions.map((assumption, index) => (
+                    <li key={index}>{assumption}</li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-sm text-blue-700 dark:text-blue-300 mt-2">
+                建议在“修改实体”中补充更具体的业务对象与字段，以获得更精准的数据模型。
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 核心实体列表 */}
+      {!isEmpty && (
+        <div className="space-y-3">
+          <h4 className="text-sm font-medium text-muted-foreground">📊 核心实体列表</h4>
+          <div className="space-y-3">
+            {data.entities.map((entity, index) => (
+              <Card key={index} className="p-4 bg-background">
+                <div className="flex items-center justify-between mb-2">
+                  <h5 className="font-semibold">{entity.displayName} ({entity.name})</h5>
+                </div>
+                <div className="space-y-1">
+                  {entity.fields.map((field, fieldIndex) => (
+                    <div key={fieldIndex} className="text-sm text-muted-foreground flex items-center gap-2">
+                      <span className="font-mono text-xs">•</span>
+                      <span className="font-mono">{field.name}</span>
+                      <span>:</span>
+                      <span className="text-blue-600 dark:text-blue-400">{field.type}</span>
+                      {field.description && (
+                        <span className="text-xs">({field.description})</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* 实体关系图 */}
-      <div className="space-y-2">
-        <h4 className="text-sm font-medium text-muted-foreground">🔗 实体关系</h4>
+      {!isEmpty && data.relationships.length > 0 && (
         <div className="space-y-2">
-          {data.relationships.map((rel, index) => (
-            <div key={index} className="flex items-center gap-2 text-sm">
-              <span className="font-semibold">{rel.from}</span>
-              <span className="text-muted-foreground">
-                {rel.type === 'ONE_TO_ONE' && '(1) ─ (1)'}
-                {rel.type === 'ONE_TO_MANY' && '(1) ──< (N)'}
-                {rel.type === 'MANY_TO_MANY' && '(N) ──< (N)'}
-              </span>
-              <span className="font-semibold">{rel.to}</span>
-              {rel.description && (
-                <span className="text-xs text-muted-foreground">- {rel.description}</span>
-              )}
-            </div>
-          ))}
+          <h4 className="text-sm font-medium text-muted-foreground">🔗 实体关系</h4>
+          <div className="space-y-2">
+            {data.relationships.map((rel, index) => (
+              <div key={index} className="flex items-center gap-2 text-sm">
+                <span className="font-semibold">{rel.from}</span>
+                <span className="text-muted-foreground">
+                  {rel.type === 'ONE_TO_ONE' && '(1) ─ (1)'}
+                  {rel.type === 'ONE_TO_MANY' && '(1) ──< (N)'}
+                  {rel.type === 'MANY_TO_MANY' && '(N) ──< (N)'}
+                </span>
+                <span className="font-semibold">{rel.to}</span>
+                {rel.description && (
+                  <span className="text-xs text-muted-foreground">- {rel.description}</span>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* 操作按钮 */}
       <div className="flex items-center gap-3 pt-4 border-t">
@@ -264,7 +330,7 @@ function Step2Display({
         )}
         {showConfirmButton && (
           <Button
-            onClick={onConfirm}
+            onClick={() => onConfirm()}
             disabled={loading}
             className={showModifyButton ? 'flex-1' : 'w-full'}
           >
@@ -292,7 +358,7 @@ function Step3Display({
   showModifyButton = true,
 }: {
   data: Step3Result;
-  onConfirm: () => void;
+  onConfirm: (payload?: StepConfirmPayload) => void;
   onModify: () => void;
   loading?: boolean;
   confirmLabel?: string;
@@ -388,7 +454,7 @@ function Step3Display({
         )}
         {showConfirmButton && (
           <Button
-            onClick={onConfirm}
+            onClick={() => onConfirm()}
             disabled={loading}
             className={showModifyButton ? 'flex-1' : 'w-full'}
           >
@@ -416,7 +482,7 @@ function Step4Display({
   showModifyButton = true,
 }: {
   data: Step4Result;
-  onConfirm: () => void;
+  onConfirm: (payload?: StepConfirmPayload) => void;
   onModify: () => void;
   loading?: boolean;
   confirmLabel?: string;
@@ -510,7 +576,7 @@ function Step4Display({
         )}
         {showConfirmButton && (
           <Button
-            onClick={onConfirm}
+            onClick={() => onConfirm()}
             disabled={loading}
             className={showModifyButton ? 'flex-1' : 'w-full'}
           >
@@ -544,7 +610,7 @@ function Step5Display({
   showModifyButton = true,
 }: {
   data: Step5Result;
-  onConfirm: () => void;
+  onConfirm: (payload?: StepConfirmPayload) => void;
   onModify: () => void;
   loading?: boolean;
   confirmLabel?: string;
@@ -553,7 +619,7 @@ function Step5Display({
   showModifyButton?: boolean;
 }) {
   const [selectedStyleId, setSelectedStyleId] = React.useState<string | null>(
-    data.styleVariants?.[0]?.styleId ?? null
+    data.selectedStyleId ?? data.styleVariants?.[0]?.styleId ?? null
   );
 
   // 如果有设计风格变体，展示风格选择界面
@@ -567,6 +633,11 @@ function Step5Display({
             {data.designConfidence && (
               <div className="text-xs text-muted-foreground mt-1">
                 AI 置信度: {Math.round(data.designConfidence * 100)}% | 意图: {data.designIntent}
+              </div>
+            )}
+            {data.selectedStyleReason && (
+              <div className="text-xs text-muted-foreground mt-1">
+                推荐理由: {data.selectedStyleReason}
               </div>
             )}
           </div>
@@ -614,7 +685,17 @@ function Step5Display({
             </Button>
           )}
           {showConfirmButton && (
-            <Button onClick={onConfirm} disabled={loading} className="flex-1 bg-purple-600 hover:bg-purple-700">
+            <Button
+              onClick={() =>
+                onConfirm(
+                  selectedStyleId
+                    ? { selectedStyleId }
+                    : undefined
+                )
+              }
+              disabled={loading}
+              className="flex-1 bg-purple-600 hover:bg-purple-700"
+            >
               <CheckCircle2 className="w-4 h-4 mr-2" />
               确认使用此风格
             </Button>
@@ -756,7 +837,7 @@ function Step5Display({
         )}
         {showConfirmButton && (
           <Button
-            onClick={onConfirm}
+            onClick={() => onConfirm()}
             disabled={loading}
             className={showModifyButton ? 'flex-1' : 'w-full'}
           >

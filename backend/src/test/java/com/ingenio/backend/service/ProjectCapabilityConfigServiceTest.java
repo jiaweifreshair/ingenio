@@ -167,4 +167,44 @@ class ProjectCapabilityConfigServiceTest {
         assertEquals("auth", result.get(0));
         verify(configMapper, times(1)).selectList(any(LambdaQueryWrapper.class));
     }
+
+    @Test
+    void testGetByProjectAndCodeMasked() {
+        // Given
+        Map<String, Object> maskedValues = Map.of(
+            "apiKey", "******",
+            "apiSecret", "******"
+        );
+        when(configMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testConfig);
+        when(capabilityService.getByCode("auth")).thenReturn(Optional.of(testCapability));
+        when(encryptService.maskSensitiveFields(any(), any())).thenReturn(maskedValues);
+
+        // When
+        Optional<ProjectCapabilityConfigEntity> result = configService.getByProjectAndCodeMasked(
+            testProjectId,
+            "auth"
+        );
+
+        // Then
+        assertTrue(result.isPresent());
+        assertEquals(maskedValues, result.get().getConfigValues());
+        verify(encryptService, times(1)).maskSensitiveFields(any(), any());
+    }
+
+    @Test
+    void testValidateConfigUsesBasicValidation() {
+        // Given
+        when(configMapper.selectOne(any(LambdaQueryWrapper.class))).thenReturn(testConfig);
+        when(capabilityService.getByCode("auth")).thenReturn(Optional.of(testCapability));
+        when(configMapper.updateById(any(ProjectCapabilityConfigEntity.class))).thenReturn(1);
+
+        // When
+        boolean result = configService.validateConfig(testProjectId, "auth");
+
+        // Then
+        assertTrue(result);
+        assertEquals(ProjectCapabilityConfigEntity.STATUS_VALIDATED, testConfig.getStatus());
+        assertNull(testConfig.getValidationError());
+        verify(capabilityService, times(1)).getByCode("auth");
+    }
 }

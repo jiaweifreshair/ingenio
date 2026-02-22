@@ -1,17 +1,19 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Eye, ArrowLeft, Check, Loader2, AlertCircle, Code2, Copy, CheckCircle, Sparkles, RefreshCw, Wrench } from 'lucide-react';
+import { Eye, ArrowLeft, Check, Loader2, AlertCircle, Code2, Copy, CheckCircle, Sparkles, RefreshCw, Wrench, MessageSquare } from 'lucide-react';
 import { DesignStyle, getStyleDisplayInfo } from '@/types/design-style';
 import type { IndustryTemplate } from '@/types/industry-template';
 import { CodeFileTree, type FileNode } from './code-file-tree';
+import { InteractionPanel, type ChatHistoryItem } from './interaction-panel';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { useToast } from '@/hooks/use-toast';
 
 // Phase 2: Sandbox生命周期管理
 import { useSandboxHeartbeat } from '@/hooks/use-sandbox-heartbeat';
@@ -53,6 +55,16 @@ export interface PrototypePreviewPanelProps {
   elapsedTime?: number;
   /** 自动修复回调 */
   onAutoFix?: () => Promise<void> | void;
+  /** 用户原始需求（用于修改时提供上下文） */
+  userRequirement?: string;
+  /** 修改原型回调（Chat功能） */
+  onModifyPrototype?: (message: string) => Promise<void>;
+  /** 是否正在修改中 */
+  isModifying?: boolean;
+  /** 对话历史记录 */
+  chatHistory?: ChatHistoryItem[];
+  /** 修改日志 */
+  modifyLogs?: string[];
 }
 
 /**
@@ -96,10 +108,10 @@ function getLanguage(type: FileNode['type']): string {
  * Phase 2增强版本：
  * - ✅ Sandbox心跳机制（60秒）
  * - ✅ 自动清理机制（页面卸载）
- * - 暂不实现聊天式修改功能（Phase 10实现）
+ * - ✅ 聊天式修改功能（Phase 10）
  *
  * @author Ingenio Team
- * @version 2.2.0
+ * @version 2.3.0
  * @since 2025-12-10
  */
 export function PrototypePreviewPanel({
@@ -119,8 +131,13 @@ export function PrototypePreviewPanel({
   onRefresh,
   elapsedTime = 0,
   onAutoFix,
+  onModifyPrototype,
+  isModifying = false,
+  chatHistory = [],
+  modifyLogs = [],
 }: PrototypePreviewPanelProps): React.ReactElement {
   const { t } = useLanguage();
+  const { toast } = useToast();
   // 获取选中风格的显示信息
   const selectedStyleInfo = selectedStyle ? getStyleDisplayInfo(selectedStyle) : null;
 
@@ -136,6 +153,40 @@ export function PrototypePreviewPanel({
 
   // 自动修复状态
   const [isFixing, setIsFixing] = useState(false);
+
+  // 处理发送修改消息
+  const handleSendModifyMessage = useCallback(async (message: string) => {
+    if (!onModifyPrototype) {
+      toast({
+        title: '功能暂不可用',
+        description: '修改功能未启用，请稍后重试',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    if (isModifying || isGenerating || loading) {
+      toast({
+        title: '请稍候',
+        description: '正在处理中，请等待当前操作完成',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      await onModifyPrototype(message);
+      // 修改成功后刷新预览
+      setIframeKey(prev => prev + 1);
+    } catch (error) {
+      console.error('[原型修改] 发送修改请求失败:', error);
+      toast({
+        title: '修改失败',
+        description: error instanceof Error ? error.message : '请稍后重试',
+        variant: 'destructive',
+      });
+    }
+  }, [onModifyPrototype, isModifying, isGenerating, loading, toast]);
 
   // Phase 2: Sandbox心跳（60秒间隔）
   useSandboxHeartbeat({
@@ -359,7 +410,7 @@ export function PrototypePreviewPanel({
             </div>
           )}
 
-          {/* Tabs: 预览 vs 代码 */}
+          {/* Tabs: 预览 vs 代码 vs 修改 */}
           {!loading && sandboxUrl && (
             <Tabs defaultValue="preview" className="h-full flex flex-col">
               <div className="flex items-center justify-between px-4 mt-4">
@@ -372,20 +423,29 @@ export function PrototypePreviewPanel({
                     <Code2 className="h-4 w-4" />
                     代码 {files.length > 0 && `(${files.length})`}
                   </TabsTrigger>
+                  {onModifyPrototype && (
+                    <TabsTrigger value="chat" className="flex items-center gap-2">
+                      <MessageSquare className="h-4 w-4" />
+                      修改
+                      {isModifying && <Loader2 className="h-3 w-3 animate-spin ml-1" />}
+                    </TabsTrigger>
+                  )}
                 </TabsList>
 
-                {onRefresh && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleRefresh}
-                    disabled={isRefreshing}
-                    className="h-8 text-xs flex items-center gap-2"
-                  >
-                    <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                    {isRefreshing ? t('ui.refreshing') : t('ui.refresh_preview')}
-                  </Button>
-                )}
+                <div className="flex items-center gap-2">
+                  {onRefresh && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRefresh}
+                      disabled={isRefreshing}
+                      className="h-8 text-xs flex items-center gap-2"
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                      {isRefreshing ? t('ui.refreshing') : t('ui.refresh_preview')}
+                    </Button>
+                  )}
+                </div>
               </div>
 
               {/* 预览标签页 */}
@@ -506,6 +566,22 @@ export function PrototypePreviewPanel({
                   </div>
                 </div>
               </TabsContent>
+
+              {/* 修改标签页 - Chat交互面板 */}
+              {onModifyPrototype && (
+                <TabsContent value="chat" className="flex-1 overflow-hidden m-4 mt-2 min-h-[500px]">
+                  <div className="h-full border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                    <InteractionPanel
+                      historyItems={chatHistory}
+                      logs={modifyLogs}
+                      onSendMessage={handleSendModifyMessage}
+                      isGenerating={isModifying}
+                      contextLabel="原型修改"
+                      inputPlaceholder="描述您想要修改的内容，例如：'把背景色改成蓝色'、'添加一个导航栏'、'修复登录按钮的样式问题'"
+                    />
+                  </div>
+                </TabsContent>
+              )}
             </Tabs>
           )}
 

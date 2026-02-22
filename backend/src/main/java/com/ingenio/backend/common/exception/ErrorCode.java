@@ -14,6 +14,7 @@ public enum ErrorCode {
     UNAUTHORIZED("1003", "未授权"),
     FORBIDDEN("1004", "无权限"),
     TOO_MANY_REQUESTS("1005", "请求过于频繁"),
+    BUSINESS_ERROR("1006", "业务错误"),
 
     // 用户相关错误码（2000-2999）
     USER_NOT_FOUND("2000", "用户不存在"),

@@ -12,6 +12,7 @@ import com.ingenio.backend.service.TimeMachineAdvancedService;
 import com.ingenio.backend.service.TimeMachineAdvancedService.*;
 import com.ingenio.backend.service.VersionSnapshotService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.Instant;
@@ -49,6 +50,7 @@ import java.util.UUID;
  * @author Justin
  * @since 2025-11-17 V2.0高级功能升级
  */
+@Slf4j
 @RestController
 @RequestMapping("/v1/timemachine")
 @RequiredArgsConstructor
@@ -69,6 +71,37 @@ public class TimeMachineController {
     public Result<List<VersionTimelineItem>> getTimeline(@PathVariable String taskId) {
         UUID uuid = UUID.fromString(taskId);
         List<VersionTimelineItem> timeline = snapshotService.getTimeline(uuid);
+        return Result.success(timeline);
+    }
+
+    /**
+     * 按AppSpec获取版本历史时间线
+     *
+     * 说明：
+     * - 前端项目列表使用 appSpecId 作为标识
+     * - 此接口通过 appSpecId 查找对应的 generation_task，再获取版本时间线
+     *
+     * @param appSpecId 应用规格ID
+     * @return 时间线条目列表（按时间倒序）
+     */
+    @GetMapping("/appspec/{appSpecId}/timeline")
+    @SaCheckLogin
+    public Result<List<VersionTimelineItem>> getTimelineByAppSpec(@PathVariable String appSpecId) {
+        UUID appSpecUuid = UUID.fromString(appSpecId);
+
+        // 查找最新的 generation_task（与 appSpecId 关联）
+        GenerationTaskEntity task = generationTaskMapper.selectOne(
+                new QueryWrapper<GenerationTaskEntity>()
+                        .eq("app_spec_id", appSpecUuid)
+                        .orderByDesc("created_at")
+                        .last("LIMIT 1"));
+
+        if (task == null) {
+            // 未找到关联任务，返回空列表
+            return Result.success(List.of());
+        }
+
+        List<VersionTimelineItem> timeline = snapshotService.getTimeline(task.getId());
         return Result.success(timeline);
     }
 
@@ -150,8 +183,13 @@ public class TimeMachineController {
             @PathVariable String versionId,
             @RequestParam String tag) {
         UUID uuid = UUID.fromString(versionId);
-        GenerationVersionEntity version = advancedService.addTag(uuid, tag);
-        return Result.success(version);
+        try {
+            GenerationVersionEntity version = advancedService.addTag(uuid, tag);
+            return Result.success(version);
+        } catch (RuntimeException exception) {
+            log.warn("添加版本标签失败: versionId={}, tag={}, reason={}", versionId, tag, exception.getMessage());
+            return Result.error(404, exception.getMessage());
+        }
     }
 
     /**
@@ -167,8 +205,13 @@ public class TimeMachineController {
             @PathVariable String versionId,
             @RequestParam String tag) {
         UUID uuid = UUID.fromString(versionId);
-        GenerationVersionEntity version = advancedService.removeTag(uuid, tag);
-        return Result.success(version);
+        try {
+            GenerationVersionEntity version = advancedService.removeTag(uuid, tag);
+            return Result.success(version);
+        } catch (RuntimeException exception) {
+            log.warn("移除版本标签失败: versionId={}, tag={}, reason={}", versionId, tag, exception.getMessage());
+            return Result.error(404, exception.getMessage());
+        }
     }
 
     /**

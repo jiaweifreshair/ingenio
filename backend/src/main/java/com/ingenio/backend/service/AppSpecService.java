@@ -34,6 +34,20 @@ public interface AppSpecService extends IService<AppSpecEntity> {
     AppSpecEntity getByIdAndTenantId(UUID id, UUID tenantId);
 
     /**
+     * 根据ID查询AppSpec（租户命中优先，用户匹配时允许回退）
+     *
+     * 是什么：带租户与用户双重约束的查询方法。
+     * 做什么：先按租户查询，失败时检查是否为当前用户创建的AppSpec。
+     * 为什么：避免路由阶段 tenantId 不一致导致 AppSpec 查询失败。
+     *
+     * @param id AppSpec ID
+     * @param tenantId 租户ID
+     * @param userId 当前用户ID
+     * @return AppSpec实体
+     */
+    AppSpecEntity getByIdWithUserFallback(UUID id, UUID tenantId, UUID userId);
+
+    /**
      * 分页查询用户的AppSpec列表
      *
      * @param tenantId 租户ID

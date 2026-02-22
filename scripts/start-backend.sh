@@ -2,16 +2,17 @@
 
 # 启动后端服务脚本
 
-cd "$(dirname "$0")/../backend"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR/backend"
 
 echo "🚀 启动秒构AI后端服务..."
 
-# 加载环境变量
-if [ -f .env ]; then
+# 加载环境变量（仅根目录 .env）
+if [ -f "$ROOT_DIR/.env" ]; then
     echo "📄 加载环境变量 (.env)..."
     # 使用 set -a 自动导出变量，处理包含空格的值
     set -a
-    source .env
+    source "$ROOT_DIR/.env"
     set +a
 fi
 
@@ -43,19 +44,19 @@ if ! docker ps | grep -q ingenio-postgres; then
     echo "⚠️  警告: PostgreSQL 容器未运行，请先启动: docker-compose up -d postgres"
 fi
 
-# 设置环境变量
+# 设置环境变量（宿主机运行覆盖为 localhost/ingenio_dev）
 export SPRING_PROFILES_ACTIVE=dev
 export DB_HOST=localhost
-export DB_PORT=5432
-export DB_NAME=ingenio  # 强制使用 ingenio
-export DB_USER=ingenio_user
-export DB_PASSWORD=ingenio_password
+export DB_PORT="${DB_PORT:-5432}"
+export DB_NAME=ingenio_dev
+export DB_USER="${DB_USER:-postgres}"
+export DB_PASSWORD="${DB_PASSWORD:-ingenio_20251122}"
 export REDIS_HOST=localhost
-export REDIS_PORT=6379
+export REDIS_PORT="${REDIS_PORT:-6379}"
 export MINIO_ENDPOINT=http://localhost:9000
-export MINIO_ACCESS_KEY=minioadmin
-export MINIO_SECRET_KEY=minioadmin
-export MINIO_BUCKET_NAME=ingenio-code
+export MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
+export MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
+export MINIO_BUCKET_NAME="${MINIO_BUCKET_NAME:-ingenio-code}"
 
 # 检查 API Key
 if [ -z "$SPRING_AI_OPENAI_API_KEY" ] && [ -z "$QINIU_CLOUD_API_KEY" ] && [ -z "$DEEPSEEK_API_KEY" ]; then
@@ -68,5 +69,7 @@ fi
 
 # 启动服务
 echo "🔨 编译并启动后端服务..."
-mvn spring-boot:run -Dspring-boot.run.profiles=dev
-
+# 禁用Java代理，避免SOCKS代理干扰数据库连接
+mvn spring-boot:run \
+  -Dspring-boot.run.profiles=dev \
+  -Dspring-boot.run.jvmArguments="-Djava.net.preferIPv4Stack=true -Dhttp.proxyHost= -Dhttp.proxyPort= -Dhttps.proxyHost= -Dhttps.proxyPort= -DsocksProxyHost= -DsocksProxyPort="

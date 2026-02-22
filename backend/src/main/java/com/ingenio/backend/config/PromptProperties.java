@@ -36,6 +36,15 @@ public class PromptProperties {
      */
     private Coach coach = new Coach();
 
+    /**
+     * GEO（生成引擎优化）相关提示词配置。
+     *
+     * 是什么：GEO 工作台的提示词资产配置入口。
+     * 做什么：为 E-E-A-T 审校、关键词挖掘等能力提供可外置可迭代的 Prompt。
+     * 为什么：提示词属于运行资产，应避免硬编码在 Java 代码中，便于灰度与热更新。
+     */
+    private Geo geo = new Geo();
+
     public Architect getArchitect() {
         return architect;
     }
@@ -58,6 +67,14 @@ public class PromptProperties {
 
     public void setCoach(Coach coach) {
         this.coach = coach;
+    }
+
+    public Geo getGeo() {
+        return geo;
+    }
+
+    public void setGeo(Geo geo) {
+        this.geo = geo;
     }
 
     @Data
@@ -240,6 +257,36 @@ public class PromptProperties {
 
         public void setFixPomXml(String fixPomXml) {
             this.fixPomXml = fixPomXml;
+        }
+    }
+
+    @Data
+    public static class Geo {
+
+        /**
+         * GEO E-E-A-T 审校提示词模板路径。
+         */
+        private String review = "classpath:prompts/geo/review.txt";
+
+        /**
+         * GEO 关键词挖掘提示词模板路径。
+         */
+        private String keywords = "classpath:prompts/geo/keywords.txt";
+
+        public String getReview() {
+            return review;
+        }
+
+        public void setReview(String review) {
+            this.review = review;
+        }
+
+        public String getKeywords() {
+            return keywords;
+        }
+
+        public void setKeywords(String keywords) {
+            this.keywords = keywords;
         }
     }
 }

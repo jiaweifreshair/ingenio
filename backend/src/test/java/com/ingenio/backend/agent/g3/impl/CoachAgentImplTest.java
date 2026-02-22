@@ -3,11 +3,13 @@ package com.ingenio.backend.agent.g3.impl;
 import com.ingenio.backend.agent.g3.ICoachAgent;
 import com.ingenio.backend.ai.AIProvider;
 import com.ingenio.backend.ai.AIProviderFactory;
+import com.ingenio.backend.ai.UniaixAIProvider;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
 import com.ingenio.backend.prompt.PromptTemplateService;
+import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.g3.G3ContextBuilder;
 import com.ingenio.backend.service.g3.G3ToolsetService;
 import com.ingenio.backend.service.g3.G3ToolsetService.SearchResult;
@@ -20,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -49,6 +52,9 @@ class CoachAgentImplTest {
     private AIProvider aiProvider;
 
     @Mock
+    private UniaixAIProvider uniaixAIProvider;
+
+    @Mock
     private PromptTemplateService promptTemplateService;
 
     @Mock
@@ -65,6 +71,9 @@ class CoachAgentImplTest {
 
     @Mock
     private G3HookPipeline hookPipeline;
+
+    @Mock
+    private ProjectService projectService;
 
     @Mock
     private Consumer<G3LogEntry> logConsumer;
@@ -91,6 +100,7 @@ class CoachAgentImplTest {
         lenient().when(toolsetService.searchWorkspace(any(), anyString(), anyInt(), any()))
                 .thenReturn(SearchResult.success(new ArrayList<>()));
         lenient().when(hookPipeline.wrapProvider(any(), any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(projectService.findByAppSpecId(any())).thenReturn(null);
 
         testJob = G3JobEntity.builder()
                 .id(testJobId)
@@ -136,6 +146,40 @@ class CoachAgentImplTest {
                 .stderr("User.java:7: error: ';' expected\n")
                 .build();
         validationResults.add(validationResult);
+    }
+
+    @Test
+    void resolveProvider_shouldPreferUniaixWhenG3ProviderIsClaude() {
+        // GIVEN
+        ReflectionTestUtils.setField(coachAgent, "g3Provider", "claude");
+        when(uniaixAIProvider.isAvailable()).thenReturn(true);
+
+        // WHEN
+        AIProvider provider = ReflectionTestUtils.invokeMethod(coachAgent, "resolveProvider", testJob);
+
+        // THEN
+        assertSame(uniaixAIProvider, provider);
+        verifyNoInteractions(aiProviderFactory, projectService);
+    }
+
+    /**
+     * 测试：G3配置为网宿时应映射到ECA Gateway
+     * 期望：返回ECA Gateway Provider
+     */
+    @Test
+    void resolveProvider_shouldPreferEcaGatewayWhenG3ProviderIsWangsu() {
+        // GIVEN
+        ReflectionTestUtils.setField(coachAgent, "g3Provider", "wangsu");
+        when(aiProviderFactory.getProviderByName("eca-gateway")).thenReturn(aiProvider);
+        when(aiProvider.isAvailable()).thenReturn(true);
+
+        // WHEN
+        AIProvider provider = ReflectionTestUtils.invokeMethod(coachAgent, "resolveProvider", testJob);
+
+        // THEN
+        assertSame(aiProvider, provider);
+        verify(aiProviderFactory).getProviderByName("eca-gateway");
+        verifyNoInteractions(projectService);
     }
 
     /**

@@ -147,3 +147,25 @@ export function applyOpenLovableSseMessage(
 export function getOpenLovableCodeForApply(state: OpenLovableAccumulationState): string {
   return state.finalCode ?? state.streamedText;
 }
+
+/**
+ * 判断是否可以终止 OpenLovable 的 SSE 流
+ *
+ * 是什么：基于 complete 事件与已累积代码判断“生成是否可收敛”。
+ * 做什么：在上游不主动断流时，允许前端主动收敛，避免无限等待。
+ * 为什么：部分上游会在 complete 后继续输出状态/续写提示，导致前端卡在“生成中”。
+ */
+export function shouldFinalizeOpenLovableStream(
+  prev: OpenLovableAccumulationState,
+  next: OpenLovableAccumulationState,
+  message: OpenLovableSseMessage
+): boolean {
+  if (message.type !== 'complete') return false;
+
+  if (next.finalCode) return true;
+
+  const candidate = next.streamedText || prev.streamedText;
+  if (!candidate) return false;
+
+  return candidate.includes('<file') && candidate.includes('</file>');
+}

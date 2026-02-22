@@ -105,14 +105,19 @@ test.describe('OpenLovable 快速预览：先生成后创建沙箱', () => {
     await waitApplyReq;
 
     // 5) 时序断言：创建沙箱 / apply 不应早于 SSE 生成结束
-    expect(generateStreamFinishedAt).not.toBeNull();
-    expect(sandboxCreateRequestedAt).not.toBeNull();
-    expect(applyRequestedAt).not.toBeNull();
-    expect(sandboxCreateRequestedAt as number).toBeGreaterThan(generateStreamFinishedAt as number);
-    expect(applyRequestedAt as number).toBeGreaterThan(generateStreamFinishedAt as number);
+    if (
+      generateStreamFinishedAt == null ||
+      sandboxCreateRequestedAt == null ||
+      applyRequestedAt == null
+    ) {
+      throw new Error('时间戳未完整采集，无法进行时序断言');
+    }
+    expect(sandboxCreateRequestedAt > generateStreamFinishedAt).toBeTruthy();
+    expect(applyRequestedAt > generateStreamFinishedAt).toBeTruthy();
 
     // 6) 页面最终应进入“完成”态，并出现可用预览
-    await expect(page.getByText('生成完成', { exact: false })).toBeVisible({ timeout: 300_000 });
+    const statusBadge = page.getByTestId('preview-quick-status');
+    await expect(statusBadge).toContainText('已完成', { timeout: 300_000 });
 
     const previewFrame = page.locator('iframe[title="应用预览"]');
     await expect(previewFrame).toBeVisible({ timeout: 300_000 });
@@ -127,4 +132,3 @@ test.describe('OpenLovable 快速预览：先生成后创建沙箱', () => {
     await page.screenshot({ path: '/tmp/e2e-openlovable-preview-quick-success.png', fullPage: true });
   });
 });
-

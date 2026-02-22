@@ -105,6 +105,8 @@ interface LivePreviewIframeProps {
   errorText?: string;
   /** 运行时错误回调 */
   onRuntimeError?: (error: Error) => void;
+  /** 预览加载失败回调 */
+  onPreviewError?: (error: Error) => void;
 }
 
 /**
@@ -148,7 +150,16 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
   loadingText = '正在加载预览...',
   errorText = '预览加载失败',
   onRuntimeError,
+  onPreviewError,
 }) => {
+  /**
+   * 预览加载超时阈值
+   *
+   * 是什么：等待 iframe 加载完成的最大时长。
+   * 做什么：超过阈值后触发 onPreviewError 并进入错误态。
+   * 为什么：避免预览长期空白无反馈。
+   */
+  const PREVIEW_TIMEOUT_MS = 12_000;
   const [device, setDevice] = useState<DeviceType>(initialDevice);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -209,7 +220,10 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
   const handleIframeError = useCallback(() => {
     setIsLoading(false);
     setHasError(true);
-  }, []);
+    if (onPreviewError) {
+      onPreviewError(new Error('预览加载失败'));
+    }
+  }, [onPreviewError]);
 
   /**
    * 切换预览显示
@@ -248,14 +262,69 @@ export const LivePreviewIframe: React.FC<LivePreviewIframeProps> = ({
     }
   }, [validPreviewUrl]);
 
+  /**
+   * 预览加载超时兜底
+   *
+   * 是什么：当 iframe 长时间未完成加载时触发错误回调。
+   * 做什么：结束加载状态并进入错误态。
+   * 为什么：防止预览一直空白却无提示。
+   */
+  useEffect(() => {
+    if (!validPreviewUrl || isGenerating || !showPreview || hasError || !isLoading) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setIsLoading(false);
+      setHasError(true);
+      if (onPreviewError) {
+        onPreviewError(new Error(errorText));
+      }
+    }, PREVIEW_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [validPreviewUrl, isGenerating, showPreview, hasError, isLoading, onPreviewError, errorText, PREVIEW_TIMEOUT_MS]);
+
+  // 沙箱状态异常时触发预览错误
+  useEffect(() => {
+    if (sandboxStatus === 'error') {
+      setHasError(true);
+      setIsLoading(false);
+      if (onPreviewError) {
+        onPreviewError(new Error('沙箱状态异常'));
+      }
+    }
+  }, [sandboxStatus, onPreviewError]);
+
   // 监听来自沙箱的运行时错误消息
   useEffect(() => {
+    /**
+     * 运行时错误标准化
+     *
+     * 是什么：把沙箱错误 payload 转为 Error 实例。
+     * 做什么：兼容字符串/对象/Error 等多种类型。
+     * 为什么：确保上层统一处理白屏与运行时异常。
+     */
+    const normalizeSandboxError = (rawError: unknown): Error => {
+      if (rawError instanceof Error) {
+        return rawError;
+      }
+      if (rawError && typeof rawError === 'object' && 'message' in rawError) {
+        const message = (rawError as { message?: unknown }).message;
+        return new Error(typeof message === 'string' ? message : '预览运行时错误');
+      }
+      if (typeof rawError === 'string') {
+        return new Error(rawError);
+      }
+      return new Error('预览运行时错误');
+    };
+
     const handleMessage = (event: MessageEvent) => {
       // 简单校验消息格式
       if (event.data && event.data.type === 'SANDBOX_ERROR' && event.data.error) {
         console.warn('[LivePreview] 捕获到沙箱运行时错误:', event.data.error);
         if (onRuntimeError) {
-          onRuntimeError(event.data.error);
+          onRuntimeError(normalizeSandboxError(event.data.error));
         }
       }
     };

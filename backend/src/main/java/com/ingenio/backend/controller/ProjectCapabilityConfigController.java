@@ -2,7 +2,9 @@ package com.ingenio.backend.controller;
 
 import com.ingenio.backend.dto.ApiResponse;
 import com.ingenio.backend.entity.ProjectCapabilityConfigEntity;
+import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.service.ProjectCapabilityConfigService;
+import com.ingenio.backend.service.ProjectService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -41,6 +43,16 @@ public class ProjectCapabilityConfigController {
     private ProjectCapabilityConfigService configService;
 
     /**
+     * 项目服务
+     *
+     * 是什么：用于通过 appSpecId 反查项目。
+     * 做什么：兼容能力配置接口使用 appSpecId 的调用方式。
+     * 为什么：前端 E2E 场景传 appSpecId，需要自动映射。
+     */
+    @Autowired
+    private ProjectService projectService;
+
+    /**
      * 获取项目的所有能力配置
      *
      * 返回的配置值中敏感字段已掩码处理
@@ -54,7 +66,12 @@ public class ProjectCapabilityConfigController {
     ) {
         log.info("API: 获取项目能力配置列表, projectId={}", projectId);
 
-        List<ProjectCapabilityConfigEntity> configs = configService.listByProjectMasked(projectId);
+        ProjectEntity project = resolveProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        List<ProjectCapabilityConfigEntity> configs = configService.listByProjectMasked(project.getId());
 
         return ResponseEntity.ok(ApiResponse.success(configs));
     }
@@ -73,11 +90,13 @@ public class ProjectCapabilityConfigController {
     ) {
         log.info("API: 获取能力配置详情, projectId={}, code={}", projectId, capabilityCode);
 
-        return configService.getByProjectAndCode(projectId, capabilityCode)
-            .map(config -> {
-                // 掩码敏感字段（此处简化处理，实际应调用掩码方法）
-                return ResponseEntity.ok(ApiResponse.success(config));
-            })
+        ProjectEntity project = resolveProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        return configService.getByProjectAndCodeMasked(project.getId(), capabilityCode)
+            .map(config -> ResponseEntity.ok(ApiResponse.success(config)))
             .orElse(ResponseEntity.notFound().build());
     }
 
@@ -96,8 +115,13 @@ public class ProjectCapabilityConfigController {
         log.info("API: 添加能力配置, projectId={}, code={}", projectId, request.capabilityCode);
 
         try {
+            ProjectEntity project = resolveProject(projectId);
+            if (project == null) {
+                return ResponseEntity.notFound().build();
+            }
+
             ProjectCapabilityConfigEntity config = configService.addConfig(
-                projectId,
+                project.getId(),
                 request.capabilityCode,
                 request.configValues != null ? request.configValues : Map.of()
             );
@@ -127,8 +151,13 @@ public class ProjectCapabilityConfigController {
         log.info("API: 更新能力配置, projectId={}, code={}", projectId, capabilityCode);
 
         try {
+            ProjectEntity project = resolveProject(projectId);
+            if (project == null) {
+                return ResponseEntity.notFound().build();
+            }
+
             ProjectCapabilityConfigEntity config = configService.updateConfig(
-                projectId,
+                project.getId(),
                 capabilityCode,
                 request.configValues
             );
@@ -155,7 +184,12 @@ public class ProjectCapabilityConfigController {
     ) {
         log.info("API: 删除能力配置, projectId={}, code={}", projectId, capabilityCode);
 
-        configService.deleteConfig(projectId, capabilityCode);
+        ProjectEntity project = resolveProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        configService.deleteConfig(project.getId(), capabilityCode);
 
         return ResponseEntity.ok(ApiResponse.success(null));
     }
@@ -175,11 +209,27 @@ public class ProjectCapabilityConfigController {
         log.info("API: 验证能力配置, projectId={}, code={}", projectId, capabilityCode);
 
         try {
-            boolean isValid = configService.validateConfig(projectId, capabilityCode);
+            ProjectEntity project = resolveProject(projectId);
+            if (project == null) {
+                return ResponseEntity.notFound().build();
+            }
+
+            boolean isValid = configService.validateConfig(project.getId(), capabilityCode);
+            String message = isValid ? "配置验证通过" : "配置验证失败";
+
+            if (!isValid) {
+                String errorMessage = configService.getByProjectAndCode(project.getId(), capabilityCode)
+                        .map(ProjectCapabilityConfigEntity::getValidationError)
+                        .filter(value -> value != null && !value.isBlank())
+                        .orElse(null);
+                if (errorMessage != null) {
+                    message = errorMessage;
+                }
+            }
 
             ValidationResult result = new ValidationResult();
             result.valid = isValid;
-            result.message = isValid ? "配置验证通过" : "配置验证失败";
+            result.message = message;
 
             return ResponseEntity.ok(ApiResponse.success(result));
 
@@ -203,7 +253,12 @@ public class ProjectCapabilityConfigController {
     ) {
         log.info("API: 批量添加能力配置, projectId={}, codes={}", projectId, request.capabilityCodes);
 
-        configService.addConfigsBatch(projectId, request.capabilityCodes);
+        ProjectEntity project = resolveProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        configService.addConfigsBatch(project.getId(), request.capabilityCodes);
 
         return ResponseEntity.ok(ApiResponse.success(null));
     }
@@ -220,9 +275,34 @@ public class ProjectCapabilityConfigController {
     ) {
         log.info("API: 获取已配置的能力代码, projectId={}", projectId);
 
-        List<String> codes = configService.getConfiguredCapabilityCodes(projectId);
+        ProjectEntity project = resolveProject(projectId);
+        if (project == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        List<String> codes = configService.getConfiguredCapabilityCodes(project.getId());
 
         return ResponseEntity.ok(ApiResponse.success(codes));
+    }
+
+    /**
+     * 解析项目ID（兼容 appSpecId 作为入口）
+     *
+     * 是什么：根据传入的 projectId 或 appSpecId 查询真实项目。
+     * 做什么：优先按 projectId 查询，找不到再按 appSpecId 反查。
+     * 为什么：前端可能仅持有 appSpecId，需要兼容能力配置调用。
+     */
+    private ProjectEntity resolveProject(UUID projectIdOrAppSpecId) {
+        if (projectIdOrAppSpecId == null) {
+            return null;
+        }
+
+        ProjectEntity project = projectService.getById(projectIdOrAppSpecId);
+        if (project != null) {
+            return project;
+        }
+
+        return projectService.findByAppSpecId(projectIdOrAppSpecId);
     }
 
     // ==================== 请求/响应类 ====================

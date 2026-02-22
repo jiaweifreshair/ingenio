@@ -25,7 +25,7 @@ spring:
   ai:
     openai:
       # 使用本地代理的API密钥
-      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:sk-418de7bda2824845967ff0c8b97bfbc9}}}}
+      api-key: ${SPRING_AI_OPENAI_API_KEY:${QINIU_CLOUD_API_KEY:${QINIU_AI_API_KEY:${DEEPSEEK_API_KEY:test-api-key-placeholder}}}}
       # 使用本地代理URL
       base-url: ${SPRING_AI_OPENAI_BASE_URL:${QINIU_CLOUD_BASE_URL:http://127.0.0.1:8045/v1}}
       chat:
@@ -38,7 +38,7 @@ spring:
           timeout: 30s  # 测试环境适当缩短超时时间
     # DashScope配置（备用）
     dashscope:
-      api-key: ${DASHSCOPE_API_KEY:sk-placeholder}
+      api-key: ${DASHSCOPE_API_KEY:test-api-key-placeholder}
       base-url: https://dashscope.aliyuncs.com
       chat:
         enabled: false
@@ -73,7 +73,7 @@ sa-token:
   is-share: false
   token-style: jwt
   is-log: false
-  jwt-secret-key: test-jwt-secret-key
+  jwt-secret-key: ${TEST_JWT_SECRET_KEY:test-jwt-secret-placeholder}
 
 # 服务器配置
 server:
@@ -101,14 +101,14 @@ ingenio:
     # UniAix配置（测试环境使用本地代理）
     uniaix:
       base-url: http://127.0.0.1:8045/v1
-      api-key: sk-418de7bda2824845967ff0c8b97bfbc9
+      api-key: ${INGENIO_AI_API_KEY:test-api-key-placeholder}
       default-model: claude-3-5-sonnet-20241022
       timeout: 180000
 
 # 微信配置（测试环境使用占位符）
 wechat:
   appid: test-appid
-  secret: test-secret
+  secret: ${WECHAT_TEST_SECRET:test-wechat-secret-placeholder}
   redirect-uri: http://localhost:3000/auth/callback
 
 # 邮件配置（测试环境Mock）
@@ -116,7 +116,7 @@ spring.mail:
   host: localhost
   port: 25
   username: test@ingenio.local
-  password: test-password
+  password: ${TEST_MAIL_PASSWORD:test-mail-password-placeholder}
   properties:
     mail.smtp.auth: false
     mail.smtp.starttls.enable: false
@@ -125,9 +125,9 @@ spring.mail:
 oauth:
   google:
     client-id: test-google-client-id
-    client-secret: test-google-client-secret
+    client-secret: ${TEST_GOOGLE_CLIENT_SECRET:test-google-client-secret-placeholder}
     redirect-uri: http://localhost:3000/auth/google/callback
   github:
     client-id: test-github-client-id
-    client-secret: test-github-client-secret
+    client-secret: ${TEST_GITHUB_CLIENT_SECRET:test-github-client-secret-placeholder}
     redirect-uri: http://localhost:3000/auth/github/callback

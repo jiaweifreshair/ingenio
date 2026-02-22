@@ -95,6 +95,87 @@ function toStringArray(value: unknown): string[] {
 }
 
 /**
+ * 需求关键词匹配器
+ *
+ * 是什么：根据需求文本判断是否包含指定关键词的工具函数。
+ * 做什么：同时匹配原文与小写文本，兼容中英文关键词。
+ * 为什么：用于 Step1 兜底结果的实体与动作推断。
+ */
+function containsRequirementKeyword(
+  requirement: string | undefined,
+  keywords: string[]
+): boolean {
+  if (!requirement) return false;
+  const requirementText = requirement.trim();
+  if (!requirementText) return false;
+  const requirementLower = requirementText.toLowerCase();
+
+  for (const keyword of keywords) {
+    if (!keyword) continue;
+    if (requirementText.includes(keyword)) return true;
+    if (requirementLower.includes(keyword.toLowerCase())) return true;
+  }
+
+  return false;
+}
+
+/**
+ * Step1 实体兜底推断
+ *
+ * 是什么：根据需求文本推断基础实体列表。
+ * 做什么：当 Step1 entities 为空时补齐最小可读实体。
+ * 为什么：避免产品经理步骤展示为空，提升可读性与一致性。
+ */
+function buildStep1FallbackEntities(requirement: string | undefined): string[] {
+  const entities: string[] = ['User'];
+
+  if (containsRequirementKeyword(requirement, ['交换', '交易', '订单', '支付', '旧物', '物品', '商品'])) {
+    entities.push('Item');
+  } else if (containsRequirementKeyword(requirement, ['海报', 'poster', '宣传', '设计'])) {
+    entities.push('Poster');
+  } else if (containsRequirementKeyword(requirement, ['流程', '步骤', '节点', '逻辑', '流程图'])) {
+    entities.push('FlowNode');
+  } else if (containsRequirementKeyword(requirement, ['城市', '大脑', '指挥', '交通', '应急'])) {
+    entities.push('Event');
+  } else if (containsRequirementKeyword(requirement, ['校园', '学生', '学校'])) {
+    entities.push('Student');
+  } else if (containsRequirementKeyword(requirement, ['社区', '论坛', '帖子', '评论'])) {
+    entities.push('Post');
+  }
+
+  return entities;
+}
+
+/**
+ * Step1 动作兜底推断
+ *
+ * 是什么：根据需求文本推断基础动作列表。
+ * 做什么：当 Step1 actions 为空时补齐最小可读动作。
+ * 为什么：避免产品经理步骤关键动作为空，影响用户理解。
+ */
+function buildStep1FallbackActions(requirement: string | undefined): string[] {
+  if (containsRequirementKeyword(requirement, ['交换', '交易', '订单', '支付', '旧物', '物品', '商品'])) {
+    return ['发布物品', '发起交换', '确认交易'];
+  }
+  if (containsRequirementKeyword(requirement, ['海报', 'poster', '宣传', '设计'])) {
+    return ['上传素材', '生成海报', '下载海报'];
+  }
+  if (containsRequirementKeyword(requirement, ['流程', '步骤', '节点', '逻辑', '流程图'])) {
+    return ['输入数据', '执行流程', '输出结果'];
+  }
+  if (containsRequirementKeyword(requirement, ['城市', '大脑', '指挥', '交通', '应急'])) {
+    return ['监测事件', '指挥处置', '生成报告'];
+  }
+  if (containsRequirementKeyword(requirement, ['校园', '学生', '学校'])) {
+    return ['提交需求', '处理审核', '查看结果'];
+  }
+  if (containsRequirementKeyword(requirement, ['社区', '论坛', '帖子', '评论'])) {
+    return ['发布内容', '浏览内容', '互动评论'];
+  }
+  return ['创建', '查看', '管理'];
+}
+
+/**
  * 从对象中安全读取字符串
  *
  * 是什么：字段读取工具。
@@ -480,8 +561,16 @@ export function normalizeStepResult(
   const record = isRecord(raw) ? raw : {};
 
   if (step === 1) {
-    const entities = toStringArray(record.entities);
-    const actions = toStringArray(record.actions).length > 0 ? toStringArray(record.actions) : toStringArray(record.operations);
+    const normalizedEntities = toStringArray(record.entities);
+    const normalizedActions = toStringArray(record.actions).length > 0
+      ? toStringArray(record.actions)
+      : toStringArray(record.operations);
+    const entities = normalizedEntities.length > 0
+      ? normalizedEntities
+      : buildStep1FallbackEntities(requirement);
+    const actions = normalizedActions.length > 0
+      ? normalizedActions
+      : buildStep1FallbackActions(requirement);
 
     const summary =
       getString(record, 'summary') ||
@@ -507,7 +596,17 @@ export function normalizeStepResult(
   if (step === 2) {
     const entities = normalizeEntities(record.entities);
     const relationships = normalizeRelationships(record.relationships);
-    const result: Step2Result = { entities, relationships };
+    const assumptions = toStringArray(record.assumptions);
+    const usedFallback =
+      typeof record.usedFallback === 'boolean'
+        ? record.usedFallback
+        : assumptions.length > 0;
+    const result: Step2Result = {
+      entities,
+      relationships,
+      usedFallback,
+      assumptions: assumptions.length > 0 ? assumptions : undefined
+    };
     return { step: 2, data: result };
   }
 
@@ -667,6 +766,8 @@ export function normalizeStepResult(
   const designIntent = typeof record.intent === 'string' ? record.intent : undefined;
   const designBranch = typeof record.branch === 'string' ? record.branch : undefined;
   const designConfidence = typeof record.confidence === 'number' ? record.confidence : undefined;
+  const selectedStyleId = typeof record.selectedStyleId === 'string' ? record.selectedStyleId : undefined;
+  const selectedStyleReason = typeof record.selectedStyleReason === 'string' ? record.selectedStyleReason : undefined;
 
   const result: Step5Result = {
     complexityScore,
@@ -681,7 +782,9 @@ export function normalizeStepResult(
     styleVariants,
     designIntent,
     designBranch,
-    designConfidence
+    designConfidence,
+    selectedStyleId,
+    selectedStyleReason
   };
 
   return { step: 5, data: result };

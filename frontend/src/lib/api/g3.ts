@@ -20,6 +20,7 @@ import type {
   G3ArtifactSummary,
   G3ArtifactContent,
   G3Contract,
+  G3Diagnosis,
   SubmitG3JobRequest,
   SubmitG3JobResponse,
   G3HealthStatus,
@@ -92,6 +93,18 @@ export async function getG3JobStatus(
   jobId: string
 ): Promise<APIResponse<G3JobStatusResponse>> {
   return get<G3JobStatusResponse>(`/v1/g3/jobs/${jobId}`);
+}
+
+/**
+ * 获取G3任务诊断摘要
+ *
+ * @param jobId - 任务ID
+ * @returns 失败诊断摘要与行动项
+ */
+export async function getG3Diagnosis(
+  jobId: string
+): Promise<APIResponse<G3Diagnosis>> {
+  return get<G3Diagnosis>(`/v1/g3/jobs/${jobId}/diagnosis`);
 }
 
 /**
@@ -179,6 +192,49 @@ export async function getG3PlanningFileContent(
   type: string
 ): Promise<APIResponse<string>> {
   return get<string>(`/v1/g3/jobs/${jobId}/planning/${type}/content`);
+}
+
+/**
+ * 追加规划文件内容
+ *
+ * @param jobId - 任务ID
+ * @param type - 文件类型 (task_plan/notes/context)
+ * @param content - 追加内容
+ * @param updatedBy - 更新者标识（可选）
+ * @returns 更新后的规划文件
+ */
+export async function appendG3PlanningFile(
+  jobId: string,
+  type: string,
+  content: string,
+  updatedBy?: string
+): Promise<APIResponse<G3PlanningFileEntity>> {
+  return post<G3PlanningFileEntity>(`/v1/g3/jobs/${jobId}/planning/${type}/append`, {
+    content,
+    updatedBy,
+  });
+}
+
+/**
+ * 下载G3任务产物响应
+ */
+export interface G3DownloadResponse {
+  /** 下载URL */
+  downloadUrl: string;
+  /** 文件数量 */
+  fileCount: number;
+}
+
+/**
+ * 下载G3任务产物（打包为ZIP）
+ *
+ * @param jobId - 任务ID
+ * @returns 下载URL和文件数量
+ */
+export async function downloadG3Artifacts(
+  jobId: string
+): Promise<APIResponse<G3DownloadResponse>> {
+  return get<G3DownloadResponse>(`/v1/g3/jobs/${jobId}/download`);
 }
 
 /**

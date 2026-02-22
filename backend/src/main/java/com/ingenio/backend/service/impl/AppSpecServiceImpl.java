@@ -100,6 +100,35 @@ public class AppSpecServiceImpl extends ServiceImpl<AppSpecMapper, AppSpecEntity
     }
 
     /**
+     * 根据ID查询AppSpec（租户优先，用户匹配回退）
+     *
+     * 是什么：允许在租户不匹配时基于创建者进行回退查询的读取方法。
+     * 做什么：优先按 tenantId 查询；未命中时尝试按 id 查询并校验创建者。
+     * 为什么：保障 PlanRouting 创建的 AppSpec 在前端可稳定读取，避免租户缺失导致查询失败。
+     */
+    @Override
+    public AppSpecEntity getByIdWithUserFallback(UUID id, UUID tenantId, UUID userId) {
+        if (id == null || tenantId == null || userId == null) {
+            log.error("查询AppSpec失败: 参数不能为空 - id={}, tenantId={}, userId={}", id, tenantId, userId);
+            throw new BusinessException(ErrorCode.PARAM_ERROR);
+        }
+
+        AppSpecEntity appSpec = appSpecMapper.findByIdAndTenantId(id, tenantId);
+        if (appSpec != null) {
+            return appSpec;
+        }
+
+        AppSpecEntity fallback = appSpecMapper.selectById(id);
+        if (fallback != null && userId.equals(fallback.getCreatedByUserId())) {
+            log.info("AppSpec租户未命中，已按创建者回退: id={}, userId={}", id, userId);
+            return fallback;
+        }
+
+        log.warn("AppSpec不存在: id={}, tenantId={}, userId={}", id, tenantId, userId);
+        throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
+    }
+
+    /**
      * 分页查询用户的AppSpec列表
      *
      * @param tenantId 租户ID

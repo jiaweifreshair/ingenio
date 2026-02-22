@@ -3,12 +3,15 @@ package com.ingenio.backend.service.g3;
 import com.ingenio.backend.agent.g3.IArchitectAgent;
 import com.ingenio.backend.agent.g3.ICoachAgent;
 import com.ingenio.backend.agent.g3.ICoderAgent;
+import com.ingenio.backend.entity.AppSpecEntity;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.entity.g3.G3SessionMemory;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
 import com.ingenio.backend.entity.GenerationVersionEntity;
+import com.ingenio.backend.entity.ProjectCapabilityConfigEntity;
+import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.mapper.AppSpecMapper;
 import com.ingenio.backend.mapper.GenerationTaskMapper;
 import com.ingenio.backend.mapper.GenerationVersionMapper;
@@ -16,6 +19,9 @@ import com.ingenio.backend.mapper.IndustryTemplateMapper;
 import com.ingenio.backend.mapper.g3.G3ArtifactMapper;
 import com.ingenio.backend.mapper.g3.G3JobMapper;
 import com.ingenio.backend.mapper.g3.G3ValidationResultMapper;
+import com.ingenio.backend.service.NLRequirementAnalyzer;
+import com.ingenio.backend.service.ProjectCapabilityConfigService;
+import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.VersionSnapshotService;
 import com.ingenio.backend.service.blueprint.BlueprintValidator;
 import com.ingenio.backend.websocket.G3WebSocketBroadcaster;
@@ -47,6 +53,10 @@ import static org.mockito.Mockito.*;
  */
 @ExtendWith(MockitoExtension.class)
 class G3OrchestratorServiceTest {
+    /**
+     * 默认租户ID（与后端兜底保持一致）
+     */
+    private static final UUID DEFAULT_TENANT_ID = UUID.fromString("00000000-0000-0000-0000-000000000001");
 
     @Mock
     private G3JobMapper jobMapper;
@@ -126,6 +136,42 @@ class G3OrchestratorServiceTest {
     @Mock
     private G3MemoryPersistenceService memoryPersistenceService;
 
+    /**
+     * 日志流服务 Mock：用于避免测试触发真实 SSE 广播。
+     */
+    @Mock
+    private G3LogStreamService g3LogStreamService;
+
+    /**
+     * 前端 API 生成器 Mock：避免测试触发前端协议生成逻辑。
+     */
+    @Mock
+    private FrontendApiClientGenerator frontendApiClientGenerator;
+
+    /**
+     * 需求分析器 Mock：避免测试触发真实 NLP 解析。
+     */
+    @Mock
+    private NLRequirementAnalyzer nlRequirementAnalyzer;
+
+    /**
+     * 项目服务 Mock：用于能力配置读取链路。
+     */
+    @Mock
+    private ProjectService projectService;
+
+    /**
+     * 项目能力配置 Mock：用于注入能力清单。
+     */
+    @Mock
+    private ProjectCapabilityConfigService projectCapabilityConfigService;
+
+    /**
+     * 失败诊断服务 Mock：用于生成行动项提示。
+     */
+    @Mock
+    private G3FailureDiagnosisService failureDiagnosisService;
+
     @Mock
     private IArchitectAgent architectAgent;
 
@@ -162,6 +208,9 @@ class G3OrchestratorServiceTest {
         // 单元测试环境没有 Spring 代理注入 self，这里手动补齐，避免 submitJob 触发 NPE
         ReflectionTestUtils.setField(orchestratorService, "self", orchestratorService);
 
+        // 日志订阅默认返回空流，避免 subscribeToLogs 测试出现空指针
+        lenient().when(g3LogStreamService.subscribeLog(any())).thenReturn(Flux.empty());
+
         // 仅在 runJob 流程测试中才需要的 Mock 放到专用方法中，避免未使用的 stubbing 报错
     }
 
@@ -190,6 +239,256 @@ class G3OrchestratorServiceTest {
                 job.getStatus().equals(G3JobEntity.Status.QUEUED.getValue()) &&
                 job.getCurrentRound() == 0
         ));
+    }
+
+    /**
+     * 需求中识别到鉴权/支付能力时应注入到蓝图与分析上下文。
+     *
+     * 是什么：模拟需求文本包含鉴权与支付关键词的场景。
+     * 做什么：断言提交任务后蓝图与分析上下文均包含能力清单。
+     * 为什么：保证能力注入进入 G3 上下文，便于生成鉴权/支付集成代码。
+     */
+    @Test
+    void submitJob_injectsDetectedCapabilitiesIntoBlueprintAndAnalysisContext() {
+        String requirement = "需要用户登录鉴权与支付功能";
+        List<String> detectedCapabilities = List.of("auth", "payment_alipay");
+
+        when(nlRequirementAnalyzer.detectProjectCapabilities(requirement)).thenReturn(detectedCapabilities);
+
+        doAnswer(invocation -> {
+            G3JobEntity job = invocation.getArgument(0);
+            job.setId(testJobId);
+            return 1;
+        }).when(jobMapper).insert((G3JobEntity) any());
+
+        UUID jobId = orchestratorService.submitJob(requirement, null, null);
+
+        assertNotNull(jobId);
+        verify(jobMapper).insert(argThat((G3JobEntity job) -> {
+            List<String> blueprintCaps = readCapabilities(job.getBlueprintSpec());
+            List<String> analysisCaps = readCapabilities(job.getAnalysisContextJson());
+            return blueprintCaps.containsAll(detectedCapabilities) && analysisCaps.containsAll(detectedCapabilities);
+        }));
+    }
+
+    /**
+     * 测试：AI 能力识别后应写入 Blueprint 与分析上下文。
+     *
+     * 是什么：模拟需求包含“图像识别/语音识别”等 AI 能力。
+     * 做什么：断言 aiCapabilities 写入 blueprintSpec 与 analysisContext。
+     * 为什么：保证 AI 能力在生成流程中可追踪、可复用。
+     */
+    @Test
+    void submitJob_injectsAiCapabilities_whenBlueprintMissing() {
+        String requirement = "需要图像识别与语音识别能力";
+        List<String> detected = List.of("vision", "speech");
+
+        when(nlRequirementAnalyzer.detectAiCapabilities(requirement)).thenReturn(detected);
+
+        doAnswer(invocation -> {
+            G3JobEntity job = invocation.getArgument(0);
+            job.setId(testJobId);
+            return 1;
+        }).when(jobMapper).insert((G3JobEntity) any());
+
+        UUID jobId = orchestratorService.submitJob(requirement, null, null);
+
+        assertNotNull(jobId);
+        verify(jobMapper).insert(argThat((G3JobEntity job) -> {
+            List<String> blueprintCaps = readStringList(job.getBlueprintSpec(), "aiCapabilities");
+            List<String> analysisCaps = readStringList(job.getAnalysisContextJson(), "aiCapabilities");
+            return blueprintCaps.containsAll(detected) && analysisCaps.containsAll(detected);
+        }));
+    }
+
+    /**
+     * 测试：缺失租户与用户时应写入默认值。
+     *
+     * 是什么：模拟匿名任务提交。
+     * 做什么：断言 tenantId/userId 落库不为空。
+     * 为什么：避免 generation_tasks 与快照链路因空租户失败。
+     */
+    @Test
+    void submitJob_defaultsTenantAndUser_whenMissing() {
+        String requirement = "创建一个匿名任务";
+
+        doAnswer(invocation -> {
+            G3JobEntity job = invocation.getArgument(0);
+            job.setId(testJobId);
+            return 1;
+        }).when(jobMapper).insert((G3JobEntity) any());
+
+        UUID jobId = orchestratorService.submitJob(requirement, null, null);
+
+        assertNotNull(jobId);
+        verify(jobMapper).insert(argThat((G3JobEntity job) ->
+                DEFAULT_TENANT_ID.equals(job.getTenantId()) && DEFAULT_TENANT_ID.equals(job.getUserId())));
+    }
+
+    /**
+     * 测试：JeecgBoot 能力配置应注入到 Blueprint 与分析上下文。
+     *
+     * 是什么：模拟项目已配置鉴权与支付能力。
+     * 做什么：断言 capabilities 与 capabilityConfigKeys 被注入到 G3 任务上下文。
+     * 为什么：保证生成链路能读取鉴权/支付配置并落盘集成代码。
+     */
+    @Test
+    void submitJob_injectsJeecgCapabilities_fromProjectConfigs() {
+        UUID tenantId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        UUID appSpecId = UUID.randomUUID();
+        UUID projectId = UUID.randomUUID();
+
+        /**
+         * AppSpec 测试数据。
+         *
+         * 是什么：模拟已存在的 AppSpec 记录。
+         * 做什么：避免 resolveJobContext 报告 appSpecId 不存在。
+         * 为什么：减少测试日志噪音并保证上下文加载路径覆盖。
+         */
+        AppSpecEntity appSpec = AppSpecEntity.builder()
+                .id(appSpecId)
+                .tenantId(tenantId)
+                .createdByUserId(userId)
+                .specContent(new java.util.HashMap<>())
+                .metadata(new java.util.HashMap<>())
+                .build();
+
+        ProjectEntity project = ProjectEntity.builder()
+                .id(projectId)
+                .appSpecId(appSpecId)
+                .tenantId(tenantId)
+                .userId(userId)
+                .build();
+
+        ProjectCapabilityConfigEntity authConfig = ProjectCapabilityConfigEntity.builder()
+                .projectId(projectId)
+                .capabilityCode("auth")
+                .configValues(java.util.Map.of(
+                        "jwtSecret", "test-secret",
+                        "tokenExpiry", "7d"
+                ))
+                .build();
+
+        ProjectCapabilityConfigEntity paymentConfig = ProjectCapabilityConfigEntity.builder()
+                .projectId(projectId)
+                .capabilityCode("payment_alipay")
+                .configValues(java.util.Map.of(
+                        "appId", "test-app-id"
+                ))
+                .build();
+
+        when(appSpecMapper.selectById(appSpecId)).thenReturn(appSpec);
+        when(projectService.findByAppSpecId(appSpecId)).thenReturn(project);
+        when(projectCapabilityConfigService.listByProject(projectId)).thenReturn(List.of(authConfig, paymentConfig));
+        when(nlRequirementAnalyzer.detectProjectCapabilities(anyString())).thenReturn(List.of());
+
+        /**
+         * 异步执行替身。
+         *
+         * 是什么：用于替代 self.runJobAsync 的 Mock。
+         * 做什么：避免提交任务时触发异步执行链路。
+         * 为什么：防止单测产生无关错误日志与副作用。
+         */
+        G3OrchestratorService selfMock = mock(G3OrchestratorService.class);
+        doNothing().when(selfMock).runJobAsync(any());
+        ReflectionTestUtils.setField(orchestratorService, "self", selfMock);
+
+        doAnswer(invocation -> {
+            G3JobEntity job = invocation.getArgument(0);
+            job.setId(testJobId);
+            return 1;
+        }).when(jobMapper).insert((G3JobEntity) any());
+
+        UUID jobId = orchestratorService.submitJob("需要登录和支付宝支付能力", userId, tenantId, appSpecId, null, null);
+
+        assertNotNull(jobId);
+        verify(jobMapper).insert(argThat((G3JobEntity job) -> {
+            List<String> blueprintCaps = readStringList(job.getBlueprintSpec(), "capabilities");
+            List<String> analysisCaps = readStringList(job.getAnalysisContextJson(), "capabilities");
+
+            java.util.Map<String, List<String>> blueprintKeys = readCapabilityConfigKeys(job.getBlueprintSpec());
+            java.util.Map<String, List<String>> analysisKeys = readCapabilityConfigKeys(job.getAnalysisContextJson());
+
+            boolean capsInjected = blueprintCaps.containsAll(List.of("auth", "payment_alipay"))
+                    && analysisCaps.containsAll(List.of("auth", "payment_alipay"));
+            boolean keysInjected = blueprintKeys.getOrDefault("auth", List.of()).containsAll(List.of("jwtSecret", "tokenExpiry"))
+                    && blueprintKeys.getOrDefault("payment_alipay", List.of()).contains("appId")
+                    && analysisKeys.getOrDefault("auth", List.of()).containsAll(List.of("jwtSecret", "tokenExpiry"))
+                    && analysisKeys.getOrDefault("payment_alipay", List.of()).contains("appId");
+
+            return capsInjected && keysInjected;
+        }));
+    }
+
+    /**
+     * 读取能力列表的测试辅助方法。
+     *
+     * 是什么：将 map 中的 capabilities 转成字符串列表。
+     * 做什么：用于单测中断言能力注入结果。
+     * 为什么：避免测试逻辑分散并提升可读性。
+     */
+    private List<String> readCapabilities(java.util.Map<String, Object> source) {
+        return readStringList(source, "capabilities");
+    }
+
+    /**
+     * 读取指定Key的字符串列表。
+     *
+     * 是什么：从Map读取List或String并转换为字符串列表。
+     * 做什么：复用在 capabilities/aiCapabilities 等字段的断言。
+     * 为什么：避免重复解析逻辑导致单测易错。
+     */
+    private List<String> readStringList(java.util.Map<String, Object> source, String key) {
+        if (source == null || key == null) {
+            return List.of();
+        }
+        Object raw = source.get(key);
+        if (raw instanceof List<?> list) {
+            return list.stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(Object::toString)
+                    .toList();
+        }
+        if (raw instanceof String value && !value.isBlank()) {
+            return List.of(value);
+        }
+        return List.of();
+    }
+
+    /**
+     * 读取能力配置字段键集合。
+     *
+     * 是什么：从 map 中读取 capabilityConfigKeys。
+     * 做什么：输出能力 -> 配置字段名列表的映射。
+     * 为什么：用于单测断言能力配置被注入到上下文。
+     */
+    private java.util.Map<String, List<String>> readCapabilityConfigKeys(java.util.Map<String, Object> source) {
+        if (source == null) {
+            return java.util.Map.of();
+        }
+        Object raw = source.get("capabilityConfigKeys");
+        if (raw instanceof java.util.Map<?, ?> map) {
+            java.util.Map<String, List<String>> result = new java.util.HashMap<>();
+            for (java.util.Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() == null || entry.getValue() == null) {
+                    continue;
+                }
+                String key = entry.getKey().toString();
+                Object value = entry.getValue();
+                if (value instanceof List<?> list) {
+                    List<String> keys = list.stream()
+                            .filter(java.util.Objects::nonNull)
+                            .map(Object::toString)
+                            .map(String::trim)
+                            .filter(s -> !s.isBlank())
+                            .toList();
+                    result.put(key, keys);
+                }
+            }
+            return result;
+        }
+        return java.util.Map.of();
     }
 
     /**

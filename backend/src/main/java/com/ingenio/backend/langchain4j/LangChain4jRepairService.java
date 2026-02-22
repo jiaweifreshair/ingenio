@@ -32,7 +32,7 @@ public class LangChain4jRepairService {
     @Value("${langchain4j.base-url:http://127.0.0.1:8045/v1}")
     private String baseUrl;
 
-    @Value("${langchain4j.api-key:sk-418de7bda2824845967ff0c8b97bfbc9}")
+    @Value("${langchain4j.api-key:}")
     private String apiKey;
 
     @Value("${langchain4j.model:claude-opus-4-5-thinking}")
@@ -94,6 +94,10 @@ public class LangChain4jRepairService {
      * 创建ChatLanguageModel
      */
     private ChatLanguageModel createChatModel() {
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException("langchain4j.api-key 未配置，请通过环境变量或配置文件注入");
+        }
+
         return OpenAiChatModel.builder()
                 .baseUrl(baseUrl)
                 .apiKey(apiKey)

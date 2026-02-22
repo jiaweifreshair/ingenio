@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Blueprint Prompt 构建器
@@ -202,6 +203,26 @@ public class BlueprintPromptBuilder {
             sb.append("```\n");
         }
 
+        // JeecgBoot 能力注入（鉴权/支付等）
+        List<String> capabilityCodes = readStringList(blueprintSpec.get("capabilities"));
+        if (!capabilityCodes.isEmpty()) {
+            sb.append("\n### JeecgBoot 能力集成（必须覆盖）\n");
+            sb.append("- 已配置能力: ").append(String.join(", ", capabilityCodes)).append("\n");
+            Map<String, List<String>> configKeys = readConfigKeys(blueprintSpec.get("capabilityConfigKeys"));
+            if (!configKeys.isEmpty()) {
+                sb.append("- 配置字段（禁止硬编码敏感值）:\n");
+                for (Map.Entry<String, List<String>> entry : configKeys.entrySet()) {
+                    if (entry.getValue() == null || entry.getValue().isEmpty()) {
+                        continue;
+                    }
+                    sb.append("  - ").append(entry.getKey()).append(": ")
+                            .append(String.join(", ", entry.getValue())).append("\n");
+                }
+            }
+            sb.append("- 配置读取：必须从环境变量或配置中心读取。\n");
+            sb.append("- 生成对应 Controller/Service/Config，确保鉴权与支付流程可落地。\n");
+        }
+
         return sb.toString();
     }
 
@@ -223,5 +244,60 @@ public class BlueprintPromptBuilder {
 
     private static <T> List<T> nullSafe(List<T> list) {
         return list != null ? list : List.of();
+    }
+
+    /**
+     * 读取能力列表
+     *
+     * 是什么：将 raw 转为字符串列表的安全工具。
+     * 做什么：兼容 List / String / null 多种形态。
+     * 为什么：避免能力注入时出现类型不匹配或空指针。
+     */
+    private static List<String> readStringList(Object raw) {
+        if (raw instanceof List<?> list) {
+            return list.stream()
+                    .filter(Objects::nonNull)
+                    .map(Object::toString)
+                    .map(String::trim)
+                    .filter(s -> !s.isBlank())
+                    .distinct()
+                    .toList();
+        }
+        if (raw instanceof String s && !s.isBlank()) {
+            return List.of(s.trim());
+        }
+        return List.of();
+    }
+
+    /**
+     * 读取能力配置字段
+     *
+     * 是什么：从 capabilityConfigKeys 解析配置字段名集合。
+     * 做什么：规范化 Map<String, List<String>> 的结构。
+     * 为什么：提示生成端遵循配置字段并避免硬编码。
+     */
+    @SuppressWarnings("unchecked")
+    private static Map<String, List<String>> readConfigKeys(Object raw) {
+        if (!(raw instanceof Map<?, ?> map)) {
+            return Map.of();
+        }
+
+        Map<String, List<String>> normalized = new java.util.LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            if (entry.getKey() == null) {
+                continue;
+            }
+            String key = entry.getKey().toString().trim();
+            if (key.isBlank()) {
+                continue;
+            }
+            Object value = entry.getValue();
+            List<String> keys = readStringList(value);
+            if (!keys.isEmpty()) {
+                normalized.put(key, keys);
+            }
+        }
+
+        return normalized;
     }
 }

@@ -99,6 +99,23 @@ public class ProjectCapabilityConfigService {
     }
 
     /**
+     * 按能力代码获取项目配置（掩码敏感字段）
+     *
+     * 是什么：返回单条配置的掩码版本。
+     * 做什么：对敏感字段进行掩码处理后返回给API。
+     * 为什么：避免API返回真实密钥信息。
+     *
+     * @param projectId 项目ID
+     * @param capabilityCode 能力代码
+     * @return 掩码后的配置实体
+     */
+    public Optional<ProjectCapabilityConfigEntity> getByProjectAndCodeMasked(UUID projectId, String capabilityCode) {
+        Optional<ProjectCapabilityConfigEntity> configOpt = getByProjectAndCode(projectId, capabilityCode);
+        configOpt.ifPresent(this::maskConfigValues);
+        return configOpt;
+    }
+
+    /**
      * 添加项目能力配置
      *
      * @param projectId 项目ID
@@ -278,19 +295,18 @@ public class ProjectCapabilityConfigService {
         ProjectCapabilityConfigEntity config = configOpt.get();
 
         try {
-            // TODO: 实现具体的连通性验证逻辑
-            // 例如：调用支付宝API验证AppId是否有效
-            // 例如：调用短信API验证签名是否正确
-
-            // 目前仅做基本校验
             boolean isValid = validateBasicConfig(config);
+            String errorMessage = null;
+            if (!isValid) {
+                errorMessage = "配置校验失败：缺少必填字段";
+            }
 
             if (isValid) {
                 config.setStatus(ProjectCapabilityConfigEntity.STATUS_VALIDATED);
                 config.setValidationError(null);
             } else {
                 config.setStatus(ProjectCapabilityConfigEntity.STATUS_FAILED);
-                config.setValidationError("配置校验失败：缺少必填字段");
+                config.setValidationError(errorMessage);
             }
 
             config.setValidatedAt(Instant.now());

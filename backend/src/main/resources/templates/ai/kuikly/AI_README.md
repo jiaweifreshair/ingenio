@@ -413,8 +413,8 @@ pagerScope.launch {
 #### API密钥保护
 
 ```kotlin
-// ❌ 错误：硬编码密钥
-val apiKey = "sk-abc123456789"
+// ❌ 错误：硬编码敏感凭证
+val credential = "hardcoded-sensitive-value"
 
 // ✅ 正确：从配置读取
 val apiKey = AIConfig.apiKey

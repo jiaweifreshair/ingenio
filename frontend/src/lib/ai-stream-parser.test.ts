@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseFilesFromResponse, getFileType } from './ai-stream-parser';
+import { parseFilesFromResponse, getFileType, mergeGeneratedFiles } from './ai-stream-parser';
 
 describe('AI Stream Parser', () => {
   describe('getFileType', () => {
@@ -87,6 +87,39 @@ export default function MoodSelector() { return <div>OK</div> }
       expect(files[0].content).toContain('<div>OK</div>');
       expect(files[0].content).not.toContain('PARTIAL');
       expect(files[0].content).not.toContain('<file path=');
+    });
+  });
+
+  describe('mergeGeneratedFiles', () => {
+    it('should keep existing files when patch only returns subset', () => {
+      const previous = [
+        { path: 'src/App.tsx', content: 'v1', type: 'typescript', completed: true },
+        { path: 'src/main.tsx', content: 'main', type: 'typescript', completed: true },
+      ];
+      const patch = [
+        { path: 'src/App.tsx', content: 'v2', type: 'typescript', completed: true },
+      ];
+
+      const merged = mergeGeneratedFiles(previous, patch);
+
+      expect(merged).toHaveLength(2);
+      expect(merged.find(file => file.path === 'src/App.tsx')?.content).toBe('v2');
+      expect(merged.find(file => file.path === 'src/main.tsx')?.content).toBe('main');
+    });
+
+    it('should append new files after existing order', () => {
+      const previous = [
+        { path: 'src/App.tsx', content: 'v1', type: 'typescript', completed: true },
+      ];
+      const patch = [
+        { path: 'src/utils.ts', content: 'utils', type: 'typescript', completed: true },
+      ];
+
+      const merged = mergeGeneratedFiles(previous, patch);
+
+      expect(merged).toHaveLength(2);
+      expect(merged[0].path).toBe('src/App.tsx');
+      expect(merged[1].path).toBe('src/utils.ts');
     });
   });
 });

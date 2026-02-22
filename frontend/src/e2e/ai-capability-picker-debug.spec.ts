@@ -3,9 +3,11 @@
  * 用于诊断为什么卡片没有显示
  */
 import { test, expect } from '@playwright/test';
+import { silencePageConsole } from './utils/console-guard';
 
 test.describe('AI能力选择器调试', () => {
   test('调试：检查页面加载和元素状态', async ({ page }) => {
+    silencePageConsole(page);
     console.log('🔍 开始调试测试...');
 
     // 1. 访问页面
@@ -64,20 +66,6 @@ test.describe('AI能力选择器调试', () => {
       console.log(`📃 页面body文本（前500字符）: ${bodyText?.substring(0, 500)}`);
     }
 
-    // 8. 检查控制台错误
-    page.on('console', (msg) => {
-      if (msg.type() === 'error') {
-        console.log(`❌ 控制台错误: ${msg.text()}`);
-      }
-    });
-
-    // 9. 检查网络请求
-    page.on('response', (response) => {
-      if (!response.ok()) {
-        console.log(`❌ 请求失败: ${response.url()} - ${response.status()}`);
-      }
-    });
-
     // 10. 检查是否有AI_CAPABILITIES数据
     const hasAICaps = await page.evaluate(() => {
       return typeof (window as { AI_CAPABILITIES?: unknown }).AI_CAPABILITIES !== 'undefined';
@@ -100,6 +88,7 @@ test.describe('AI能力选择器调试', () => {
   });
 
   test('调试：检查组件props', async ({ page }) => {
+    silencePageConsole(page);
     console.log('🔍 检查组件props...');
 
     await page.goto('/wizard/ai-capabilities');

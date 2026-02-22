@@ -3,6 +3,7 @@
  * 测试应用创建表单和提交流程（完整V2.0流程：分析 -> 风格 -> 生成 -> 导航）
  */
 import { test, expect, type Page } from '@playwright/test';
+import { silencePageConsole } from './utils/console-guard';
 
 // 辅助函数：设置认证Token到Cookie和localStorage
 async function setAuthToken(page: Page, token: string = 'mock_jwt_token_for_testing') {
@@ -22,9 +23,7 @@ async function setAuthToken(page: Page, token: string = 'mock_jwt_token_for_test
 
 test.describe('创建页面功能测试', () => {
   test.beforeEach(async ({ page }) => {
-    // 监听 Console 和 Error
-    page.on('console', msg => console.log(`[Browser Console] ${msg.text()}`));
-    page.on('pageerror', err => console.error(`[Browser Error] ${err.message}`));
+    silencePageConsole(page);
 
     // 0. 模拟登录状态
     // 先导航到一个公共页面以建立上下文

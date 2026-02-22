@@ -1,6 +1,10 @@
 /**
  * AI能力选择页面
- * 允许用户选择需要集成的AI功能
+ * 允许用户选择需要集成的AI功能，并配置AI网关
+ *
+ * 功能：
+ * - AI能力选择（19种AI能力）
+ * - AI代码生成
  *
  * @author Ingenio Team
  * @since 1.0.0
@@ -21,6 +25,7 @@ import { Loader2, AlertCircle, CheckCircle2, ArrowLeft } from 'lucide-react';
 
 export default function AICapabilitiesPage() {
   const router = useRouter();
+
   const [selectedCapabilities, setSelectedCapabilities] = useState<AICapabilityType[]>([]);
   const [packageName, setPackageName] = useState('com.example.myapp');
   const [appName, setAppName] = useState('My AI App');

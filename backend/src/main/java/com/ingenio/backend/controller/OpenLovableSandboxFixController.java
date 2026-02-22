@@ -1,8 +1,12 @@
 package com.ingenio.backend.controller;
 
 import com.ingenio.backend.common.Result;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.ingenio.backend.service.openlovable.OpenLovableEndpointRouter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -20,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -52,6 +57,12 @@ public class OpenLovableSandboxFixController {
   private String openLovableBaseUrl;
 
   private final RestTemplate restTemplate;
+
+  /**
+   * OpenLovable 多实例路由器（可选）
+   */
+  @Autowired(required = false)
+  private OpenLovableEndpointRouter endpointRouter;
 
   /**
    * Open-Lovable 沙箱工作目录（E2B 模板默认）
@@ -254,6 +265,23 @@ public class OpenLovableSandboxFixController {
 
     boolean fixed = !filesCreated.isEmpty() || !filesUpdated.isEmpty();
 
+    // 检查依赖是否安装，必要时触发安装
+    boolean dependenciesFixed = ensureDependenciesInstalled(sandboxId, diagnostics);
+    if (dependenciesFixed) {
+      fixed = true;
+    }
+
+    boolean optimizeDepsReset = resetOptimizeDepsIfNeeded(sandboxId, diagnostics);
+    if (optimizeDepsReset) {
+      fixed = true;
+    }
+
+    // 若有修复动作或依赖安装，尝试重启 Vite 以生效
+    if (fixed) {
+      boolean restarted = restartViteServer(sandboxId, diagnostics);
+      diagnostics.put("viteRestarted", restarted);
+    }
+
     return Map.of(
         "fixed", fixed,
         "filesCreated", filesCreated,
@@ -261,6 +289,122 @@ public class OpenLovableSandboxFixController {
         "diagnostics", diagnostics,
         "message", fixed ? "已应用兜底修复，建议刷新预览" : "未检测到可自动修复的问题",
         "timestamp", Instant.now().toString());
+  }
+
+  /**
+   * 确保依赖已安装
+   *
+   * 是什么：白屏修复中的依赖安装兜底逻辑。
+   * 做什么：检测 node_modules/.vite/deps 是否存在，不存在则尝试 pnpm 安装并失败后回退 npm。
+   * 为什么：缺失依赖会导致 Vite 资源 404，引发白屏。
+   */
+  private boolean ensureDependenciesInstalled(String sandboxId, Map<String, Object> diagnostics) {
+    SandboxExecResult viteDepsCheck = executeCommand(sandboxId, "ls node_modules/.vite/deps", 10);
+    boolean depsReady = viteDepsCheck.exitCode == 0;
+    diagnostics.put("viteDepsReady", depsReady);
+    if (depsReady) {
+      return false;
+    }
+
+    diagnostics.put("dependencyInstallAttempted", true);
+
+    SandboxExecResult pnpmResult = executeCommand(sandboxId, "pnpm install", 120);
+    diagnostics.put("dependencyInstallCommand", "pnpm install");
+    diagnostics.put("dependencyInstallExitCode", pnpmResult.exitCode);
+    if (pnpmResult.exitCode == 0) {
+      return true;
+    }
+
+    SandboxExecResult npmResult = executeCommand(sandboxId, "npm install", 120);
+    diagnostics.put("dependencyInstallFallbackCommand", "npm install");
+    diagnostics.put("dependencyInstallFallbackExitCode", npmResult.exitCode);
+
+    return npmResult.exitCode == 0;
+  }
+
+  /**
+   * 重置 Vite 依赖优化缓存（仅在关键依赖未被优化时）
+   *
+   * 是什么：检查优化依赖元数据，必要时清理 node_modules/.vite 触发重建。
+   * 做什么：当 package.json 包含关键依赖但 _metadata.json 未记录时，清理缓存。
+   * 为什么：避免因优化依赖缺失导致 /node_modules/.vite/deps 404，触发白屏。
+   */
+  private boolean resetOptimizeDepsIfNeeded(String sandboxId, Map<String, Object> diagnostics) {
+    String metadata = readFile(sandboxId, "node_modules/.vite/deps/_metadata.json", 10);
+    if (metadata == null || metadata.isBlank()) {
+      diagnostics.put("optimizeDepsMetadataFound", false);
+      return false;
+    }
+    diagnostics.put("optimizeDepsMetadataFound", true);
+
+    String packageJson = readFile(sandboxId, "package.json", 10);
+    if (packageJson == null || packageJson.isBlank()) {
+      diagnostics.put("optimizeDepsPackageJsonFound", false);
+      return false;
+    }
+    diagnostics.put("optimizeDepsPackageJsonFound", true);
+
+    try {
+      ObjectMapper mapper = new ObjectMapper();
+      Map<String, Object> metadataMap = mapper.readValue(metadata,
+          new TypeReference<HashMap<String, Object>>() {
+          });
+      Map<String, Object> optimized = metadataMap.get("optimized") instanceof Map<?, ?> map
+          ? (Map<String, Object>) map
+          : Map.of();
+
+      Map<String, Object> pkgMap = mapper.readValue(packageJson,
+          new TypeReference<HashMap<String, Object>>() {
+          });
+      Map<String, Object> dependencies = pkgMap.get("dependencies") instanceof Map<?, ?> map
+          ? (Map<String, Object>) map
+          : Map.of();
+
+      Set<String> criticalDeps = Set.of("lucide-react", "recharts");
+      List<String> missing = new ArrayList<>();
+      for (String dep : criticalDeps) {
+        if (dependencies.containsKey(dep) && !optimized.containsKey(dep)) {
+          missing.add(dep);
+        }
+      }
+
+      diagnostics.put("optimizeDepsMissing", missing);
+      if (missing.isEmpty()) {
+        return false;
+      }
+
+      SandboxExecResult resetResult = executeCommand(sandboxId, "rm -rf node_modules/.vite", 20);
+      diagnostics.put("optimizeDepsReset", resetResult.exitCode == 0);
+      diagnostics.put("optimizeDepsResetExitCode", resetResult.exitCode);
+
+      return resetResult.exitCode == 0;
+    } catch (Exception e) {
+      diagnostics.put("optimizeDepsResetError", e.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * 重启 Vite 服务器
+   *
+   * 是什么：对外调用 Open-Lovable 的重启接口。
+   * 做什么：在依赖安装或入口修复后重启开发服务器。
+   * 为什么：确保新依赖与入口修复在预览端生效。
+   */
+  private boolean restartViteServer(String sandboxId, Map<String, Object> diagnostics) {
+    String url = resolveOpenLovableBaseUrlBySandboxId(sandboxId) + "/api/restart-vite";
+    try {
+      Map<String, String> body = new HashMap<>();
+      body.put("sandboxId", sandboxId);
+      HttpHeaders headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      HttpEntity<Map<String, String>> entity = new HttpEntity<>(body, headers);
+      restTemplate.exchange(url, HttpMethod.POST, entity, Map.class);
+      return true;
+    } catch (Exception e) {
+      diagnostics.put("viteRestartError", e.getMessage());
+      return false;
+    }
   }
 
   /**
@@ -400,7 +544,7 @@ public class OpenLovableSandboxFixController {
    * 写入沙箱内文件（兜底修复会用到）
    */
   private void writeFile(String sandboxId, String relativePath, String content) {
-    String url = openLovableBaseUrl + "/api/sandbox/write-files";
+    String url = resolveOpenLovableBaseUrlBySandboxId(sandboxId) + "/api/sandbox/write-files";
 
     Map<String, Object> requestBody = new HashMap<>();
     requestBody.put("sandboxId", sandboxId);
@@ -424,7 +568,7 @@ public class OpenLovableSandboxFixController {
    * 在沙箱内执行命令（用于读取文件/基础诊断）
    */
   private SandboxExecResult executeCommand(String sandboxId, String command, int timeoutSeconds) {
-    String url = openLovableBaseUrl + "/api/sandbox/execute";
+    String url = resolveOpenLovableBaseUrlBySandboxId(sandboxId) + "/api/sandbox/execute";
 
     Map<String, Object> requestBody = new HashMap<>();
     requestBody.put("sandboxId", sandboxId);
@@ -448,6 +592,33 @@ public class OpenLovableSandboxFixController {
     Object stderrObj = body.get("stderr");
 
     return new SandboxExecResult(exitCode, toString(stdoutObj), toString(stderrObj));
+  }
+
+  /**
+   * 解析 sandbox 对应的 OpenLovable baseUrl
+   */
+  private String resolveOpenLovableBaseUrlBySandboxId(String sandboxId) {
+    if (endpointRouter == null) {
+      return normalizeOpenLovableBaseUrl(openLovableBaseUrl);
+    }
+    if (sandboxId != null && !sandboxId.isBlank()) {
+      return endpointRouter.resolveEndpointForSandbox(sandboxId.trim());
+    }
+    return endpointRouter.getDefaultEndpoint();
+  }
+
+  /**
+   * 规范化 baseUrl（去除末尾斜杠）
+   */
+  private String normalizeOpenLovableBaseUrl(String baseUrl) {
+    if (baseUrl == null) {
+      return "http://localhost:3001";
+    }
+    String trimmed = baseUrl.trim();
+    if (trimmed.isBlank()) {
+      return "http://localhost:3001";
+    }
+    return trimmed.replaceAll("/+$", "");
   }
 
   /**

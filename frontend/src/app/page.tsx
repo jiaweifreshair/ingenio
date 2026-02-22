@@ -21,19 +21,15 @@ import {
   type IndustryType,
   type AppComplexityMode,
   type AICapabilityType,
+  type WizardLaunchContext,
 } from "@/types/smart-builder";
 import { Loader2 } from "lucide-react";
-
 function HomePageContent(): React.ReactElement {
   const searchParams = useSearchParams();
   const [requirement, setRequirement] = useState("");
   const [isWizardActive, setIsWizardActive] = useState(false);
   const [wizardPrompt, setWizardPrompt] = useState("");
-  const [wizardContext, setWizardContext] = useState<{
-    industry?: IndustryType | null;
-    mode?: AppComplexityMode | null;
-    capabilities?: AICapabilityType[];
-  }>({});
+  const [wizardContext, setWizardContext] = useState<WizardLaunchContext>({});
 
   // Smart Builder State
   const [selectedIndustry, setSelectedIndustry] = useState<IndustryType | null>(null);
@@ -117,7 +113,7 @@ function HomePageContent(): React.ReactElement {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleLaunchWizard = (prompt: string, context: { industry: IndustryType | null, mode: AppComplexityMode | null, capabilities: AICapabilityType[] }) => {
+  const handleLaunchWizard = (prompt: string, context: WizardLaunchContext) => {
     setWizardPrompt(prompt);
     setWizardContext(context);
     setIsWizardActive(true);

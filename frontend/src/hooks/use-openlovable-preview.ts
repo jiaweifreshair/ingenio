@@ -19,13 +19,17 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { getToken } from '@/lib/auth/token';
-import { parseFilesFromResponse, type GeneratedFile as ParsedGeneratedFile } from '@/lib/ai-stream-parser';
+import { parseFilesFromResponse, mergeGeneratedFiles, type GeneratedFile as ParsedGeneratedFile } from '@/lib/ai-stream-parser';
+import { buildOpenLovableStreamRequest } from '@/lib/openlovable-stream-request';
+import { buildExistingFilesPayload, buildFileManifestPayload } from '@/lib/openlovable-existing-files';
 import {
   applyOpenLovableSseMessage,
   getInitialOpenLovableAccumulationState,
   getOpenLovableCodeForApply,
+  shouldFinalizeOpenLovableStream,
 } from '@/lib/openlovable-stream-accumulator';
 import { parseSseEvent, splitSseBuffer } from '@/lib/sse/sse-parser';
+import { completeCodeGeneration } from '@/lib/api/plan-routing';
 import {
   ensureSandboxAvailable,
   ensureSandboxIdAvailable,
@@ -81,6 +85,19 @@ export interface GeneratedFile extends ParsedGeneratedFile {
  * 生成阶段
  */
 export type GenerationStage = 'idle' | 'sandbox' | 'generating' | 'complete' | 'error';
+
+/**
+ * 流式生成补齐选项
+ *
+ * 是什么：流式生成请求的附加上下文参数。
+ * 做什么：用于迭代场景补齐文件清单来源。
+ * 为什么：避免 generatedFiles 为空时无法构建 fileManifest。
+ */
+interface OpenLovableStreamPayloadOptions {
+  fallbackFiles?: ParsedGeneratedFile[];
+  existingFilesOverride?: { path: string; content: string }[];
+  fileManifestOverride?: string[];
+}
 
 /**
  * Hook返回值
@@ -143,7 +160,7 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
   const isGeneratingRef = useRef(false);
 
   // 预览URL
-  const previewUrl = sandboxInfo?.url || null;
+  const previewUrl = sandboxInfo?.url && isValidUrl(sandboxInfo.url) ? sandboxInfo.url : null;
 
   // 兼容：支持由外部注入初始 sandboxInfo（例如 CLONE 分支直接返回 prototypeUrl）
   const hasInitializedSandboxRef = useRef(false);
@@ -166,13 +183,13 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
   /**
    * 解析并更新文件状态
    */
-  const updateFilesFromStream = useCallback((text: string) => {
+  const updateFilesFromStream = useCallback((text: string, shouldMerge: boolean) => {
     const { files, currentFile: current } = parseFilesFromResponse(text);
-    const nextFiles: GeneratedFile[] = files.map(file => ({ ...file, edited: false }));
-    const nextCurrentFile: GeneratedFile | null = current ? { ...current, edited: false } : null;
+    const nextFiles: GeneratedFile[] = files.map(file => ({ ...file, edited: shouldMerge }));
+    const nextCurrentFile: GeneratedFile | null = current ? { ...current, edited: shouldMerge } : null;
 
     if (nextFiles.length > 0) {
-      setGeneratedFiles(nextFiles);
+      setGeneratedFiles(prev => (shouldMerge ? mergeGeneratedFiles(prev, nextFiles) : nextFiles));
     }
 
     setCurrentFile(nextCurrentFile);
@@ -207,14 +224,20 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
    * @param payload.sandboxId - 沙箱ID，传 'pending' 时跳过自动 apply（用于先生成代码后创建沙箱的场景）
    * @returns 累积的代码字符串（用于后续手动 apply）
    */
-  const generateCodeStreamPayload = useCallback(async (payload: { userRequirement: string; sandboxId: string; designStyle?: string; appSpecId?: string }): Promise<string> => {
+  const generateCodeStreamPayload = useCallback(async (
+    payload: { userRequirement: string; sandboxId: string; designStyle?: string; appSpecId?: string; isEdit?: boolean },
+    options?: OpenLovableStreamPayloadOptions
+  ): Promise<string> => {
     const skipAutoApply = payload.sandboxId === 'pending';
+    const shouldMergeFiles = Boolean(payload.isEdit);
     return new Promise((resolve, reject) => {
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
       const apiUrl = `${API_BASE_URL}/v1/openlovable/generate/stream`;
       const token = getToken();
 
       let accumulationState = getInitialOpenLovableAccumulationState();
+      let shouldTerminateStream = false;
+      let hasFinalizedStream = false;
 
       /**
        * 判断是否为普通对象（Record）
@@ -226,13 +249,15 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
       const isRecord = (value: unknown): value is Record<string, unknown> =>
         !!value && typeof value === 'object' && !Array.isArray(value);
 
+      const requestBody = buildOpenLovableStreamRequest(payload, generatedFiles, options);
+
       fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': token } : {}),
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(requestBody),
       })
         .then(response => {
           if (!response.ok) {
@@ -247,17 +272,22 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
           const decoder = new TextDecoder();
           let buffer = '';
 
-          const applyAndUpdateState = (data: AIMessage) => {
-            const nextState = applyOpenLovableSseMessage(accumulationState, data);
-            if (
-              nextState.streamedText !== accumulationState.streamedText ||
-              nextState.finalCode !== accumulationState.finalCode
-            ) {
-              accumulationState = nextState;
-              setStreamedCode(accumulationState.streamedText);
-              updateFilesFromStream(accumulationState.streamedText);
-            }
-          };
+            const applyAndUpdateState = (data: AIMessage) => {
+              const prevState = accumulationState;
+              const nextState = applyOpenLovableSseMessage(prevState, data);
+              if (
+                nextState.streamedText !== accumulationState.streamedText ||
+                nextState.finalCode !== accumulationState.finalCode
+              ) {
+                accumulationState = nextState;
+                setStreamedCode(accumulationState.streamedText);
+                updateFilesFromStream(accumulationState.streamedText, shouldMergeFiles);
+              }
+
+              if (shouldFinalizeOpenLovableStream(prevState, nextState, data)) {
+                shouldTerminateStream = true;
+              }
+            };
 
           /**
            * 处理单个 SSE 事件块
@@ -302,6 +332,170 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
             return { shouldStop: false };
           };
 
+          const finalizeStream = async (reason: string): Promise<void> => {
+            if (hasFinalizedStream) return;
+            hasFinalizedStream = true;
+
+            const reasonSuffix = reason ? `（${reason}）` : '';
+            addLog(`✅ AI代码生成流式响应完成${reasonSuffix}`);
+
+            const responseToApply = getOpenLovableCodeForApply(accumulationState);
+            if (!responseToApply.trim()) {
+              const message =
+                'AI生成的代码为空，无法部署到Sandbox（请检查 OpenLovable 服务是否返回了代码内容，或稍后重试）';
+              addLog(`❌ ${message}`);
+              reject(new Error(message));
+              return;
+            }
+            if (!responseToApply.includes('<file')) {
+              const message =
+                'AI生成的代码格式异常（缺少 <file> 标签），无法部署到Sandbox（请重试生成或切换模型）';
+              addLog(`❌ ${message}`);
+              reject(new Error(message));
+              return;
+            }
+
+            // 如果是 pending 模式，跳过自动 apply，返回累积的代码供外部处理
+            if (skipAutoApply) {
+              addLog('📦 代码生成完成，等待创建沙箱后应用...');
+              updateFilesFromStream(responseToApply, shouldMergeFiles);
+              setCurrentFile(null);
+              resolve(responseToApply);
+              return;
+            }
+
+            // 调用apply API将代码写入sandbox
+            try {
+              const ensureResult = await ensureSandboxIdAvailable(
+                API_BASE_URL,
+                payload.sandboxId,
+                token,
+                { now: Date.now() }
+              );
+
+              const targetSandboxId = ensureResult.sandbox.sandboxId;
+
+              if (ensureResult.action === 'recreated') {
+                addLog('⚠️ Sandbox不可用，正在重新创建沙箱并重新部署代码...');
+                setSandboxInfo(ensureResult.sandbox);
+                addLog(`✅ 新沙箱创建成功: ${ensureResult.sandbox.sandboxId}`);
+                addLog(`🌐 新预览地址: ${ensureResult.sandbox.url}`);
+              } else if (ensureResult.sandbox.url && isValidUrl(ensureResult.sandbox.url)) {
+                // 仅同步 URL，避免覆盖既有 createdAt（用于时效判断）
+                setSandboxInfo(prev => (
+                  prev && prev.sandboxId === targetSandboxId
+                    ? { ...prev, url: ensureResult.sandbox.url }
+                    : prev
+                ));
+              }
+
+              addLog(`📝 正在将代码应用到Sandbox... (sandbox: ${targetSandboxId}, 响应长度: ${responseToApply.length} 字符)`);
+
+              const applyResponse = await fetch(`${API_BASE_URL}/v1/openlovable/apply`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(token ? { 'Authorization': token } : {}),
+                },
+                body: JSON.stringify({
+                  sandboxId: targetSandboxId,
+                  response: responseToApply,
+                  ...(shouldMergeFiles ? { mergeMode: 'patch' } : {})
+                })
+              });
+
+              if (!applyResponse.ok) {
+                let detail = '';
+                try {
+                  const body = await applyResponse.json();
+                  const message = typeof body?.message === 'string' ? body.message : '';
+                  detail = message ? `: ${message}` : '';
+                } catch {
+                  // 忽略解析失败，保留状态码
+                }
+                throw new Error(`Apply API失败: ${applyResponse.status}${detail}`);
+              }
+
+              const applyResult = await applyResponse.json();
+              addLog(`✅ 代码已成功写入Sandbox: ${applyResult.data?.filesWritten || 0} 个文件`);
+
+              // 上游可能替换 sandboxId（例如传入的 sandboxId 不存在），需要同步到前端状态
+              const appliedSandboxId = typeof applyResult.data?.sandboxId === 'string' ? applyResult.data.sandboxId : null;
+              const appliedSandboxUrl =
+                typeof applyResult.data?.sandboxUrl === 'string'
+                  ? applyResult.data.sandboxUrl
+                  : typeof applyResult.data?.url === 'string'
+                    ? applyResult.data.url
+                    : null;
+
+              const baselineSandboxId = appliedSandboxId || targetSandboxId;
+              const effectiveSandboxId = baselineSandboxId;
+
+              if (appliedSandboxId && appliedSandboxId !== targetSandboxId) {
+                addLog(`⚠️ 上游已替换Sandbox: ${targetSandboxId} → ${appliedSandboxId}`);
+                setSandboxInfo(prev => {
+                  if (!prev || prev.sandboxId !== targetSandboxId) return prev;
+                  return {
+                    ...prev,
+                    sandboxId: appliedSandboxId,
+                    url: appliedSandboxUrl && isValidUrl(appliedSandboxUrl) ? appliedSandboxUrl : prev.url,
+                  };
+                });
+              } else if (appliedSandboxUrl && isValidUrl(appliedSandboxUrl)) {
+                setSandboxInfo(prev => (prev && prev.sandboxId === targetSandboxId ? { ...prev, url: appliedSandboxUrl } : prev));
+              }
+
+              // 重启Vite服务器确保热更新能够正确加载新代码
+              addLog('🔄 正在重启Vite服务器，确保热更新生效...');
+              try {
+                const restartResponse = await fetch(`${API_BASE_URL}/v1/openlovable/restart-vite`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': token } : {}),
+                  },
+                  body: JSON.stringify({ sandboxId: effectiveSandboxId }),
+                });
+                if (restartResponse.ok) {
+                  addLog('✅ Vite服务器重启成功，预览即将更新');
+                } else {
+                  addLog('⚠️ Vite重启失败，可能需要手动刷新预览');
+                }
+              } catch (restartError) {
+                console.warn('重启Vite失败:', restartError);
+                addLog('⚠️ Vite重启超时，请手动点击刷新按钮');
+              }
+
+              // 重启后再同步一次URL，处理上游可能返回新部署地址的情况
+              const postRestartStatus = await requestOpenLovableSandboxStatus(API_BASE_URL, effectiveSandboxId, token);
+              if (postRestartStatus.success && postRestartStatus.data) {
+                const latestSandboxId = extractSandboxId(postRestartStatus.data);
+                const latestUrl = extractSandboxUrl(postRestartStatus.data);
+                const normalizedUrl = latestUrl && isValidUrl(latestUrl) ? latestUrl : null;
+
+                if (latestSandboxId && latestSandboxId !== baselineSandboxId) {
+                  addLog(`⚠️ 上游已替换Sandbox: ${baselineSandboxId} → ${latestSandboxId}`);
+                  setSandboxInfo(prev => {
+                    if (!prev) return prev;
+                    if (prev.sandboxId !== baselineSandboxId) return prev;
+                    return { ...prev, sandboxId: latestSandboxId, url: normalizedUrl || prev.url };
+                  });
+                } else if (normalizedUrl) {
+                  setSandboxInfo(prev => (prev && prev.sandboxId === baselineSandboxId ? { ...prev, url: normalizedUrl } : prev));
+                }
+              }
+
+              updateFilesFromStream(responseToApply, shouldMergeFiles);
+              setCurrentFile(null);
+
+              resolve(responseToApply);
+            } catch (applyError) {
+              const errorMsg = applyError instanceof Error ? applyError.message : '未知错误';
+              addLog(`❌ Apply失败: ${errorMsg}`);
+              reject(applyError);
+            }
+          };
+
           const readStream = (): void => {
             reader.read().then(async ({ done, value }) => {
               if (done) {
@@ -318,162 +512,7 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
                   }
                 }
 
-                addLog('✅ AI代码生成流式响应完成');
-
-                const responseToApply = getOpenLovableCodeForApply(accumulationState);
-                if (!responseToApply.trim()) {
-                  const message =
-                    'AI生成的代码为空，无法部署到Sandbox（请检查 OpenLovable 服务是否返回了代码内容，或稍后重试）';
-                  addLog(`❌ ${message}`);
-                  reject(new Error(message));
-                  return;
-                }
-                if (!responseToApply.includes('<file')) {
-                  const message =
-                    'AI生成的代码格式异常（缺少 <file> 标签），无法部署到Sandbox（请重试生成或切换模型）';
-                  addLog(`❌ ${message}`);
-                  reject(new Error(message));
-                  return;
-                }
-
-                // 如果是 pending 模式，跳过自动 apply，返回累积的代码供外部处理
-                if (skipAutoApply) {
-                  addLog('📦 代码生成完成，等待创建沙箱后应用...');
-                  updateFilesFromStream(responseToApply);
-                  setCurrentFile(null);
-                  resolve(responseToApply);
-                  return;
-                }
-
-                // 调用apply API将代码写入sandbox
-                try {
-                  const ensureResult = await ensureSandboxIdAvailable(
-                    API_BASE_URL,
-                    payload.sandboxId,
-                    token,
-                    { now: Date.now() }
-                  );
-
-                  const targetSandboxId = ensureResult.sandbox.sandboxId;
-
-                  if (ensureResult.action === 'recreated') {
-                    addLog('⚠️ Sandbox不可用，正在重新创建沙箱并重新部署代码...');
-                    setSandboxInfo(ensureResult.sandbox);
-                    addLog(`✅ 新沙箱创建成功: ${ensureResult.sandbox.sandboxId}`);
-                    addLog(`🌐 新预览地址: ${ensureResult.sandbox.url}`);
-                  } else if (ensureResult.sandbox.url && isValidUrl(ensureResult.sandbox.url)) {
-                    // 仅同步 URL，避免覆盖既有 createdAt（用于时效判断）
-                    setSandboxInfo(prev => (
-                      prev && prev.sandboxId === targetSandboxId
-                        ? { ...prev, url: ensureResult.sandbox.url }
-                        : prev
-                    ));
-                  }
-
-                  addLog(`📝 正在将代码应用到Sandbox... (sandbox: ${targetSandboxId}, 响应长度: ${responseToApply.length} 字符)`);
-
-                  const applyResponse = await fetch(`${API_BASE_URL}/v1/openlovable/apply`, {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      ...(token ? { 'Authorization': token } : {}),
-                    },
-                    body: JSON.stringify({
-                      sandboxId: targetSandboxId,
-                      response: responseToApply
-                    })
-                  });
-
-                  if (!applyResponse.ok) {
-                    let detail = '';
-                    try {
-                      const body = await applyResponse.json();
-                      const message = typeof body?.message === 'string' ? body.message : '';
-                      detail = message ? `: ${message}` : '';
-                    } catch {
-                      // 忽略解析失败，保留状态码
-                    }
-                    throw new Error(`Apply API失败: ${applyResponse.status}${detail}`);
-                  }
-
-                  const applyResult = await applyResponse.json();
-                  addLog(`✅ 代码已成功写入Sandbox: ${applyResult.data?.filesWritten || 0} 个文件`);
-
-                  // 上游可能替换 sandboxId（例如传入的 sandboxId 不存在），需要同步到前端状态
-                  const appliedSandboxId = typeof applyResult.data?.sandboxId === 'string' ? applyResult.data.sandboxId : null;
-                  const appliedSandboxUrl =
-                    typeof applyResult.data?.sandboxUrl === 'string'
-                      ? applyResult.data.sandboxUrl
-                      : typeof applyResult.data?.url === 'string'
-                        ? applyResult.data.url
-                        : null;
-
-                  const baselineSandboxId = appliedSandboxId || targetSandboxId;
-                  const effectiveSandboxId = baselineSandboxId;
-
-                  if (appliedSandboxId && appliedSandboxId !== targetSandboxId) {
-                    addLog(`⚠️ 上游已替换Sandbox: ${targetSandboxId} → ${appliedSandboxId}`);
-                    setSandboxInfo(prev => {
-                      if (!prev || prev.sandboxId !== targetSandboxId) return prev;
-                      return {
-                        ...prev,
-                        sandboxId: appliedSandboxId,
-                        url: appliedSandboxUrl && isValidUrl(appliedSandboxUrl) ? appliedSandboxUrl : prev.url,
-                      };
-                    });
-                  } else if (appliedSandboxUrl && isValidUrl(appliedSandboxUrl)) {
-                    setSandboxInfo(prev => (prev && prev.sandboxId === targetSandboxId ? { ...prev, url: appliedSandboxUrl } : prev));
-                  }
-
-                  // 重启Vite服务器确保热更新能够正确加载新代码
-                  addLog('🔄 正在重启Vite服务器，确保热更新生效...');
-                  try {
-                    const restartResponse = await fetch(`${API_BASE_URL}/v1/openlovable/restart-vite`, {
-                      method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        ...(token ? { 'Authorization': token } : {}),
-                      },
-                      body: JSON.stringify({ sandboxId: effectiveSandboxId }),
-                    });
-                    if (restartResponse.ok) {
-                      addLog('✅ Vite服务器重启成功，预览即将更新');
-                    } else {
-                      addLog('⚠️ Vite重启失败，可能需要手动刷新预览');
-                    }
-                  } catch (restartError) {
-                    console.warn('重启Vite失败:', restartError);
-                    addLog('⚠️ Vite重启超时，请手动点击刷新按钮');
-                  }
-
-                  // 重启后再同步一次URL，处理上游可能返回新部署地址的情况
-                  const postRestartStatus = await requestOpenLovableSandboxStatus(API_BASE_URL, effectiveSandboxId, token);
-                  if (postRestartStatus.success && postRestartStatus.data) {
-                    const latestSandboxId = extractSandboxId(postRestartStatus.data);
-                    const latestUrl = extractSandboxUrl(postRestartStatus.data);
-                    const normalizedUrl = latestUrl && isValidUrl(latestUrl) ? latestUrl : null;
-
-                    if (latestSandboxId && latestSandboxId !== baselineSandboxId) {
-                      addLog(`⚠️ 上游已替换Sandbox: ${baselineSandboxId} → ${latestSandboxId}`);
-                      setSandboxInfo(prev => {
-                        if (!prev) return prev;
-                        if (prev.sandboxId !== baselineSandboxId) return prev;
-                        return { ...prev, sandboxId: latestSandboxId, url: normalizedUrl || prev.url };
-                      });
-                    } else if (normalizedUrl) {
-                      setSandboxInfo(prev => (prev && prev.sandboxId === baselineSandboxId ? { ...prev, url: normalizedUrl } : prev));
-                    }
-                  }
-
-                  updateFilesFromStream(responseToApply);
-                  setCurrentFile(null);
-
-                  resolve(responseToApply);
-                } catch (applyError) {
-                  const errorMsg = applyError instanceof Error ? applyError.message : '未知错误';
-                  addLog(`❌ Apply失败: ${errorMsg}`);
-                  reject(applyError);
-                }
+                await finalizeStream('流结束');
                 return;
               }
 
@@ -490,6 +529,16 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
                 if (shouldStop) return;
               }
 
+              if (shouldTerminateStream) {
+                try {
+                  await reader.cancel();
+                } catch (cancelError) {
+                  console.warn('提前终止SSE失败:', cancelError);
+                }
+                await finalizeStream('complete信号收敛');
+                return;
+              }
+
               readStream();
             }).catch(error => {
               console.error('读取SSE流失败:', error);
@@ -504,7 +553,7 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
           reject(error);
         });
     });
-  }, [addLog, updateFilesFromStream]);
+  }, [addLog, updateFilesFromStream, generatedFiles]);
 
   /**
    * 开始生成
@@ -575,6 +624,14 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
 
       // 上游可能会在 apply 阶段替换 sandboxId，这里使用可变变量贯穿后续重启/状态同步
       let effectiveSandboxId = activeSandbox.sandboxId;
+      /**
+       * 最新预览地址
+       *
+       * 是什么：当前可用的预览 URL。
+       * 做什么：在 apply/重启/状态同步中跟随更新。
+       * 为什么：确保快照与下载入口使用最新地址。
+       */
+      let effectivePreviewUrl = activeSandbox.url;
 
       // Step 3: 将生成的代码应用到沙箱
       addLog(`📝 正在将代码应用到Sandbox... (sandbox: ${activeSandbox.sandboxId}, 响应长度: ${generatedCode.length} 字符)`);
@@ -617,6 +674,9 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
       if (appliedSandboxId && appliedSandboxId !== activeSandbox.sandboxId) {
         effectiveSandboxId = appliedSandboxId;
         addLog(`⚠️ 上游已替换Sandbox: ${activeSandbox.sandboxId} → ${appliedSandboxId}`);
+        if (appliedSandboxUrl && isValidUrl(appliedSandboxUrl)) {
+          effectivePreviewUrl = appliedSandboxUrl;
+        }
         setSandboxInfo(prev => {
           if (!prev) return prev;
           return {
@@ -627,6 +687,7 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
           };
         });
       } else if (appliedSandboxUrl && isValidUrl(appliedSandboxUrl)) {
+        effectivePreviewUrl = appliedSandboxUrl;
         setSandboxInfo(prev => (prev && prev.sandboxId === activeSandbox.sandboxId ? { ...prev, url: appliedSandboxUrl } : prev));
       }
 
@@ -675,6 +736,10 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
 
         if (latestSandboxId && latestSandboxId !== effectiveSandboxId) {
           addLog(`⚠️ 上游已替换Sandbox: ${effectiveSandboxId} → ${latestSandboxId}`);
+          effectiveSandboxId = latestSandboxId;
+          if (normalizedUrl) {
+            effectivePreviewUrl = normalizedUrl;
+          }
           setSandboxInfo(prev => {
             if (!prev) return prev;
             return {
@@ -685,6 +750,7 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
             };
           });
         } else if (normalizedUrl) {
+          effectivePreviewUrl = normalizedUrl;
           setSandboxInfo(prev => (prev && prev.sandboxId === effectiveSandboxId ? { ...prev, url: normalizedUrl } : prev));
         }
       }
@@ -692,6 +758,21 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
       // Step 5: 生成完成
       setStage('complete');
       addLog('🎉 生成完成！');
+
+      // Step 6: 调用后端完成API，创建版本快照
+      if (options?.appSpecId) {
+        try {
+          addLog('📸 正在创建版本快照...');
+          await completeCodeGeneration(options.appSpecId, {
+            sandboxId: effectiveSandboxId,
+            previewUrl: effectivePreviewUrl ?? sandboxInfo?.url,
+          });
+          addLog('✅ 版本快照创建成功');
+        } catch (snapshotError) {
+          console.warn('[useOpenLovablePreview] 创建版本快照失败:', snapshotError);
+          addLog('⚠️ 版本快照创建失败，不影响预览');
+        }
+      }
 
     } catch (err) {
       console.error('[useOpenLovablePreview] 生成失败:', err);
@@ -708,12 +789,38 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
    * 发送迭代修改消息
    */
   const sendIterationMessage = useCallback(async (message: string) => {
-    if (!sandboxInfo || isGeneratingRef.current) {
-      console.warn('[useOpenLovablePreview] 无法发送迭代消息：无沙箱或正在生成');
-      return;
+    if (!sandboxInfo) {
+      const errorMsg = '无法发送迭代消息：沙箱未创建，请等待首次生成完成';
+      console.warn('[useOpenLovablePreview]', errorMsg);
+      addLog(`⚠️ ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    if (isGeneratingRef.current) {
+      const errorMsg = '无法发送迭代消息：正在生成中，请等待当前操作完成后重试';
+      console.warn('[useOpenLovablePreview]', errorMsg);
+      addLog(`⚠️ ${errorMsg}`);
+      throw new Error(errorMsg);
+    }
+
+    const streamedCodeSnapshot = streamedCode;
+    const fallbackFiles =
+      generatedFiles.length === 0 && streamedCodeSnapshot
+        ? parseFilesFromResponse(streamedCodeSnapshot).files
+        : [];
+    const iterationFiles = generatedFiles.length > 0 ? generatedFiles : fallbackFiles;
+    const existingFilesOverride = buildExistingFilesPayload(iterationFiles) ?? undefined;
+    const fileManifestOverride = buildFileManifestPayload(iterationFiles) ?? undefined;
+
+    if (generatedFiles.length === 0 && fallbackFiles.length > 0) {
+      addLog('📌 已使用流式代码回填文件清单');
+    }
+    if (iterationFiles.length === 0) {
+      addLog('⚠️ 未获取到文件清单，迭代可能退化为全量重生成');
     }
 
     isGeneratingRef.current = true;
+    setStage('generating');
     setError(null);
 
     try {
@@ -743,21 +850,28 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
         setSandboxInfo(targetSandbox);
       }
 
-      await generateCodeStreamPayload({
-        userRequirement: message,
-        sandboxId: targetSandbox.sandboxId
-      });
+      await generateCodeStreamPayload(
+        {
+          userRequirement: message,
+          sandboxId: targetSandbox.sandboxId,
+          isEdit: true, // 迭代修改使用编辑模式
+        },
+        { fallbackFiles, existingFilesOverride, fileManifestOverride }
+      );
 
       addLog('✅ 迭代修改完成');
+      setStage('complete');
     } catch (err) {
       console.error('[useOpenLovablePreview] 迭代失败:', err);
       const errorMessage = err instanceof Error ? err.message : '未知错误';
       setError(errorMessage);
+      setStage('error');
       addLog(`❌ 迭代失败: ${errorMessage}`);
+      throw err; // 向上层抛出错误，让调用者能显示 toast 提示
     } finally {
       isGeneratingRef.current = false;
     }
-  }, [sandboxInfo, addLog, generateCodeStreamPayload]);
+  }, [sandboxInfo, addLog, generateCodeStreamPayload, generatedFiles, streamedCode]);
 
   /**
    * 刷新预览
@@ -814,6 +928,11 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
       if (responseToApply.includes('<file')) {
         try {
           addLog('🛠️ 正在重新应用代码到Sandbox（自动修复旧沙箱）...');
+          const refreshFiles =
+            generatedFiles.length > 0 ? generatedFiles : parseFilesFromResponse(responseToApply).files;
+          const refreshExistingFiles = buildExistingFilesPayload(refreshFiles) ?? undefined;
+          const refreshFileManifest = buildFileManifestPayload(refreshFiles) ?? undefined;
+
           const applyResponse = await fetch(`${API_BASE_URL}/v1/openlovable/apply`, {
             method: 'POST',
             headers: {
@@ -823,6 +942,14 @@ export function useOpenLovablePreview(initialSandboxInfo: SandboxInfo | null = n
             body: JSON.stringify({
               sandboxId: targetSandbox.sandboxId,
               response: responseToApply,
+              mergeMode: 'patch',
+              mergeExisting: true,
+              ...(refreshExistingFiles
+                ? { existingFiles: refreshExistingFiles, existing_files: refreshExistingFiles }
+                : {}),
+              ...(refreshFileManifest
+                ? { fileManifest: refreshFileManifest, file_manifest: refreshFileManifest }
+                : {}),
             }),
           });
 

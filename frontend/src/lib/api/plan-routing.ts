@@ -138,6 +138,8 @@ export interface StyleVariant {
 export interface PlanRoutingResult {
   /** AppSpec ID */
   appSpecId: string;
+  /** 项目ID */
+  projectId?: string;
   /** 识别的意图类型 */
   intent: RequirementIntent;
   /** 意图识别置信度 (0-1) */
@@ -160,6 +162,26 @@ export interface PlanRoutingResult {
   requiresUserConfirmation: boolean;
   /** 附加元数据 */
   metadata?: Record<string, unknown>;
+
+  // ==================== V2.0新增：技术栈字段 ====================
+
+  /**
+   * 技术栈类型（V2.0新增）
+   * 取值：H5_WEBVIEW / REACT_SUPABASE / REACT_SPRING_BOOT / KUIKLY
+   */
+  techStackType?: string;
+
+  /**
+   * 技术栈代码（V2.0新增）
+   * 取值：H5+WebView / React+Supabase / React+SpringBoot / Kuikly
+   */
+  techStackCode?: string;
+
+  /**
+   * 技术栈描述（V2.0新增）
+   * 中文描述，用于前端展示
+   */
+  techStackDescription?: string;
 }
 
 /**
@@ -484,10 +506,14 @@ export interface CodeGenerationResult {
   success: boolean;
   /** AppSpec ID */
   appSpecId?: string;
+  /** G3 任务ID */
+  jobId?: string;
   /** 新创建的项目ID */
   projectId?: string;
   /** 生成任务ID（用于轮询进度） */
   generationTaskId?: string;
+  /** 兼容字段：后端返回的 taskId */
+  taskId?: string;
   /** 预计完成时间（秒） */
   estimatedCompletionTime?: number;
   /** 当前状态 */
@@ -576,6 +602,78 @@ export async function executeCodeGeneration(
     return response.data;
   } catch (error) {
     console.warn('[PlanRouting API] 代码生成失败:', error);
+    throw error;
+  }
+}
+
+/**
+ * 完成代码生成请求参数
+ */
+export interface CompleteCodeGenerationRequest {
+  /** 生成的文件列表 */
+  files?: Array<{
+    path: string;
+    content?: string;
+    type?: string;
+  }>;
+  /** 沙箱 ID */
+  sandboxId?: string;
+  /** 预览 URL */
+  previewUrl?: string;
+}
+
+/**
+ * 完成代码生成响应
+ */
+export interface CompleteCodeGenerationResult {
+  /** 是否成功 */
+  success: boolean;
+  /** 消息 */
+  message: string;
+  /** AppSpec ID */
+  appSpecId: string;
+  /** 任务 ID */
+  taskId: string;
+  /** 版本是否创建成功 */
+  versionCreated: boolean;
+}
+
+/**
+ * 完成代码生成
+ * 前端在 SSE 代码生成完成后调用，用于：
+ * - 更新 generation_tasks 状态为 completed
+ * - 创建版本快照 (generation_versions)
+ * - 更新项目状态为 completed
+ *
+ * @param appSpecId - AppSpec ID
+ * @param request - 完成请求（包含生成的文件信息）
+ * @returns 完成结果
+ */
+export async function completeCodeGeneration(
+  appSpecId: string,
+  request?: CompleteCodeGenerationRequest
+): Promise<CompleteCodeGenerationResult> {
+  console.log('[PlanRouting API] 完成代码生成:', appSpecId);
+
+  if (!appSpecId) {
+    throw new Error('AppSpec ID 不能为空');
+  }
+
+  try {
+    const response = await post<CompleteCodeGenerationResult>(
+      `/v2/plan-routing/${appSpecId}/complete-code-generation`,
+      request || {}
+    );
+
+    console.log('[PlanRouting API] 完成代码生成响应:', response);
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error || response.message || '完成代码生成失败');
+    }
+
+    return response.data;
+  } catch (error) {
+    console.warn('[PlanRouting API] 完成代码生成失败:', error);
     throw error;
   }
 }
@@ -688,6 +786,44 @@ export interface UpdatePrototypeRequest {
   previewUrl: string;
   /** 提供商（默认e2b） */
   provider?: string;
+}
+
+/**
+ * 自动生成原型响应
+ *
+ * 说明：后端会在缺失原型时触发 OpenLovable 生成，并把 sandboxId/previewUrl 写回 AppSpec。
+ */
+export interface GeneratePrototypeResponse {
+  /** 沙箱ID */
+  sandboxId: string;
+  /** 预览URL */
+  previewUrl: string;
+  /** 提供商 */
+  provider?: string;
+  /** 提示信息（可选） */
+  message?: string;
+  /** 更新时间（可选） */
+  updatedAt?: string;
+}
+
+/**
+ * 自动生成原型并写回 AppSpec
+ *
+ * 用途：
+ * - 当 AppSpec metadata 缺失 sandboxId 时，用于触发后端生成原型并补齐字段
+ * - 让“下载前端页面”无需用户先手动完成原型确认流程
+ *
+ * @param appSpecId - AppSpec ID
+ * @returns 原型信息（sandboxId/previewUrl/provider）
+ */
+export async function generatePrototypeForAppSpec(
+  appSpecId: string
+): Promise<APIResponse<GeneratePrototypeResponse>> {
+  if (!appSpecId) {
+    throw new Error('AppSpec ID 不能为空');
+  }
+
+  return post<GeneratePrototypeResponse>(`/v2/plan-routing/${appSpecId}/generate-prototype`, {});
 }
 
 /**

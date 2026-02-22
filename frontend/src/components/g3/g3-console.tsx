@@ -2,12 +2,13 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { G3LogEntry as LocalG3LogEntry, G3Task } from "@/lib/g3/types";
-import { createAndMonitorG3Job, getG3Artifacts, getG3JobStatus } from "@/lib/api/g3";
+import { createAndMonitorG3Job, getG3Artifacts, getG3JobStatus, subscribeToG3Logs } from "@/lib/api/g3";
 import { G3LogEntry as ApiG3LogEntry } from "@/types/g3";
 import { G3AtomsConsoleView } from "./g3-atoms-console-view";
 import { toast } from "@/hooks/use-toast";
 import { G3ResultDialog } from "./g3-result-dialog";
 import { G3PlanningDialog } from "./g3-planning-dialog";
+import { G3RecoveryDialog } from "./g3-recovery-dialog";
 import type { G3JobStatusResponse } from "@/lib/api/g3";
 import type { G3ArtifactSummary } from "@/types/g3";
 import { G3PreviewPanel } from "./g3-preview-panel";
@@ -17,6 +18,8 @@ interface G3ConsoleProps {
   initialRequirement?: string;
   /** AppSpec ID（可选）：用于后端补齐 tenantId/userId/blueprint，并读取最新需求 */
   appSpecId?: string;
+  /** 已存在的 G3 Job ID（用于断线恢复） */
+  resumeJobId?: string | null;
   autoStart?: boolean;
   onComplete?: (task: G3Task) => void;
   className?: string;
@@ -35,7 +38,14 @@ function convertApiLogToLocal(apiLog: ApiG3LogEntry): LocalG3LogEntry {
   };
 }
 
-export function G3Console({ initialRequirement, appSpecId, autoStart = false, onComplete, className }: G3ConsoleProps) {
+export function G3Console({
+  initialRequirement,
+  appSpecId,
+  resumeJobId,
+  autoStart = false,
+  onComplete,
+  className,
+}: G3ConsoleProps) {
   const [isRunning, setIsRunning] = useState(false);
   const [requirement, setRequirement] = useState(
     initialRequirement ||
@@ -55,6 +65,7 @@ export function G3Console({ initialRequirement, appSpecId, autoStart = false, on
   const jobIdRef = useRef<string | null>(null);
   const startInFlightRef = useRef(false);
   const autoStartOnceRef = useRef(false);
+  const resumeOnceRef = useRef(false);
   const [finalStatus, setFinalStatus] = useState<'COMPLETED' | 'FAILED' | null>(null);
   const finalStatusRef = useRef<'COMPLETED' | 'FAILED' | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -255,6 +266,9 @@ export function G3Console({ initialRequirement, appSpecId, autoStart = false, on
           console.log('[G3Console] Job submitted:', id);
           setJobId(id);
           jobIdRef.current = id;
+          if (appSpecId && typeof window !== "undefined") {
+            window.localStorage.setItem(`g3:lastJob:${appSpecId}`, id);
+          }
           connectWs(id);
           setLogs(prev => [...prev, {
             timestamp: Date.now(),
@@ -365,6 +379,127 @@ export function G3Console({ initialRequirement, appSpecId, autoStart = false, on
     }
   }, [requirement, onComplete, handleLogEntry, refreshResult, round, isRunning, finalStatus, appSpecId, connectWs]);
 
+  /**
+   * 断线恢复：订阅已有 Job 日志
+   */
+  const handleResume = useCallback(async (existingJobId: string) => {
+    if (!existingJobId || startInFlightRef.current) return;
+
+    startInFlightRef.current = true;
+    try {
+      setIsRunning(true);
+      setLogs([]);
+      setRound(0);
+      setActiveRole(null);
+      setJobId(existingJobId);
+      jobIdRef.current = existingJobId;
+      setFinalStatus(null);
+      finalStatusRef.current = null;
+      setJobInfo(null);
+      setArtifacts([]);
+      setResultError(null);
+
+      setLogs([{
+        timestamp: Date.now(),
+        role: 'SYSTEM',
+        step: 'INIT',
+        content: `🔁 已恢复任务，ID: ${existingJobId.substring(0, 8)}...`,
+        level: 'INFO',
+      }]);
+
+      logDedupeRef.current = new Set();
+      connectWs(existingJobId);
+
+      try {
+        const statusResp = await getG3JobStatus(existingJobId);
+        if (statusResp.success && statusResp.data) {
+          const backendStatus = statusResp.data.status;
+          if (backendStatus === "FAILED") {
+            setIsRunning(false);
+            setFinalStatus("FAILED");
+            finalStatusRef.current = "FAILED";
+          }
+          if (backendStatus === "COMPLETED") {
+            setIsRunning(false);
+            setFinalStatus("COMPLETED");
+            finalStatusRef.current = "COMPLETED";
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      const cancel = subscribeToG3Logs(existingJobId, {
+        onOpen: (info) => {
+          setLogs((prev) => [
+            ...prev,
+            {
+              timestamp: Date.now(),
+              role: "SYSTEM",
+              step: "SSE",
+              content: `🌊 SSE已连接 (HTTP ${info.status}${info.contentType ? `, ${info.contentType}` : ""})`,
+              level: "INFO",
+            },
+          ]);
+        },
+        onLog: handleLogEntry,
+        onComplete: () => {
+          setIsRunning(false);
+          setActiveRole(null);
+          refreshResult();
+
+          void (async () => {
+            const id = jobIdRef.current || existingJobId;
+
+            let resolved: 'COMPLETED' | 'FAILED' =
+              finalStatusRef.current === 'FAILED' ? 'FAILED' : 'COMPLETED';
+
+            try {
+              const statusResp = await getG3JobStatus(id);
+              const backendStatus = statusResp.success ? statusResp.data?.status : null;
+              if (backendStatus === 'FAILED') resolved = 'FAILED';
+              if (backendStatus === 'COMPLETED') resolved = 'COMPLETED';
+            } catch {
+              // ignore
+            }
+
+            setFinalStatus(resolved);
+            finalStatusRef.current = resolved;
+
+            const task: G3Task = {
+              id,
+              requirement,
+              status: resolved === 'FAILED' ? 'FAILED' : 'COMPLETED',
+              rounds: round,
+              maxRounds: 3,
+              artifacts: { codeFiles: {}, testFiles: {}, logs: [] },
+            };
+            onComplete?.(task);
+          })();
+        },
+        onError: (error) => {
+          setLogs(prev => [...prev, {
+            timestamp: Date.now(),
+            role: 'SYSTEM',
+            step: 'ERROR',
+            content: `⚠️ 连接错误: ${error}`,
+            level: 'WARN',
+          }]);
+        },
+        onClose: () => {
+          if (isRunning) {
+            setIsRunning(false);
+          }
+        },
+      });
+
+      cancelRef.current = cancel;
+      await refreshResult();
+    } finally {
+      startInFlightRef.current = false;
+    }
+  }, [connectWs, handleLogEntry, isRunning, onComplete, refreshResult, requirement, round]);
+
   // 清理：组件卸载时取消 SSE 连接
   useEffect(() => {
     return () => {
@@ -380,11 +515,19 @@ export function G3Console({ initialRequirement, appSpecId, autoStart = false, on
   // Auto Start Effect
   useEffect(() => {
     // Next.js dev 模式下 React StrictMode 会导致 effect 执行两次，这里用 ref 防止重复启动
-    if (autoStart && !autoStartOnceRef.current && !isRunning && logs.length === 0) {
+    if (autoStart && !autoStartOnceRef.current && !isRunning && logs.length === 0 && !resumeJobId) {
       autoStartOnceRef.current = true;
       handleStart();
     }
-  }, [autoStart, isRunning, logs.length, handleStart]);
+  }, [autoStart, isRunning, logs.length, handleStart, resumeJobId]);
+
+  // Resume Effect
+  useEffect(() => {
+    if (resumeOnceRef.current) return;
+    if (!resumeJobId) return;
+    resumeOnceRef.current = true;
+    handleResume(resumeJobId);
+  }, [handleResume, resumeJobId]);
 
   /**
    * 运行中轮询拉取产物/状态，驱动右侧 Preview 实时更新。
@@ -411,6 +554,15 @@ export function G3Console({ initialRequirement, appSpecId, autoStart = false, on
       headerRightSlot={
         <div className="flex items-center gap-2">
           <G3PlanningDialog jobId={jobId} isRunning={isRunning} />
+          <G3RecoveryDialog
+            jobId={jobId}
+            appSpecId={appSpecId}
+            requirement={requirement}
+            isRunning={isRunning}
+            lastError={jobInfo?.lastError || null}
+            onRequirementUpdate={setRequirement}
+            onRestart={handleStart}
+          />
           <G3ResultDialog
             jobId={jobId}
             jobInfo={jobInfo}

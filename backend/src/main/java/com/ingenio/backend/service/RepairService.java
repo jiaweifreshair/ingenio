@@ -7,6 +7,7 @@ import com.ingenio.backend.ai.repair.AIRepairSuggestionParser;
 import com.ingenio.backend.dto.request.repair.*;
 import com.ingenio.backend.dto.response.repair.RepairResponse;
 import com.ingenio.backend.dto.response.validation.ValidationResponse;
+import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.entity.RepairRecordEntity;
 import com.ingenio.backend.mapper.RepairRecordMapper;
 import org.slf4j.Logger;
@@ -46,13 +47,23 @@ public class RepairService {
     private final ValidationService validationService;
     private final AIProviderFactory aiProviderFactory; // AI Provider工厂注入
     private final AIRepairSuggestionParser aiRepairSuggestionParser; // AI建议解析器注入
+    /**
+     * 项目服务
+     *
+     * 是什么：根据 appSpecId 查询项目实体的服务。
+     * 做什么：解析项目级AI配置入口。
+     * 为什么：保留项目级Provider入口，便于后续扩展。
+     */
+    private final ProjectService projectService;
 
     public RepairService(RepairRecordMapper repairRecordMapper, ValidationService validationService,
-            AIProviderFactory aiProviderFactory, AIRepairSuggestionParser aiRepairSuggestionParser) {
+            AIProviderFactory aiProviderFactory, AIRepairSuggestionParser aiRepairSuggestionParser,
+            ProjectService projectService) {
         this.repairRecordMapper = repairRecordMapper;
         this.validationService = validationService;
         this.aiProviderFactory = aiProviderFactory;
         this.aiRepairSuggestionParser = aiRepairSuggestionParser;
+        this.projectService = projectService;
     }
 
     /**
@@ -159,12 +170,11 @@ public class RepairService {
 
             // 3. 调用AI生成修复建议
             AIProvider.AIRequest aiRequest = AIProvider.AIRequest.builder()
-                    .model("qwen-max")
                     .temperature(0.3) // 低温度提升准确率
                     .maxTokens(4096)
                     .build();
 
-            AIProvider.AIResponse aiResponse = aiProviderFactory.getProvider().generate(prompt, aiRequest);
+            AIProvider.AIResponse aiResponse = resolveProvider(appSpecId).generate(prompt, aiRequest);
 
             log.info("AI修复建议生成完成 - promptTokens: {}, completionTokens: {}, duration: {}ms",
                     aiResponse.promptTokens(), aiResponse.completionTokens(), aiResponse.durationMs());
@@ -376,12 +386,11 @@ public class RepairService {
 
             // 4. 调用AI生成修复建议
             AIProvider.AIRequest aiRequest = AIProvider.AIRequest.builder()
-                    .model("qwen-max")
                     .temperature(0.3)
                     .maxTokens(2048)
                     .build();
 
-            AIProvider.AIResponse aiResponse = aiProviderFactory.getProvider().generate(prompt, aiRequest);
+            AIProvider.AIResponse aiResponse = resolveProvider(appSpecId).generate(prompt, aiRequest);
 
             log.info("AI类型错误修复完成 - promptTokens: {}, completionTokens: {}, duration: {}ms",
                     aiResponse.promptTokens(), aiResponse.completionTokens(), aiResponse.durationMs());
@@ -466,12 +475,11 @@ public class RepairService {
 
             // 4. 调用AI生成修复建议
             AIProvider.AIRequest aiRequest = AIProvider.AIRequest.builder()
-                    .model("qwen-max")
                     .temperature(0.3)
                     .maxTokens(2048)
                     .build();
 
-            AIProvider.AIResponse aiResponse = aiProviderFactory.getProvider().generate(prompt, aiRequest);
+            AIProvider.AIResponse aiResponse = resolveProvider(appSpecId).generate(prompt, aiRequest);
 
             log.info("AI依赖分析完成 - promptTokens: {}, completionTokens: {}, duration: {}ms",
                     aiResponse.promptTokens(), aiResponse.completionTokens(), aiResponse.durationMs());
@@ -557,12 +565,11 @@ public class RepairService {
 
             // 4. 调用AI生成修复建议
             AIProvider.AIRequest aiRequest = AIProvider.AIRequest.builder()
-                    .model("qwen-max")
                     .temperature(0.3)
                     .maxTokens(4096)
                     .build();
 
-            AIProvider.AIResponse aiResponse = aiProviderFactory.getProvider().generate(prompt, aiRequest);
+            AIProvider.AIResponse aiResponse = resolveProvider(appSpecId).generate(prompt, aiRequest);
 
             log.info("AI业务逻辑修复完成 - promptTokens: {}, completionTokens: {}, duration: {}ms",
                     aiResponse.promptTokens(), aiResponse.completionTokens(), aiResponse.durationMs());
@@ -690,6 +697,29 @@ public class RepairService {
             log.error("查询修复历史失败", e);
             throw new RuntimeException("查询修复历史失败: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 获取项目级AI Provider
+     *
+     * 是什么：基于 appSpecId 解析项目并选择AI Provider。
+     * 做什么：通过项目上下文选择Provider入口（当前回退系统默认）。
+     * 为什么：保留项目级扩展点且不影响未配置项目。
+     *
+     * @param appSpecId AppSpec ID
+     * @return 可用的AI Provider
+     */
+    private AIProvider resolveProvider(UUID appSpecId) {
+        if (appSpecId == null) {
+            return aiProviderFactory.getProvider();
+        }
+
+        ProjectEntity project = projectService.findByAppSpecId(appSpecId);
+        if (project == null) {
+            return aiProviderFactory.getProvider();
+        }
+
+        return aiProviderFactory.getProviderForProject(project.getId());
     }
 
     /**

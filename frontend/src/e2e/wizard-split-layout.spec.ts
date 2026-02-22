@@ -303,20 +303,6 @@ test.describe.skip('分屏布局性能测试', () => {
     await expect(configurationPanel).toBeVisible();
     await expect(executionPanel).toBeVisible();
 
-    // 检查控制台没有错误
-    const logs: string[] = [];
-    page.on('console', msg => {
-      logs.push(msg.type());
-    });
-
-    await page.waitForTimeout(2000);
-
-    // 应该没有严重错误
-    const hasErrors = logs.includes('error');
-    if (hasErrors) {
-      console.log('⚠️ 检测到控制台错误');
-    }
-
     console.log('✅ 组件渲染稳定性测试完成');
   });
 });

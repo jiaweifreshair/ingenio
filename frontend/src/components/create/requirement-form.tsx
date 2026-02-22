@@ -45,6 +45,7 @@ import { getTemplateRequirement } from '@/constants/templates';
 import { PrototypeConfirmation } from '@/components/prototype/prototype-confirmation';
 import { selectStyleAndGeneratePrototype } from '@/lib/api/plan-routing';
 import { LoginDialog } from '@/components/auth/login-dialog';
+import type { AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
 
 // 导入自定义Hooks
 import {
@@ -65,6 +66,54 @@ import {
 } from './components';
 
 /**
+ * 从 Step5（交互设计师）结果中提取“推荐风格 code”
+ *
+ * 是什么：Step5 风格选型解析器。
+ * 做什么：从后端返回的 selectedStyleId/styleVariants 中解析出 styleCode（例如 modern_minimal）。
+ * 为什么：原型生成接口使用 styleCode，而 Step5 默认输出是 A-G + 变体列表。
+ */
+function resolveStep5RecommendedStyleCode(step5Result: unknown): string | null {
+  if (!step5Result || typeof step5Result !== 'object') return null;
+  const record = step5Result as Record<string, unknown>;
+
+  const selectedStyleCode =
+    typeof record.selectedStyleCode === 'string' ? record.selectedStyleCode.trim() : '';
+  if (selectedStyleCode) return selectedStyleCode;
+
+  const selectedStyleId =
+    typeof record.selectedStyleId === 'string' ? record.selectedStyleId.trim() : '';
+
+  const styleVariants = Array.isArray(record.styleVariants) ? record.styleVariants : [];
+  const findVariantCode = (variant: unknown): string => {
+    if (!variant || typeof variant !== 'object') return '';
+    const v = variant as Record<string, unknown>;
+    const id = typeof v.styleId === 'string' ? v.styleId.trim() : '';
+    const code = typeof v.styleCode === 'string' ? v.styleCode.trim() : '';
+    if (!code) return '';
+    if (!selectedStyleId) return code;
+    return id === selectedStyleId ? code : '';
+  };
+
+  // 1) 优先匹配 selectedStyleId 对应的 styleCode
+  if (selectedStyleId) {
+    for (const variant of styleVariants) {
+      const code = findVariantCode(variant);
+      if (code) return code;
+    }
+  }
+
+  // 2) 回退：取第一个可用 styleCode
+  for (const variant of styleVariants) {
+    if (!variant || typeof variant !== 'object') continue;
+    const v = variant as Record<string, unknown>;
+    const code = typeof v.styleCode === 'string' ? v.styleCode.trim() : '';
+    if (code) return code;
+  }
+
+  return null;
+}
+
+/**
  * RequirementForm组件 - 重构版本
  * 使用Hook和组件提取，保持功能100%不变
  */
@@ -77,6 +126,7 @@ export function RequirementForm(): React.ReactElement {
   const {
     requirement,
     selectedModel,
+    selectedStyle,
     loading,
     showSuccess,
     showAnalysis,
@@ -84,6 +134,7 @@ export function RequirementForm(): React.ReactElement {
     loadedTemplate,
     routingResult,
     setRequirement,
+    setSelectedStyle,
     g3Logs,
     setG3Logs,
     setSelectedModel,
@@ -127,6 +178,8 @@ export function RequirementForm(): React.ReactElement {
       setShowLoginDialog(true);
       return;
     }
+    // 新一轮分析/生成：清理上一次的风格选择，避免“沿用旧结论”
+    setSelectedStyle(null);
     triggerGeneration(e);
   };
 
@@ -150,8 +203,9 @@ export function RequirementForm(): React.ReactElement {
       try {
         setLoading(true);
         console.log('[RequirementForm] 用户确认方案，开始生成原型');
-        // 默认选择 'modern_minimal' 风格 (Style A)
-        const prototypeResult = await selectStyleAndGeneratePrototype(routingResult.appSpecId, 'modern_minimal');
+        // 优先使用 Step5/用户确认的风格；若缺失则回退到 modern_minimal
+        const styleCode = selectedStyle || 'modern_minimal';
+        const prototypeResult = await selectStyleAndGeneratePrototype(routingResult.appSpecId, styleCode);
         
         setRoutingResult(prototypeResult);
         setCurrentPhase('prototype-preview');
@@ -176,6 +230,23 @@ export function RequirementForm(): React.ReactElement {
     setRequirement(newReq + " (Based on previous plan feedback)");
     handleFormSubmit({ preventDefault: () => {} } as React.FormEvent);
   };
+
+  /**
+   * 自动回填 Step5 推荐风格（仅在用户尚未选择时）
+   *
+   * 为什么：
+   * - 避免 create 流程“始终使用 modern_minimal（安全默认值）”，导致交互设计师的选型结论被忽略；
+   * - 用户仍可在 Step6 蓝图视图顶部调整并确认自己的风格选择。
+   */
+  React.useEffect(() => {
+    if (selectedStyle) return;
+    const step5 = [...messages].reverse().find((m: AnalysisProgressMessage) => m.step === 5 && m.status === 'COMPLETED' && m.result != null);
+    if (!step5?.result) return;
+
+    const recommended = resolveStep5RecommendedStyleCode(step5.result);
+    if (!recommended) return;
+    setSelectedStyle(recommended);
+  }, [messages, selectedStyle, setSelectedStyle]);
 
   // ==================== 事件处理 ====================
 
@@ -259,6 +330,7 @@ export function RequirementForm(): React.ReactElement {
             analysisError={analysisError}
             onConfirmPlan={handlePlanConfirm}
             onModifyPlan={handlePlanModify}
+            onStyleSelected={(styleCode) => setSelectedStyle(styleCode)}
           />
         ) : (
           <>

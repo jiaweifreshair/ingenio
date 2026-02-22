@@ -7,24 +7,36 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.*;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
-import java.util.HashMap;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Supabase Database服务
+ * Supabase Database服务（V2.0增强）
  *
  * 核心功能：
- * 1. 执行DDL创建表（通过Supabase SQL API）
+ * 1. 执行DDL创建表（通过JDBC直连 - V2.0激活）
  * 2. 使用PostgREST自动生成的REST API进行CRUD操作
  * 3. 管理数据库Schema版本
+ *
+ * V2.0增强：
+ * - 激活DDL执行功能，通过JDBC直连Supabase PostgreSQL
+ * - 支持执行CREATE TABLE、CREATE INDEX、RLS策略等
  *
  * 优势：
  * - 无需手写Controller，PostgREST自动生成RESTful API
  * - 无需手写GraphQL Resolver，Supabase自动生成GraphQL API
  * - 支持行级安全策略（Row Level Security, RLS）
  * - 支持实时订阅（Realtime）
+ *
+ * @author Ingenio Team
+ * @version 2.0.0
+ * @since 2025-01-26
  */
 @Slf4j
 @Service
@@ -41,11 +53,16 @@ public class SupabaseDatabaseService {
             .build();
 
     /**
-     * 执行DDL SQL语句（创建表、修改表结构等）
+     * 执行DDL SQL语句（创建表、修改表结构等）- V2.0激活
      *
-     * 注意：Supabase不直接暴露SQL执行API，需要通过以下方式：
-     * 1. 使用Supabase Management API创建migration
-     * 2. 使用PostgreSQL JDBC连接执行SQL（推荐）
+     * 实现方式：通过JDBC直连Supabase PostgreSQL执行DDL
+     *
+     * 支持的DDL类型：
+     * - CREATE TABLE：创建表
+     * - ALTER TABLE：修改表结构
+     * - CREATE INDEX：创建索引
+     * - CREATE POLICY：创建RLS策略
+     * - GRANT/REVOKE：权限管理
      *
      * @param ddlSql DDL SQL语句
      * @return 执行结果
@@ -53,31 +70,124 @@ public class SupabaseDatabaseService {
     public ExecutionResult executeDDL(String ddlSql) {
         log.info("执行Supabase DDL: length={}", ddlSql.length());
 
-        try {
-            // 方案1：通过PostgreSQL JDBC直接执行（推荐）
-            // 这需要Supabase Database的直连URL
-            // 格式：postgresql://postgres:[password]@db.[project-ref].supabase.co:5432/postgres
-
-            // 方案2：通过Supabase Management API创建migration（生产环境推荐）
-            // POST https://api.supabase.com/v1/projects/{ref}/database/migrations
-
-            // 临时实现：返回模拟结果
-            // 实际生产中应该使用JDBC或Management API
-            log.warn("DDL执行功能需要配置Supabase Database直连URL或Management API");
-
+        // 检查是否配置了DDL执行能力
+        if (!supabaseConfig.canExecuteDdl()) {
+            log.warn("DDL执行功能未配置：需要设置 SUPABASE_DIRECT_DATABASE_URL 或 SUPABASE_DB_PASSWORD");
             ExecutionResult result = new ExecutionResult();
-            result.setSuccess(true);
-            result.setMessage("DDL已提交（需要配置实际执行方式）");
+            result.setSuccess(false);
+            result.setMessage("DDL执行功能未配置，请设置 Supabase 数据库直连凭据");
             result.setSql(ddlSql);
             return result;
+        }
 
-        } catch (Exception e) {
-            log.error("执行DDL失败", e);
+        String jdbcUrl = supabaseConfig.getJdbcDirectUrl();
+        if (!StringUtils.hasText(jdbcUrl)) {
+            log.error("无法构建Supabase JDBC URL");
+            ExecutionResult result = new ExecutionResult();
+            result.setSuccess(false);
+            result.setMessage("无法构建数据库连接URL，请检查配置");
+            result.setSql(ddlSql);
+            return result;
+        }
+
+        log.info("使用JDBC直连执行DDL: url={}", jdbcUrl.replaceAll("password=[^&]+", "password=***"));
+
+        try (Connection conn = DriverManager.getConnection(jdbcUrl);
+             Statement stmt = conn.createStatement()) {
+
+            // 执行DDL（可能包含多条语句，用分号分隔）
+            String[] statements = ddlSql.split(";");
+            int successCount = 0;
+            StringBuilder errors = new StringBuilder();
+
+            for (String sql : statements) {
+                String trimmedSql = sql.trim();
+                if (trimmedSql.isEmpty()) {
+                    continue;
+                }
+
+                try {
+                    stmt.execute(trimmedSql);
+                    successCount++;
+                    log.debug("DDL语句执行成功: {}", trimmedSql.substring(0, Math.min(100, trimmedSql.length())));
+                } catch (SQLException e) {
+                    // 记录错误但继续执行后续语句（表/索引可能已存在）
+                    String errorMsg = e.getMessage();
+                    log.warn("DDL语句执行警告: sql={}, error={}",
+                            trimmedSql.substring(0, Math.min(50, trimmedSql.length())), errorMsg);
+
+                    // 忽略"已存在"类型的错误
+                    if (!isIgnorableError(errorMsg)) {
+                        errors.append(errorMsg).append("; ");
+                    } else {
+                        successCount++; // 已存在也算成功
+                    }
+                }
+            }
+
+            ExecutionResult result = new ExecutionResult();
+            if (errors.length() > 0) {
+                result.setSuccess(false);
+                result.setMessage(String.format("DDL部分执行成功 (%d/%d): %s",
+                        successCount, statements.length, errors.toString()));
+            } else {
+                result.setSuccess(true);
+                result.setMessage(String.format("DDL执行成功 (%d条语句)", successCount));
+            }
+            result.setSql(ddlSql);
+
+            log.info("DDL执行完成: success={}, count={}", result.isSuccess(), successCount);
+            return result;
+
+        } catch (SQLException e) {
+            log.error("DDL执行失败: {}", e.getMessage(), e);
             ExecutionResult result = new ExecutionResult();
             result.setSuccess(false);
             result.setMessage("DDL执行失败: " + e.getMessage());
             result.setSql(ddlSql);
             return result;
+        }
+    }
+
+    /**
+     * 判断是否为可忽略的错误（如"表已存在"）
+     *
+     * @param errorMessage 错误消息
+     * @return true 如果是可忽略的错误
+     */
+    private boolean isIgnorableError(String errorMessage) {
+        if (errorMessage == null) {
+            return false;
+        }
+        String lower = errorMessage.toLowerCase();
+        return lower.contains("already exists") ||
+               lower.contains("duplicate") ||
+               lower.contains("relation") && lower.contains("already");
+    }
+
+    /**
+     * 测试数据库连接是否正常
+     *
+     * @return true 如果连接成功
+     */
+    public boolean testConnection() {
+        if (!supabaseConfig.canExecuteDdl()) {
+            log.warn("无法测试连接：DDL执行功能未配置");
+            return false;
+        }
+
+        String jdbcUrl = supabaseConfig.getJdbcDirectUrl();
+        if (!StringUtils.hasText(jdbcUrl)) {
+            return false;
+        }
+
+        try (Connection conn = DriverManager.getConnection(jdbcUrl)) {
+            boolean valid = conn.isValid(5);
+            log.info("Supabase数据库连接测试: {}", valid ? "成功" : "失败");
+            return valid;
+        } catch (SQLException e) {
+            log.error("Supabase数据库连接测试失败: {}", e.getMessage());
+            return false;
         }
     }
 

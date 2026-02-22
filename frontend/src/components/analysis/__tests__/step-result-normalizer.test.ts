@@ -34,6 +34,19 @@ describe("step-result-normalizer", () => {
     }
   });
 
+  it("Step1：空结果时应根据需求补齐实体与动作", () => {
+    const raw = {};
+
+    const result = normalizeStepResult(1, raw, { requirement: "做一个校园活动海报生成工具" });
+
+    expect(result.step).toBe(1);
+    if (result.step === 1) {
+      expect(result.data.entities.length).toBeGreaterThan(0);
+      expect(result.data.actions).toEqual(expect.arrayContaining(["生成海报"]));
+      expect(result.data.businessScenario).toContain("海报");
+    }
+  });
+
   it("Step2：relationships.type 应映射为 ONE_TO_MANY 等枚举值", () => {
     const raw = {
       entities: {
@@ -51,6 +64,27 @@ describe("step-result-normalizer", () => {
     if (result.step === 2) {
       expect(result.data.entities[0]?.fields[0]).toEqual({ name: "id", type: "UUID" });
       expect(result.data.relationships[0]?.type).toBe("ONE_TO_MANY");
+    }
+  });
+
+  it("Step2：应保留兜底假设说明与标记", () => {
+    const raw = {
+      entities: {
+        User: { fields: ["id: UUID", "username (string)"], description: "用户" },
+      },
+      relationships: {},
+      assumptions: ["需求描述较简略，已补充基础用户实体。"],
+      usedFallback: true,
+    };
+
+    const result = normalizeStepResult(2, raw);
+
+    expect(result.step).toBe(2);
+    if (result.step === 2) {
+      expect(result.data.usedFallback).toBe(true);
+      expect(result.data.assumptions).toEqual(
+        expect.arrayContaining(["需求描述较简略，已补充基础用户实体。"])
+      );
     }
   });
 

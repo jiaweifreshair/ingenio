@@ -264,7 +264,7 @@ public class CapabilityConfigEncryptService {
         if (encryptKeyBase64 == null || encryptKeyBase64.isEmpty()) {
             // 使用默认密钥（仅用于开发环境）
             log.warn("未配置加密密钥，使用默认密钥（仅限开发环境）");
-            byte[] defaultKey = "Ingenio-Capability-Config-Key!!".getBytes(StandardCharsets.UTF_8);
+            byte[] defaultKey = "Ingenio-Capability-Config-Key!!!".getBytes(StandardCharsets.UTF_8);
             return new SecretKeySpec(defaultKey, "AES");
         }
 

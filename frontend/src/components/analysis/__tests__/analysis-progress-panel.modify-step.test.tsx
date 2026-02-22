@@ -11,7 +11,7 @@
 
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { LanguageProvider } from '@/contexts/LanguageContext';
 import { AnalysisProgressPanel } from '@/components/analysis/AnalysisProgressPanel';
 import type { AnalysisProgressMessage } from '@/hooks/use-analysis-sse';
@@ -57,14 +57,15 @@ describe('AnalysisProgressPanel', () => {
       expect(screen.getByText('需求语义解析结果')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('button', { name: '修改需求' }));
+    fireEvent.click(screen.getByRole('button', { name: '修改此步骤' }));
 
-    expect(screen.getByText('修改步骤：需求语义解析')).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText(/修改步骤：/)).toBeInTheDocument();
 
     const submitButton = screen.getByRole('button', { name: '提交修改' });
     expect(submitButton).toBeDisabled();
 
-    const textarea = screen.getByPlaceholderText(/补充\/修正「需求语义解析」/);
+    const textarea = screen.getByPlaceholderText(/补充\/修正「.+」/);
     fireEvent.change(textarea, { target: { value: '把实体补充为 User，并增加动作“评论审核”' } });
 
     expect(submitButton).not.toBeDisabled();
@@ -76,4 +77,3 @@ describe('AnalysisProgressPanel', () => {
     });
   });
 });
-

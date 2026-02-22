@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getApiBaseUrl } from '@/lib/api/base-url';
 import { getToken } from '@/lib/auth/token';
 import type { AnalysisProgressMessage } from './use-analysis-sse';
+import type { StepConfirmPayload } from '@/types/analysis-step-results';
 
 /**
  * 会话状态
@@ -293,7 +294,7 @@ export function useInteractiveAnalysis(options: UseInteractiveAnalysisOptions = 
   /**
    * 确认当前步骤(不自动进入下一步)
    */
-  const confirmStep = useCallback(async (step: number) => {
+  const confirmStep = useCallback(async (step: number, payload?: StepConfirmPayload) => {
     if (!state.session) {
       throw new Error('会话不存在');
     }
@@ -310,7 +311,11 @@ export function useInteractiveAnalysis(options: UseInteractiveAnalysisOptions = 
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': token } : {})
         },
-        body: JSON.stringify({ step })
+        body: JSON.stringify({
+          step,
+          // Step5：可选传入用户选择的设计风格（A-G）
+          selectedStyleId: payload?.selectedStyleId
+        })
       });
 
       if (!response.ok) {
@@ -346,13 +351,13 @@ export function useInteractiveAnalysis(options: UseInteractiveAnalysisOptions = 
   /**
    * 确认并进入下一步
    */
-  const advanceToNextStep = useCallback(async (step: number) => {
+  const advanceToNextStep = useCallback(async (step: number, payload?: StepConfirmPayload) => {
     if (!state.session) {
       throw new Error('会话不存在');
     }
 
     // 先确认当前步骤
-    await confirmStep(step);
+    await confirmStep(step, payload);
 
     // 如果不是最后一步,执行下一步
     if (step < 6) {

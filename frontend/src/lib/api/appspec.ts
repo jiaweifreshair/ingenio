@@ -72,6 +72,16 @@ export interface AppSpec {
 }
 
 /**
+ * 服务端配置包下载响应
+ */
+export interface BackendPackageDownloadResponse {
+  /** 下载URL */
+  downloadUrl: string;
+  /** 文件数量 */
+  fileCount: number;
+}
+
+/**
  * AppSpec列表项
  */
 export interface AppSpecListItem {
@@ -122,6 +132,18 @@ export interface AppSpecListResponse {
  */
 export async function getAppSpec(id: string): Promise<APIResponse<AppSpec>> {
   return get<AppSpec>(`/v1/appspecs/${id}`);
+}
+
+/**
+ * 获取服务端配置包下载链接（Serverless 场景）
+ *
+ * @param id - AppSpec ID
+ * @returns 下载地址与文件数量
+ */
+export async function getBackendPackageDownload(
+  id: string
+): Promise<APIResponse<BackendPackageDownloadResponse>> {
+  return get<BackendPackageDownloadResponse>(`/v1/appspecs/${id}/backend-package`);
 }
 
 /**

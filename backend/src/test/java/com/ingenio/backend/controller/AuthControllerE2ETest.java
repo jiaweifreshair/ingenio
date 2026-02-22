@@ -54,6 +54,12 @@ class AuthControllerE2ETest extends BaseE2ETest {
      */
     @BeforeAll
     public void initTestUser() {
+        // 若测试用户已存在则直接复用，避免重复插入导致唯一键冲突
+        UserEntity existingUser = userMapper.selectById(TEST_USER_ID);
+        if (existingUser != null) {
+            return;
+        }
+
         // 创建TEST_USER_ID测试用户供MockLoginFilter使用
         UserEntity testUser = new UserEntity();
         testUser.setId(TEST_USER_ID);
@@ -124,8 +130,8 @@ class AuthControllerE2ETest extends BaseE2ETest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("1000")) // 系统错误码（RuntimeException）
-                .andExpect(jsonPath("$.message").value("系统错误"));
+                .andExpect(jsonPath("$.code").value("2001"))
+                .andExpect(jsonPath("$.message").value("用户名已存在"));
     }
 
     @Test
@@ -188,8 +194,8 @@ class AuthControllerE2ETest extends BaseE2ETest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("1000")) // 系统错误码（RuntimeException）
-                .andExpect(jsonPath("$.message").value("系统错误"));
+                .andExpect(jsonPath("$.code").value("2002"))
+                .andExpect(jsonPath("$.message").value("密码错误"));
     }
 
     @Test

@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 
 import { LoginDialog } from "@/components/auth/login-dialog";
+import { PaywallGuard } from "@/components/billing/paywall-guard";
 
 import { useToast } from "@/hooks/use-toast";
 
@@ -30,13 +31,9 @@ import {
 } from "lucide-react";
 
 import {
-
   type IndustryType,
-
   type AppComplexityMode,
-
   type AICapabilityType,
-
 } from "@/types/smart-builder";
 
 import { cn } from "@/lib/utils";
@@ -607,15 +604,17 @@ export function HeroBanner({
 
               {/* Generate Button Wrapper - Positioned absolutely or flex-end */}
               <div className="absolute bottom-6 right-6 z-20">
-                <Button
-                  onClick={handleSubmitRequirement}
-                  size="lg"
-                  data-testid="hero-generate-button"
-                  className="bg-[#0f172a] hover:bg-[#1e293b] text-white dark:bg-white dark:text-black dark:hover:bg-slate-200 rounded-xl px-6 py-2.5 h-auto text-sm font-medium shadow-lg hover:shadow-xl transition-all hover:scale-105"
-                >
-                  <Sparkles className="w-4 h-4 mr-2" />
-                  {t('hero.btn_generate')}
-                </Button>
+                <PaywallGuard requiredCredits={1}>
+                  <Button
+                    onClick={handleSubmitRequirement}
+                    size="lg"
+                    data-testid="hero-generate-button"
+                    className="bg-[#0f172a] hover:bg-[#1e293b] text-white dark:bg-white dark:text-black dark:hover:bg-slate-200 rounded-xl px-6 py-2.5 h-auto text-sm font-medium shadow-lg hover:shadow-xl transition-all hover:scale-105"
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    {t('hero.btn_generate')}
+                  </Button>
+                </PaywallGuard>
               </div>
 
             </div>

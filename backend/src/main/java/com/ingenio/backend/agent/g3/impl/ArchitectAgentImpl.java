@@ -3,10 +3,13 @@ package com.ingenio.backend.agent.g3.impl;
 import com.ingenio.backend.agent.g3.IArchitectAgent;
 import com.ingenio.backend.ai.AIProvider;
 import com.ingenio.backend.ai.AIProviderFactory;
+import com.ingenio.backend.ai.UniaixAIProvider;
+import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.prompt.PromptTemplateService;
+import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.blueprint.BlueprintComplianceResult;
 import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
 import com.ingenio.backend.service.blueprint.BlueprintValidator;
@@ -19,6 +22,7 @@ import org.yaml.snakeyaml.Yaml;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -45,23 +49,63 @@ public class ArchitectAgentImpl implements IArchitectAgent {
      */
     private static final int MAX_BLUEPRINT_SCHEMA_ATTEMPTS = 3;
 
+    /**
+     * G3专用提供商标识。
+     *
+     * 是什么：G3 任务可选的AI Provider名称。
+     * 做什么：覆盖默认Provider选择逻辑。
+     * 为什么：确保G3服务生成使用Claude等指定模型。
+     */
+    @org.springframework.beans.factory.annotation.Value("${ingenio.g3.ai.provider:}")
+    private String g3Provider;
+
+    /**
+     * G3专用模型名称。
+     *
+     * 是什么：G3 任务的模型名称配置。
+     * 做什么：在AIRequest中指定Claude模型。
+     * 为什么：避免G3与其他业务模型混用。
+     */
+    @org.springframework.beans.factory.annotation.Value("${ingenio.g3.ai.model:}")
+    private String g3Model;
+
     private final AIProviderFactory aiProviderFactory;
+    /**
+     * UniAix AI Provider（Claude入口）。
+     *
+     * 是什么：支持Claude等多模型的OpenAI兼容Provider。
+     * 做什么：为G3任务提供Claude能力。
+     * 为什么：G3生成阶段需要稳定的Claude模型。
+     */
+    private final UniaixAIProvider uniaixAIProvider;
     private final BlueprintPromptBuilder blueprintPromptBuilder;
     private final BlueprintValidator blueprintValidator;
     private final PromptTemplateService promptTemplateService;
     private final G3HookPipeline hookPipeline;
+    /**
+     * 项目服务
+     *
+     * 是什么：根据 appSpecId 查询项目实体的服务。
+     * 做什么：解析项目级AI配置入口。
+     * 为什么：保留项目级Provider入口，便于后续扩展。
+     */
+    private final ProjectService projectService;
 
     public ArchitectAgentImpl(
             AIProviderFactory aiProviderFactory,
+            UniaixAIProvider uniaixAIProvider,
             BlueprintPromptBuilder blueprintPromptBuilder,
             BlueprintValidator blueprintValidator,
             PromptTemplateService promptTemplateService,
-            G3HookPipeline hookPipeline) {
+            G3HookPipeline hookPipeline,
+            ProjectService projectService) {
         this.aiProviderFactory = aiProviderFactory;
+        this.uniaixAIProvider = uniaixAIProvider;
         this.blueprintPromptBuilder = blueprintPromptBuilder;
         this.blueprintValidator = blueprintValidator;
         this.promptTemplateService = promptTemplateService;
         this.hookPipeline = hookPipeline;
+        this.projectService = projectService;
     }
 
     @Override
@@ -189,6 +233,20 @@ public class ArchitectAgentImpl implements IArchitectAgent {
                 String contextMarkdown = summary.formatAsMarkdown();
                 logConsumer.accept(G3LogEntry.info(getRole(), "注入分析上下文摘要 (" + summary.getCompressionLevel() + ")"));
                 requirement = requirement + "\n\n" + contextMarkdown;
+
+                // 修复：明确技术栈要求
+                String techStackType = (String) job.getAnalysisContextJson().get("techStackType");
+                String techStackCode = (String) job.getAnalysisContextJson().get("techStackCode");
+                if (techStackType != null) {
+                    logConsumer.accept(G3LogEntry.info(getRole(), "检测到技术栈要求: " + techStackCode + " (" + techStackType + ")"));
+
+                    // 根据技术栈类型添加明确的架构约束
+                    String techStackConstraint = buildTechStackConstraint(techStackType, techStackCode);
+                    if (!techStackConstraint.isBlank()) {
+                        requirement = requirement + "\n\n" + techStackConstraint;
+                        logConsumer.accept(G3LogEntry.info(getRole(), "已注入技术栈架构约束"));
+                    }
+                }
             } catch (Exception e) {
                 log.warn("[ArchitectAgent] 解析分析上下文失败: {}", e.getMessage());
                 // 不中断流程，降级继续
@@ -197,7 +255,7 @@ public class ArchitectAgentImpl implements IArchitectAgent {
 
         try {
             // 1. 获取AI提供商
-            AIProvider aiProvider = hookPipeline.wrapProvider(aiProviderFactory.getProvider(), job, logConsumer);
+            AIProvider aiProvider = hookPipeline.wrapProvider(resolveProvider(job), job, logConsumer);
             if (!aiProvider.isAvailable()) {
                 return ArchitectResult.failure("AI提供商不可用");
             }
@@ -223,7 +281,7 @@ public class ArchitectAgentImpl implements IArchitectAgent {
                 String contractPrompt = String.format(promptTemplateService.architectContractTemplate(),
                         attemptRequirement);
                 AIProvider.AIResponse contractResponse = aiProvider.generate(contractPrompt,
-                        AIProvider.AIRequest.builder()
+                        buildG3RequestBuilder()
                                 .temperature(0.3) // 降低随机性，保证格式稳定
                                 .maxTokens(8000)
                                 .build());
@@ -242,7 +300,7 @@ public class ArchitectAgentImpl implements IArchitectAgent {
                 String schemaPrompt = String.format(promptTemplateService.architectSchemaTemplate(), attemptRequirement,
                         contractYaml);
                 AIProvider.AIResponse schemaResponse = aiProvider.generate(schemaPrompt,
-                        AIProvider.AIRequest.builder()
+                        buildG3RequestBuilder()
                                 .temperature(0.2) // 更低的随机性
                                 .maxTokens(4000)
                                 .build());
@@ -426,6 +484,101 @@ public class ArchitectAgentImpl implements IArchitectAgent {
     }
 
     /**
+     * 获取项目级AI Provider
+     *
+     * 是什么：基于 appSpecId 解析项目并选择AI Provider。
+     * 做什么：通过项目上下文选择Provider入口（当前回退系统默认）。
+     * 为什么：保留项目级扩展点且不影响未配置项目。
+     *
+     * @param job G3任务实体
+     * @return 可用的AI Provider
+     */
+    private AIProvider resolveProvider(G3JobEntity job) {
+        AIProvider g3OverrideProvider = resolveG3ProviderOverride();
+        if (g3OverrideProvider != null) {
+            return g3OverrideProvider;
+        }
+        if (job == null || job.getAppSpecId() == null) {
+            return aiProviderFactory.getProvider();
+        }
+
+        UUID appSpecId = job.getAppSpecId();
+        ProjectEntity project = projectService.findByAppSpecId(appSpecId);
+        if (project == null) {
+            return aiProviderFactory.getProvider();
+        }
+
+        return aiProviderFactory.getProviderForProject(project.getId());
+    }
+
+    /**
+     * 解析G3专用Provider覆盖。
+     *
+     * 是什么：G3阶段专用的Provider覆盖逻辑。
+     * 做什么：根据配置选择UniAix或指定Provider。
+     * 为什么：确保G3生成使用Claude等固定模型。
+     *
+     * @return 可用的Provider，未命中返回null
+     */
+    private AIProvider resolveG3ProviderOverride() {
+        if (g3Provider == null || g3Provider.isBlank()) {
+            return null;
+        }
+        String normalized = g3Provider.trim().toLowerCase();
+        // 兼容网宿（Wangsu）命名，统一映射到 ECA Gateway。
+        if ("wangsu".equals(normalized)) {
+            normalized = "eca-gateway";
+        }
+        if ("claude".equals(normalized) || "uniaix".equals(normalized)) {
+            if (uniaixAIProvider != null && uniaixAIProvider.isAvailable()) {
+                return uniaixAIProvider;
+            }
+            log.warn("[{}] G3 Provider=UniAix不可用，回退默认Provider", AGENT_NAME);
+            return null;
+        }
+        AIProvider provider = aiProviderFactory.getProviderByName(normalized);
+        if (provider != null && provider.isAvailable()) {
+            return provider;
+        }
+        log.warn("[{}] G3 Provider={}不可用，回退默认Provider", AGENT_NAME, g3Provider);
+        return null;
+    }
+
+    /**
+     * 构建带G3模型的请求Builder。
+     *
+     * 是什么：携带G3模型配置的AIRequest.Builder。
+     * 做什么：在生成契约/Schema时注入Claude模型。
+     * 为什么：保持G3生成模型一致性与可控性。
+     *
+     * @return AIRequest.Builder
+     */
+    private AIProvider.AIRequest.Builder buildG3RequestBuilder() {
+        AIProvider.AIRequest.Builder builder = AIProvider.AIRequest.builder();
+        String model = resolveG3Model();
+        if (model != null && !model.isBlank()) {
+            builder.model(model);
+        }
+        return builder;
+    }
+
+    /**
+     * 解析G3模型名称。
+     *
+     * 是什么：G3模型解析方法。
+     * 做什么：读取并返回配置的G3模型名。
+     * 为什么：统一模型解析入口便于复用。
+     *
+     * @return G3模型名称，未配置返回null
+     */
+    private String resolveG3Model() {
+        if (g3Model != null && !g3Model.isBlank()) {
+            return g3Model;
+        }
+        return null;
+    }
+
+    /**
      * 截断字符串
      */
     private String truncate(String text, int maxLength) {
@@ -434,5 +587,98 @@ public class ArchitectAgentImpl implements IArchitectAgent {
         if (text.length() <= maxLength)
             return text;
         return text.substring(0, maxLength) + "...";
+    }
+
+    /**
+     * 根据技术栈类型构建架构约束
+     *
+     * @param techStackType 技术栈类型（REACT_SUPABASE / REACT_SPRING_BOOT / KUIKLY / H5_WEBVIEW）
+     * @param techStackCode 技术栈代码（用于展示）
+     * @return 架构约束文本
+     */
+    private String buildTechStackConstraint(String techStackType, String techStackCode) {
+        if (techStackType == null || techStackType.isBlank()) {
+            return "";
+        }
+
+        return switch (techStackType) {
+            case "REACT_SUPABASE" -> """
+                ## 技术栈要求：React + Supabase (BaaS模式)
+
+                **强制要求**：
+                1. **前端**：使用 React + TypeScript + Vite
+                2. **后端**：使用 Supabase BaaS，前端直连数据库
+                3. **数据库**：PostgreSQL（通过Supabase提供）
+                4. **认证**：使用 Supabase Auth
+                5. **存储**：使用 Supabase Storage
+
+                **禁止生成**：
+                - ❌ 不要生成 Spring Boot 后端代码
+                - ❌ 不要生成 Java 代码
+                - ❌ 不要生成独立的后端服务
+
+                **API设计**：
+                - 使用 Supabase 的 REST API 和 Realtime API
+                - 前端通过 @supabase/supabase-js 客户端直接调用
+                """;
+
+            case "REACT_SPRING_BOOT" -> """
+                ## 技术栈要求：React + Spring Boot (企业级应用)
+
+                **强制要求**：
+                1. **前端**：使用 React + TypeScript + Vite
+                2. **后端**：使用 Spring Boot 3.x + Java 17+
+                3. **数据库**：PostgreSQL
+                4. **ORM**：MyBatis-Plus 或 Spring Data JPA
+                5. **API风格**：RESTful API
+
+                **必须生成**：
+                - ✅ 完整的 Spring Boot 后端代码
+                - ✅ Controller、Service、Entity、Mapper 层
+                - ✅ 数据库迁移脚本（Flyway 或 Liquibase）
+                - ✅ API 文档（OpenAPI 3.0）
+
+                **架构要求**：
+                - 前后端分离架构
+                - 后端提供 RESTful API
+                - 前端通过 HTTP 客户端调用后端 API
+                """;
+
+            case "KUIKLY" -> """
+                ## 技术栈要求：Kuikly (原生跨端应用)
+
+                **强制要求**：
+                1. **前端**：使用 Kuikly 框架（支持 Android/iOS/HarmonyOS）
+                2. **后端**：使用 Spring Boot 3.x + Java 17+
+                3. **数据库**：PostgreSQL
+                4. **原生能力**：支持相机、GPS、蓝牙、NFC等原生功能
+
+                **必须生成**：
+                - ✅ Kuikly 跨端应用代码
+                - ✅ Spring Boot 后端代码
+                - ✅ 原生能力调用接口
+
+                **架构要求**：
+                - 原生跨端架构
+                - 后端提供 RESTful API
+                - 前端通过原生能力增强用户体验
+                """;
+
+            case "H5_WEBVIEW" -> """
+                ## 技术栈要求：H5 + WebView (简单套壳应用)
+
+                **强制要求**：
+                1. **前端**：使用 HTML5 + CSS3 + JavaScript
+                2. **后端**：可选（如需要可使用简单的 Node.js 或静态托管）
+                3. **部署**：静态网站托管或简单的 Web 服务器
+
+                **架构要求**：
+                - 轻量级架构
+                - 快速上线
+                - 适合简单展示类应用
+                """;
+
+            default -> "";
+        };
     }
 }

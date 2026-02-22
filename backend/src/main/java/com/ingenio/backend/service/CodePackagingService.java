@@ -35,6 +35,15 @@ public class CodePackagingService {
     private final MinioService minioService;
 
     /**
+     * 默认预签名下载链接有效期（秒）
+     *
+     * 是什么：MinIO 产物下载链接的默认有效期。
+     * 做什么：为打包产物生成 presigned URL，供浏览器直接下载。
+     * 为什么：MinIO 默认 bucket 通常为私有直链会 403（AccessDenied），必须用预签名 URL 才能访问。
+     */
+    private static final int DEFAULT_PRESIGNED_URL_EXPIRY_SECONDS = 24 * 60 * 60;
+
+    /**
      * 打包代码文件并上传到MinIO
      *
      * @param files 文件Map，key为文件路径，value为文件内容
@@ -177,15 +186,18 @@ public class CodePackagingService {
         long fileSize = Files.size(zipPath);
 
         try (InputStream inputStream = new BufferedInputStream(Files.newInputStream(zipPath))) {
-            String downloadUrl = minioService.uploadFile(
+            String rawUrl = minioService.uploadFile(
                     objectName,
                     inputStream,
                     "application/zip",
                     fileSize
             );
 
-            log.info("上传MinIO成功: objectName={}, url={}", objectName, downloadUrl);
-            return downloadUrl;
+            // 返回可直接访问的预签名URL，避免浏览器直链访问 MinIO 私有对象时 403
+            String presignedUrl = minioService.generatePresignedUrl(objectName, DEFAULT_PRESIGNED_URL_EXPIRY_SECONDS);
+
+            log.info("上传MinIO成功: objectName={}, rawUrl={}, presignedUrl={}", objectName, rawUrl, presignedUrl);
+            return presignedUrl;
         }
     }
 

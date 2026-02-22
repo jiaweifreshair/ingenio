@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import {
   getVersionTimeline,
+  getVersionTimelineByAppSpec,
   getVersionDetail,
   compareVersions as compareVersionsAPI,
   rollbackToVersion
@@ -79,7 +80,13 @@ export default function VersionsPage() {
         setLoading(true);
         setError(null);
 
-        const response = await getVersionTimeline(appId);
+        // 优先尝试通过 appSpecId 获取版本时间线
+        let response = await getVersionTimelineByAppSpec(appId);
+
+        // 如果 appSpecId 未找到版本，尝试直接使用 taskId
+        if (response.success && (!response.data || response.data.length === 0)) {
+          response = await getVersionTimeline(appId);
+        }
 
         if (response.success && response.data) {
           setVersions(response.data);

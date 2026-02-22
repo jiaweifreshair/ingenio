@@ -3,6 +3,8 @@ package com.ingenio.backend.agent.g3.impl;
 import com.ingenio.backend.agent.g3.ICoachAgent;
 import com.ingenio.backend.ai.AIProvider;
 import com.ingenio.backend.ai.AIProviderFactory;
+import com.ingenio.backend.ai.UniaixAIProvider;
+import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3ErrorSignature;
 import com.ingenio.backend.entity.g3.G3JobEntity;
@@ -11,6 +13,7 @@ import com.ingenio.backend.entity.g3.G3SessionMemory;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
 import com.ingenio.backend.mapper.g3.G3ArtifactMapper;
 import com.ingenio.backend.prompt.PromptTemplateService;
+import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.g3.G3ContextBuilder;
 import com.ingenio.backend.service.g3.G3KnowledgeStorePort;
 import com.ingenio.backend.service.g3.G3ToolsetService;
@@ -22,6 +25,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -47,12 +51,48 @@ public class CoachAgentImpl implements ICoachAgent {
 
     private static final String AGENT_NAME = "CoachAgent";
 
+    /**
+     * G3专用提供商标识。
+     *
+     * 是什么：G3 任务可选的AI Provider名称。
+     * 做什么：覆盖默认Provider选择逻辑。
+     * 为什么：确保G3服务生成使用Claude。
+     */
+    @org.springframework.beans.factory.annotation.Value("${ingenio.g3.ai.provider:}")
+    private String g3Provider;
+
+    /**
+     * G3专用模型名称。
+     *
+     * 是什么：G3 任务的模型名称配置。
+     * 做什么：在AIRequest中指定Claude模型。
+     * 为什么：避免G3与其他业务模型混用。
+     */
+    @org.springframework.beans.factory.annotation.Value("${ingenio.g3.ai.model:}")
+    private String g3Model;
+
     private final AIProviderFactory aiProviderFactory;
+    /**
+     * UniAix AI Provider（Claude入口）。
+     *
+     * 是什么：支持Claude等多模型的OpenAI兼容Provider。
+     * 做什么：为G3任务提供Claude能力。
+     * 为什么：G3生成阶段需要稳定的Claude模型。
+     */
+    private final UniaixAIProvider uniaixAIProvider;
     private final PromptTemplateService promptTemplateService;
     private final G3ContextBuilder contextBuilder;
     private final G3ArtifactMapper artifactMapper;
     private final G3KnowledgeStorePort knowledgeStore;
     private final G3HookPipeline hookPipeline;
+    /**
+     * 项目服务
+     *
+     * 是什么：根据 appSpecId 查询项目实体的服务。
+     * 做什么：解析项目级AI配置入口。
+     * 为什么：保留项目级Provider入口，便于后续扩展。
+     */
+    private final ProjectService projectService;
     /**
      * Toolset 服务，用于兜底的本地搜索能力。
      */
@@ -128,19 +168,23 @@ public class CoachAgentImpl implements ICoachAgent {
 
     public CoachAgentImpl(
             AIProviderFactory aiProviderFactory,
+            UniaixAIProvider uniaixAIProvider,
             PromptTemplateService promptTemplateService,
             G3ContextBuilder contextBuilder,
             G3ArtifactMapper artifactMapper,
             G3KnowledgeStorePort knowledgeStore,
             G3ToolsetService toolsetService,
-            G3HookPipeline hookPipeline) {
+            G3HookPipeline hookPipeline,
+            ProjectService projectService) {
         this.aiProviderFactory = aiProviderFactory;
+        this.uniaixAIProvider = uniaixAIProvider;
         this.promptTemplateService = promptTemplateService;
         this.contextBuilder = contextBuilder;
         this.artifactMapper = artifactMapper;
         this.knowledgeStore = knowledgeStore;
         this.toolsetService = toolsetService;
         this.hookPipeline = hookPipeline;
+        this.projectService = projectService;
     }
 
     @Override
@@ -172,7 +216,7 @@ public class CoachAgentImpl implements ICoachAgent {
         }
 
         try {
-            AIProvider aiProvider = hookPipeline.wrapProvider(aiProviderFactory.getProvider(), job, logConsumer);
+            AIProvider aiProvider = hookPipeline.wrapProvider(resolveProvider(job), job, logConsumer);
             if (!aiProvider.isAvailable()) {
                 return CoachResult.failure("AI提供商不可用");
             }
@@ -256,7 +300,7 @@ public class CoachAgentImpl implements ICoachAgent {
                 if (!canAutoFix(compilerOutput)) {
                     logConsumer.accept(G3LogEntry.warn(getRole(), artifact.getFileName() + " 无法自动修复"));
                     analysisReport.append("【").append(artifact.getFileName()).append("】无法自动修复\n");
-                    analysisReport.append(analyzeError(artifact, compilerOutput)).append("\n\n");
+                    analysisReport.append(analyzeErrorWithProvider(artifact, compilerOutput, aiProvider)).append("\n\n");
                     failedCount++;
                     continue;
                 }
@@ -338,6 +382,133 @@ public class CoachAgentImpl implements ICoachAgent {
         }
     }
 
+    /**
+     * 获取项目级AI Provider
+     *
+     * 是什么：基于 appSpecId 解析项目并选择AI Provider。
+     * 做什么：通过项目上下文选择Provider入口（当前回退系统默认）。
+     * 为什么：保留项目级扩展点且不影响未配置项目。
+     *
+     * @param job G3任务实体
+     * @return 可用的AI Provider
+     */
+    private AIProvider resolveProvider(G3JobEntity job) {
+        AIProvider g3OverrideProvider = resolveG3ProviderOverride();
+        if (g3OverrideProvider != null) {
+            return g3OverrideProvider;
+        }
+        if (job == null || job.getAppSpecId() == null) {
+            return aiProviderFactory.getProvider();
+        }
+
+        UUID appSpecId = job.getAppSpecId();
+        ProjectEntity project = projectService.findByAppSpecId(appSpecId);
+        if (project == null) {
+            return aiProviderFactory.getProvider();
+        }
+
+        return aiProviderFactory.getProviderForProject(project.getId());
+    }
+
+    /**
+     * 解析G3专用Provider覆盖。
+     *
+     * 是什么：G3阶段专用的Provider覆盖逻辑。
+     * 做什么：根据配置选择UniAix或指定Provider。
+     * 为什么：确保G3生成使用Claude等固定模型。
+     *
+     * @return 可用的Provider，未命中返回null
+     */
+    private AIProvider resolveG3ProviderOverride() {
+        if (g3Provider == null || g3Provider.isBlank()) {
+            return null;
+        }
+        String normalized = g3Provider.trim().toLowerCase();
+        // 兼容网宿（Wangsu）命名，统一映射到 ECA Gateway。
+        if ("wangsu".equals(normalized)) {
+            normalized = "eca-gateway";
+        }
+        if ("claude".equals(normalized) || "uniaix".equals(normalized)) {
+            if (uniaixAIProvider != null && uniaixAIProvider.isAvailable()) {
+                return uniaixAIProvider;
+            }
+            log.warn("[{}] G3 Provider=UniAix不可用，回退默认Provider", AGENT_NAME);
+            return null;
+        }
+        AIProvider provider = aiProviderFactory.getProviderByName(normalized);
+        if (provider != null && provider.isAvailable()) {
+            return provider;
+        }
+        log.warn("[{}] G3 Provider={}不可用，回退默认Provider", AGENT_NAME, g3Provider);
+        return null;
+    }
+
+    /**
+     * 构建带G3模型的请求Builder。
+     *
+     * 是什么：携带G3模型配置的AIRequest.Builder。
+     * 做什么：在G3生成阶段注入Claude模型。
+     * 为什么：保持G3生成模型一致性与可控性。
+     *
+     * @return AIRequest.Builder
+     */
+    private AIProvider.AIRequest.Builder buildG3RequestBuilder() {
+        AIProvider.AIRequest.Builder builder = AIProvider.AIRequest.builder();
+        String model = resolveG3Model();
+        if (model != null && !model.isBlank()) {
+            builder.model(model);
+        }
+        return builder;
+    }
+
+    /**
+     * 解析G3模型名称。
+     *
+     * 是什么：G3模型解析方法。
+     * 做什么：读取并返回配置的G3模型名。
+     * 为什么：统一模型解析入口便于复用。
+     *
+     * @return G3模型名称，未配置返回null
+     */
+    private String resolveG3Model() {
+        if (g3Model != null && !g3Model.isBlank()) {
+            return g3Model;
+        }
+        return null;
+    }
+
+    /**
+     * 使用指定Provider分析错误
+     *
+     * 是什么：基于指定Provider执行错误分析。
+     * 做什么：复用修复流程中的项目级Provider执行分析。
+     * 为什么：保证错误分析与修复使用一致的AI配置。
+     *
+     * @param artifact 产物
+     * @param compilerOutput 编译输出
+     * @param aiProvider 指定AI Provider
+     * @return 错误分析结果
+     */
+    private String analyzeErrorWithProvider(G3ArtifactEntity artifact, String compilerOutput, AIProvider aiProvider) {
+        if (aiProvider == null || !aiProvider.isAvailable()) {
+            return "AI提供商不可用，无法分析错误";
+        }
+
+        try {
+            String prompt = String.format(promptTemplateService.coachAnalysisTemplate(), artifact.getFileName(),
+                    compilerOutput);
+            AIProvider.AIResponse response = aiProvider.generate(prompt,
+                    buildG3RequestBuilder()
+                            .temperature(0.1)
+                            .maxTokens(1000)
+                            .build());
+            return response.content();
+        } catch (Exception e) {
+            log.error("[{}] 错误分析失败: {}", AGENT_NAME, e.getMessage());
+            return "错误分析失败: " + e.getMessage();
+        }
+    }
+
     @Override
     public String analyzeError(G3ArtifactEntity artifact, String compilerOutput) {
         try {
@@ -349,7 +520,7 @@ public class CoachAgentImpl implements ICoachAgent {
             String prompt = String.format(promptTemplateService.coachAnalysisTemplate(), artifact.getFileName(),
                     compilerOutput);
             AIProvider.AIResponse response = aiProvider.generate(prompt,
-                    AIProvider.AIRequest.builder()
+                    buildG3RequestBuilder()
                             .temperature(0.1)
                             .maxTokens(1000)
                             .build());
@@ -426,7 +597,7 @@ public class CoachAgentImpl implements ICoachAgent {
                 compilerOutput);
 
         AIProvider.AIResponse response = aiProvider.generate(prompt,
-                AIProvider.AIRequest.builder()
+                buildG3RequestBuilder()
                         .temperature(0.1) // 低温度保证稳定性
                         .maxTokens(8000)
                         .build());
@@ -491,7 +662,7 @@ public class CoachAgentImpl implements ICoachAgent {
                 safePlan);
 
         AIProvider.AIResponse response = aiProvider.generate(prompt,
-                AIProvider.AIRequest.builder()
+                buildG3RequestBuilder()
                         .temperature(0.1)
                         .maxTokens(6000)
                         .build());
@@ -704,7 +875,7 @@ public class CoachAgentImpl implements ICoachAgent {
                     compilerOutputSummary);
 
             AIProvider.AIResponse response = aiProvider.generate(prompt,
-                    AIProvider.AIRequest.builder()
+                    buildG3RequestBuilder()
                             .temperature(0.1)
                             .maxTokens(1200)
                             .build());
@@ -744,7 +915,7 @@ public class CoachAgentImpl implements ICoachAgent {
                     contextBlock + "\n\n修复历史:\n" + repairHistory);
 
             AIProvider.AIResponse response = aiProvider.generate(prompt,
-                    AIProvider.AIRequest.builder()
+                    buildG3RequestBuilder()
                             .temperature(0.1)
                             .maxTokens(1200)
                             .build());
@@ -1057,7 +1228,7 @@ public class CoachAgentImpl implements ICoachAgent {
                 compilerOutput);
 
         AIProvider.AIResponse response = aiProvider.generate(prompt,
-                AIProvider.AIRequest.builder()
+                buildG3RequestBuilder()
                         .temperature(0.1) // 低温度保证稳定性
                         .maxTokens(8000)
                         .build());

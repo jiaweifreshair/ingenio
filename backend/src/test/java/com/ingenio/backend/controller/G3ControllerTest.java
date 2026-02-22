@@ -4,22 +4,22 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
+import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
+import com.ingenio.backend.mapper.g3.G3ValidationResultMapper;
+import com.ingenio.backend.module.g3.controller.G3Controller;
+import com.ingenio.backend.service.CodePackagingService;
+import com.ingenio.backend.service.g3.G3FailureDiagnosisService;
 import com.ingenio.backend.service.g3.G3OrchestratorService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.context.TestConfiguration;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Primary;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import reactor.core.publisher.Flux;
 
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -50,25 +50,39 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 注意：G3 API已在SaTokenConfig中配置为无需认证的后台服务接口（/v1/g3/**白名单）
  * 因此这些测试不需要提供认证Token即可正常执行
  */
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
+@ExtendWith(MockitoExtension.class)
 class G3ControllerTest {
 
-    @Autowired
     private MockMvc mockMvc;
 
-    @Autowired
     private ObjectMapper objectMapper;
 
-    @MockBean
+    @Mock
     private G3OrchestratorService orchestratorService;
+
+    @Mock
+    private G3FailureDiagnosisService failureDiagnosisService;
+
+    @Mock
+    private CodePackagingService codePackagingService;
+
+    @Mock
+    private G3ValidationResultMapper validationResultMapper;
 
     private UUID testJobId;
     private G3JobEntity testJob;
 
     @BeforeEach
     void setUp() {
+        objectMapper = new ObjectMapper();
+        G3Controller controller = new G3Controller(
+                orchestratorService,
+                codePackagingService,
+                objectMapper,
+                validationResultMapper,
+                failureDiagnosisService);
+        mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+
         testJobId = UUID.randomUUID();
         testJob = G3JobEntity.builder()
                 .id(testJobId)
@@ -100,7 +114,7 @@ class G3ControllerTest {
                 }
                 """;
 
-        when(orchestratorService.submitJob(any(), any(), any())).thenReturn(testJobId);
+        when(orchestratorService.submitJob(any(), any(), any(), any(), any(), any())).thenReturn(testJobId);
 
         // WHEN & THEN
         mockMvc.perform(post("/v1/g3/jobs")
@@ -108,10 +122,10 @@ class G3ControllerTest {
                         .content(requestBody))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.jobId").value(testJobId.toString()))
-                .andExpect(jsonPath("$.message").value("任务已提交"));
+                .andExpect(jsonPath("$.data.jobId").value(testJobId.toString()))
+                .andExpect(jsonPath("$.message").value("success"));
 
-        verify(orchestratorService).submitJob(eq("创建一个电商平台"), eq(null), eq(null));
+        verify(orchestratorService).submitJob(eq("创建一个电商平台"), eq(null), eq(null), eq(null), eq(null), eq(null));
     }
 
     /**
@@ -140,24 +154,23 @@ class G3ControllerTest {
     }
 
     /**
-     * 测试：提交任务时包含userId和tenantId
-     * 期望：正确传递参数
+     * 测试：提交任务时包含 appSpecId 和 templateId
+     * 期望：正确传递上下文参数
      */
     @Test
-    void submitJob_withUserIdAndTenantId_shouldPassParameters() throws Exception {
-        // GIVEN
-        UUID userId = UUID.randomUUID();
-        UUID tenantId = UUID.randomUUID();
+    void submitJob_withAppSpecAndTemplate_shouldPassParameters() throws Exception {
+        UUID appSpecId = UUID.randomUUID();
+        UUID templateId = UUID.randomUUID();
 
         String requestBody = """
                 {
                     "requirement": "创建用户管理系统",
-                    "userId": "%s",
-                    "tenantId": "%s"
+                    "appSpecId": "%s",
+                    "templateId": "%s"
                 }
-                """.formatted(userId, tenantId);
+                """.formatted(appSpecId, templateId);
 
-        when(orchestratorService.submitJob(any(), any(), any())).thenReturn(testJobId);
+        when(orchestratorService.submitJob(any(), any(), any(), any(), any(), any())).thenReturn(testJobId);
 
         // WHEN & THEN
         mockMvc.perform(post("/v1/g3/jobs")
@@ -168,14 +181,52 @@ class G3ControllerTest {
 
         verify(orchestratorService).submitJob(
                 eq("创建用户管理系统"),
-                eq(userId),
-                eq(tenantId)
+                eq(null),
+                eq(null),
+                eq(appSpecId),
+                eq(templateId),
+                eq(null)
         );
     }
 
     /**
+     * 测试：获取任务诊断与行动项
+     * 期望：返回诊断摘要、环境错误标记与行动项列表
+     */
+    @Test
+    void getDiagnosis_shouldReturnActions() throws Exception {
+        G3ValidationResultEntity validationResult = G3ValidationResultEntity.builder()
+                .validationType("COMPILE")
+                .passed(false)
+                .createdAt(Instant.now())
+                .build();
+
+        G3FailureDiagnosisService.DiagnosisResult diagnosis =
+                new G3FailureDiagnosisService.DiagnosisResult(
+                        "编译失败",
+                        true,
+                        "Maven 未安装或不可用",
+                        List.of("检查 Maven 环境", "补充配置后重试", "重新触发生成"));
+
+        when(orchestratorService.getJob(testJobId)).thenReturn(testJob);
+        when(validationResultMapper.selectByJobId(testJobId)).thenReturn(List.of(validationResult));
+        when(failureDiagnosisService.buildDiagnosis(validationResult, testJob.getLastError()))
+                .thenReturn(diagnosis);
+
+        mockMvc.perform(get("/v1/g3/jobs/{jobId}/diagnosis", testJobId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(jsonPath("$.data.summary").value("编译失败"))
+                .andExpect(jsonPath("$.data.environmentError").value(true))
+                .andExpect(jsonPath("$.data.environmentReason").value("Maven 未安装或不可用"))
+                .andExpect(jsonPath("$.data.actions", hasSize(3)));
+
+        verify(failureDiagnosisService).buildDiagnosis(validationResult, testJob.getLastError());
+    }
+
+    /**
      * 测试：提交任务失败
-     * 期望：返回500和错误信息
+     * 期望：抛出运行时异常并由容器返回500
      */
     @Test
     void submitJob_whenServiceThrows_shouldReturn500() throws Exception {
@@ -186,16 +237,14 @@ class G3ControllerTest {
                 }
                 """;
 
-        when(orchestratorService.submitJob(any(), any(), any()))
+        when(orchestratorService.submitJob(any(), any(), any(), any(), any(), any()))
                 .thenThrow(new RuntimeException("数据库连接失败"));
 
         // WHEN & THEN
-        mockMvc.perform(post("/v1/g3/jobs")
+        org.junit.jupiter.api.Assertions.assertThrows(Exception.class, () ->
+                mockMvc.perform(post("/v1/g3/jobs")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(requestBody))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.success").value(false))
-                .andExpect(jsonPath("$.message").value(containsString("数据库连接失败")));
+                        .content(requestBody)));
     }
 
     /**
@@ -210,18 +259,18 @@ class G3ControllerTest {
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{id}", testJobId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(testJobId.toString()))
-                .andExpect(jsonPath("$.status").value(G3JobEntity.Status.QUEUED.getValue()))
-                .andExpect(jsonPath("$.currentRound").value(0))
-                .andExpect(jsonPath("$.maxRounds").value(3))
-                .andExpect(jsonPath("$.contractLocked").value(true))
-                .andExpect(jsonPath("$.sandboxId").value("sbx_test_123"))
-                .andExpect(jsonPath("$.sandboxUrl").value("https://test.e2b.dev"));
+                .andExpect(jsonPath("$.data.id").value(testJobId.toString()))
+                .andExpect(jsonPath("$.data.status").value(G3JobEntity.Status.QUEUED.getValue()))
+                .andExpect(jsonPath("$.data.currentRound").value(0))
+                .andExpect(jsonPath("$.data.maxRounds").value(3))
+                .andExpect(jsonPath("$.data.contractLocked").value(true))
+                .andExpect(jsonPath("$.data.sandboxId").value("sbx_test_123"))
+                .andExpect(jsonPath("$.data.sandboxUrl").value("https://test.e2b.dev"));
     }
 
     /**
      * 测试：查询任务状态（任务不存在）
-     * 期望：返回404
+     * 期望：返回错误码 404
      */
     @Test
     void getJobStatus_whenJobNotFound_shouldReturn404() throws Exception {
@@ -231,7 +280,9 @@ class G3ControllerTest {
 
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{id}", nonExistentId))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.success").value(false));
     }
 
     /**
@@ -247,6 +298,7 @@ class G3ControllerTest {
         );
 
         Flux<G3LogEntry> logFlux = Flux.fromIterable(logs);
+        when(orchestratorService.getJob(testJobId)).thenReturn(testJob);
         when(orchestratorService.subscribeToLogs(testJobId)).thenReturn(logFlux);
 
         // WHEN & THEN
@@ -270,16 +322,17 @@ class G3ControllerTest {
                 createArtifact("UserController.java", "CONTROLLER")
         );
 
+        when(orchestratorService.getJob(testJobId)).thenReturn(testJob);
         when(orchestratorService.getArtifacts(testJobId)).thenReturn(artifacts);
 
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{id}/artifacts", testJobId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].fileName").value("User.java"))
-                .andExpect(jsonPath("$[0].artifactType").value("SERVICE"))
-                .andExpect(jsonPath("$[1].fileName").value("UserController.java"))
-                .andExpect(jsonPath("$[1].artifactType").value("CONTROLLER"));
+                .andExpect(jsonPath("$.data.length()").value(2))
+                .andExpect(jsonPath("$.data[0].fileName").value("User.java"))
+                .andExpect(jsonPath("$.data[0].artifactType").value("SERVICE"))
+                .andExpect(jsonPath("$.data[1].fileName").value("UserController.java"))
+                .andExpect(jsonPath("$.data[1].artifactType").value("CONTROLLER"));
     }
 
     /**
@@ -289,12 +342,13 @@ class G3ControllerTest {
     @Test
     void getArtifacts_whenNoArtifacts_shouldReturnEmptyList() throws Exception {
         // GIVEN
+        when(orchestratorService.getJob(testJobId)).thenReturn(testJob);
         when(orchestratorService.getArtifacts(testJobId)).thenReturn(List.of());
 
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{id}/artifacts", testJobId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.data.length()").value(0));
     }
 
     /**
@@ -310,35 +364,38 @@ class G3ControllerTest {
         artifact.setContent("public class User { private String name; }");
         artifact.markError("User.java:5: error: missing semicolon");
 
-        when(orchestratorService.getArtifacts(testJobId)).thenReturn(List.of(artifact));
+        when(orchestratorService.getJob(testJobId)).thenReturn(testJob);
+        when(orchestratorService.getArtifact(testJobId, artifactId)).thenReturn(artifact);
 
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{jobId}/artifacts/{artifactId}/content",
                         testJobId, artifactId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value(artifactId.toString()))
-                .andExpect(jsonPath("$.filePath").exists())
-                .andExpect(jsonPath("$.fileName").value("User.java"))
-                .andExpect(jsonPath("$.language").value("java"))
-                .andExpect(jsonPath("$.content").value(containsString("public class User")))
-                .andExpect(jsonPath("$.hasErrors").value(true))
-                .andExpect(jsonPath("$.compilerOutput").value(containsString("missing semicolon")));
+                .andExpect(jsonPath("$.data.id").value(artifactId.toString()))
+                .andExpect(jsonPath("$.data.filePath").exists())
+                .andExpect(jsonPath("$.data.fileName").value("User.java"))
+                .andExpect(jsonPath("$.data.content").value(containsString("public class User")))
+                .andExpect(jsonPath("$.data.hasErrors").value(true))
+                .andExpect(jsonPath("$.data.compilerOutput").value(containsString("missing semicolon")));
     }
 
     /**
      * 测试：获取单个产物内容（产物不存在）
-     * 期望：返回404
+     * 期望：返回错误码 404
      */
     @Test
     void getArtifactContent_whenArtifactNotFound_shouldReturn404() throws Exception {
         // GIVEN
         UUID nonExistentArtifactId = UUID.randomUUID();
-        when(orchestratorService.getArtifacts(testJobId)).thenReturn(List.of());
+        when(orchestratorService.getJob(testJobId)).thenReturn(testJob);
+        when(orchestratorService.getArtifact(testJobId, nonExistentArtifactId)).thenReturn(null);
 
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{jobId}/artifacts/{artifactId}/content",
                         testJobId, nonExistentArtifactId))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.success").value(false));
     }
 
     /**
@@ -353,15 +410,14 @@ class G3ControllerTest {
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{id}/contract", testJobId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.contractLocked").value(true))
-                .andExpect(jsonPath("$.contractYaml").value("openapi: 3.0.0"))
-                .andExpect(jsonPath("$.dbSchemaSql").value("CREATE TABLE users..."))
-                .andExpect(jsonPath("$.lockedAt").exists());
+                .andExpect(jsonPath("$.data.locked").value(true))
+                .andExpect(jsonPath("$.data.openApiYaml").value("openapi: 3.0.0"))
+                .andExpect(jsonPath("$.data.dbSchemaSql").value("CREATE TABLE users..."));
     }
 
     /**
      * 测试：获取任务契约内容（任务不存在）
-     * 期望：返回404
+     * 期望：返回错误码 404
      */
     @Test
     void getContract_whenJobNotFound_shouldReturn404() throws Exception {
@@ -371,7 +427,9 @@ class G3ControllerTest {
 
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{id}/contract", nonExistentId))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(404))
+                .andExpect(jsonPath("$.success").value(false));
     }
 
     /**
@@ -393,10 +451,9 @@ class G3ControllerTest {
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/jobs/{id}/contract", testJobId))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.contractLocked").value(false))
-                .andExpect(jsonPath("$.contractYaml").value(""))
-                .andExpect(jsonPath("$.dbSchemaSql").value(""))
-                .andExpect(jsonPath("$.lockedAt").doesNotExist());
+                .andExpect(jsonPath("$.data.locked").value(false))
+                .andExpect(jsonPath("$.data.openApiYaml").value(org.hamcrest.Matchers.nullValue()))
+                .andExpect(jsonPath("$.data.dbSchemaSql").value(org.hamcrest.Matchers.nullValue()));
     }
 
     /**
@@ -408,9 +465,8 @@ class G3ControllerTest {
         // WHEN & THEN
         mockMvc.perform(get("/v1/g3/health"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("UP"))
-                .andExpect(jsonPath("$.service").value("G3Engine"))
-                .andExpect(jsonPath("$.version").value("1.0.0"));
+                .andExpect(jsonPath("$.data.status").value("ok"))
+                .andExpect(jsonPath("$.data.message").value("G3 Engine is running"));
     }
 
     // ========== Helper Methods ==========

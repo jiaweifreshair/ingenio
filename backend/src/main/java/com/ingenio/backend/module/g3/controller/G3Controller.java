@@ -7,7 +7,11 @@ import com.ingenio.backend.common.context.TenantContextHolder;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
+import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
+import com.ingenio.backend.mapper.g3.G3ValidationResultMapper;
+import com.ingenio.backend.service.g3.G3FailureDiagnosisService;
 import com.ingenio.backend.service.g3.G3OrchestratorService;
+import com.ingenio.backend.service.CodePackagingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.Data;
@@ -23,6 +27,7 @@ import reactor.core.publisher.Mono;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
 import java.util.UUID;
+import java.util.Comparator;
 
 /**
  * G3引擎API控制器
@@ -44,7 +49,10 @@ import java.util.UUID;
 public class G3Controller {
 
     private final G3OrchestratorService orchestratorService;
+    private final CodePackagingService codePackagingService;
     private final ObjectMapper objectMapper;
+    private final G3ValidationResultMapper validationResultMapper;
+    private final G3FailureDiagnosisService failureDiagnosisService;
 
     /**
      * 提交G3任务
@@ -183,6 +191,96 @@ public class G3Controller {
     }
 
     /**
+     * 获取任务验证摘要（编译/质量门控）
+     *
+     * @param jobId 任务ID
+     * @return 验证摘要
+     */
+    @GetMapping("/jobs/{jobId}/validation")
+    @Operation(summary = "获取任务验证摘要")
+    public Result<ValidationSummaryResponse> getValidationSummary(@PathVariable String jobId) {
+        log.debug("[G3 API] 获取验证摘要: jobId={}", jobId);
+
+        G3JobEntity job = orchestratorService.getJob(UUID.fromString(jobId));
+        if (job == null) {
+            return Result.error(404, "任务不存在");
+        }
+        if (!hasJobAccess(job)) {
+            return Result.error(403, "无权访问该任务的验证信息");
+        }
+
+        List<G3ValidationResultEntity> results = validationResultMapper.selectByJobId(UUID.fromString(jobId));
+        if (results == null || results.isEmpty()) {
+            return Result.success(new ValidationSummaryResponse(false, null, null, 0, 0, null));
+        }
+
+        // 仅取最近一条编译结果作为摘要基准
+        G3ValidationResultEntity latest = results.stream()
+                .filter(r -> r.getValidationType() == null || "COMPILE".equalsIgnoreCase(r.getValidationType()))
+                .max(Comparator.comparing(G3ValidationResultEntity::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+                .orElse(results.get(results.size() - 1));
+
+        boolean compilationSuccess = Boolean.TRUE.equals(latest.getPassed());
+        int errorCount = latest.getErrorCount() != null ? latest.getErrorCount() : 0;
+        int warningCount = latest.getWarningCount() != null ? latest.getWarningCount() : 0;
+
+        // 质量评分：编译通过=100，否则按错误数衰减（最低0）
+        int qualityScore = compilationSuccess ? 100 : Math.max(0, 100 - errorCount * 5);
+
+        ValidationSummaryResponse response = new ValidationSummaryResponse(
+                compilationSuccess,
+                null,
+                qualityScore,
+                errorCount,
+                warningCount,
+                latest.getValidationType());
+
+        return Result.success(response);
+    }
+
+    /**
+     * 获取任务失败诊断与行动项
+     *
+     * @param jobId 任务ID
+     * @return 诊断摘要与行动项
+     */
+    @GetMapping("/jobs/{jobId}/diagnosis")
+    @Operation(summary = "获取任务诊断与行动项")
+    public Result<DiagnosisResponse> getDiagnosis(@PathVariable String jobId) {
+        log.debug("[G3 API] 获取诊断结果: jobId={}", jobId);
+
+        G3JobEntity job = orchestratorService.getJob(UUID.fromString(jobId));
+        if (job == null) {
+            return Result.error(404, "任务不存在");
+        }
+        if (!hasJobAccess(job)) {
+            return Result.error(403, "无权访问该任务的诊断信息");
+        }
+
+        List<G3ValidationResultEntity> results = validationResultMapper.selectByJobId(UUID.fromString(jobId));
+        G3ValidationResultEntity latest = null;
+        if (results != null && !results.isEmpty()) {
+            latest = results.stream()
+                    .filter(r -> r.getValidationType() == null
+                            || "COMPILE".equalsIgnoreCase(r.getValidationType()))
+                    .max(Comparator.comparing(G3ValidationResultEntity::getCreatedAt,
+                            Comparator.nullsLast(Comparator.naturalOrder())))
+                    .orElse(results.get(results.size() - 1));
+        }
+
+        G3FailureDiagnosisService.DiagnosisResult diagnosis =
+                failureDiagnosisService.buildDiagnosis(latest, job.getLastError());
+
+        DiagnosisResponse response = new DiagnosisResponse();
+        response.setSummary(diagnosis.summary());
+        response.setEnvironmentError(diagnosis.environmentError());
+        response.setEnvironmentReason(diagnosis.environmentReason());
+        response.setActions(diagnosis.actions());
+
+        return Result.success(response);
+    }
+
+    /**
      * 获取单个产物的详细内容（包含完整代码/配置内容）
      *
      * @param jobId      任务ID
@@ -214,6 +312,59 @@ public class G3Controller {
         }
 
         return Result.success(ArtifactContentResponse.fromEntity(artifact));
+    }
+
+    /**
+     * 下载任务产物（打包为ZIP）
+     *
+     * @param jobId 任务ID
+     * @return 下载URL
+     */
+    @GetMapping("/jobs/{jobId}/download")
+    @Operation(summary = "下载任务产物（ZIP）")
+    public Result<DownloadResponse> downloadArtifacts(@PathVariable String jobId) {
+        log.info("[G3 API] 下载产物: jobId={}", jobId);
+
+        UUID jobUuid = UUID.fromString(jobId);
+
+        // 权限验证
+        G3JobEntity job = orchestratorService.getJob(jobUuid);
+        if (job == null) {
+            return Result.error(404, "任务不存在");
+        }
+        if (!hasJobAccess(job)) {
+            return Result.error(403, "无权下载该任务的产物");
+        }
+
+        // 获取所有产物
+        List<G3ArtifactEntity> artifacts = orchestratorService.getArtifacts(jobUuid);
+        if (artifacts.isEmpty()) {
+            return Result.error(404, "该任务没有产物");
+        }
+
+        // 转换为 Map<String, String>
+        java.util.Map<String, String> files = new java.util.HashMap<>();
+        for (G3ArtifactEntity artifact : artifacts) {
+            if (artifact.getFilePath() != null && artifact.getContent() != null) {
+                files.put(artifact.getFilePath(), artifact.getContent());
+            }
+        }
+
+        if (files.isEmpty()) {
+            return Result.error(404, "没有可下载的文件");
+        }
+
+        try {
+            // 打包并上传到MinIO
+            String projectName = "g3-" + jobId.substring(0, 8);
+            String downloadUrl = codePackagingService.packageAndUpload(files, projectName);
+
+            log.info("[G3 API] 产物打包完成: jobId={}, url={}", jobId, downloadUrl);
+            return Result.success(new DownloadResponse(downloadUrl, files.size()));
+        } catch (Exception e) {
+            log.error("[G3 API] 产物打包失败: jobId={}, error={}", jobId, e.getMessage(), e);
+            return Result.error(500, "打包失败: " + e.getMessage());
+        }
     }
 
     /**
@@ -372,19 +523,27 @@ public class G3Controller {
     @Data
     public static class ArtifactResponse {
         private String id;
+        private String artifactType;
         private String filePath;
+        private String fileName;
         private String generatedBy;
         private int round;
         private boolean hasErrors;
+        private String compilerOutput;
+        private String content;
         private String createdAt;
 
         public static ArtifactResponse fromEntity(G3ArtifactEntity artifact) {
             ArtifactResponse resp = new ArtifactResponse();
             resp.setId(artifact.getId().toString());
+            resp.setArtifactType(artifact.getArtifactType());
             resp.setFilePath(artifact.getFilePath());
+            resp.setFileName(artifact.getFileName());
             resp.setGeneratedBy(artifact.getGeneratedBy());
             resp.setRound(artifact.getGenerationRound() != null ? artifact.getGenerationRound() : 0);
             resp.setHasErrors(Boolean.TRUE.equals(artifact.getHasErrors()));
+            resp.setCompilerOutput(artifact.getCompilerOutput());
+            resp.setContent(artifact.getContent());
             resp.setCreatedAt(artifact.getCreatedAt() != null ? artifact.getCreatedAt().toString() : null);
             return resp;
         }
@@ -441,6 +600,75 @@ public class G3Controller {
         }
     }
 
+    @Data
+    public static class DownloadResponse {
+        private final String downloadUrl;
+        private final int fileCount;
+
+        public DownloadResponse(String downloadUrl, int fileCount) {
+            this.downloadUrl = downloadUrl;
+            this.fileCount = fileCount;
+        }
+    }
+
+    /**
+     * 诊断响应
+     *
+     * 用途：
+     * - 返回失败诊断摘要
+     * - 输出可执行行动项
+     */
+    @Data
+    public static class DiagnosisResponse {
+        /**
+         * 诊断摘要
+         */
+        private String summary;
+
+        /**
+         * 是否为环境类错误
+         */
+        private Boolean environmentError;
+
+        /**
+         * 环境错误原因
+         */
+        private String environmentReason;
+
+        /**
+         * 行动项列表
+         */
+        private List<String> actions;
+    }
+
+    @Data
+    public static class ValidationSummaryResponse {
+        /**
+         * 是否编译通过
+         */
+        private final boolean compilationSuccess;
+        /**
+         * 测试覆盖率（当前阶段可能为空）
+         */
+        private final Integer testCoverage;
+        /**
+         * 质量评分（0-100）
+         */
+        private final Integer qualityScore;
+        /**
+         * 错误数量
+         */
+        private final Integer errorCount;
+        /**
+         * 警告数量
+         */
+        private final Integer warningCount;
+        /**
+         * 验证类型
+         */
+        private final String validationType;
+    }
+
     private String truncate(String text, int maxLength) {
         if (text == null) return "";
         if (text.length() <= maxLength) return text;
@@ -476,6 +704,18 @@ public class G3Controller {
             String tenantIdStr = TenantContextHolder.getTenantId();
             if (StringUtils.hasText(tenantIdStr)) {
                 return UUID.fromString(tenantIdStr);
+            }
+
+            if (StpUtil.isLogin()) {
+                Object tenantIdObj = StpUtil.getSession().get("tenantId");
+                if (tenantIdObj instanceof String sessionTenantId && StringUtils.hasText(sessionTenantId)) {
+                    return UUID.fromString(sessionTenantId);
+                }
+
+                String userIdStr = StpUtil.getLoginIdAsString();
+                if (StringUtils.hasText(userIdStr)) {
+                    return UUID.fromString(userIdStr);
+                }
             }
         } catch (Exception e) {
             log.debug("获取当前租户ID失败: {}", e.getMessage());

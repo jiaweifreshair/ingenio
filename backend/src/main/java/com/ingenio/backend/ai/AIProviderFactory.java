@@ -6,31 +6,38 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.UUID;
 
 /**
  * AI提供商工厂类
  *
  * 职责：
  * - 根据配置选择和创建AI提供商实例
- * - 实施智能降级策略（优先使用Qiniu，失败时降级到DashScope）
+ * - 实施智能降级策略（优先使用七牛云，必要时切换ECA或DashScope）
  * - 管理提供商的生命周期和可用性
  *
  * 配置方式：
- * 1. 环境变量：AI_PROVIDER=qiniu 或 AI_PROVIDER=dashscope
+ * 1. 环境变量：AI_PROVIDER=qiniu / eca-gateway / dashscope
  * 2. 自动选择：如果未配置，自动选择第一个可用的提供商
  *
- * 优先级策略：
+ * 优先级策略（系统级）：
  * 1. 如果配置了AI_PROVIDER，优先使用配置的提供商
  * 2. 如果配置的提供商不可用，警告并尝试降级到其他提供商
  * 3. 如果未配置AI_PROVIDER，按优先级自动选择：
- * - Qiniu Cloud（七牛云）- 国内访问快，价格优惠
- * - DashScope（阿里云）- 生态完整，企业级稳定
+ *    - Qiniu Cloud（七牛云）- 国内访问快，价格优惠
+ *    - ECA Gateway（Gemini）
+ *    - DashScope（阿里云）- 生态完整，企业级稳定
  * 4. 如果所有提供商都不可用，抛出异常
  *
  * 使用示例：
- * 
+ *
  * <pre>
+ * // 系统级调用
  * AIProvider provider = aiProviderFactory.getProvider();
+ * AIResponse response = provider.generate("生成一个登录界面");
+ *
+ * // 项目级调用（当前与系统级一致）
+ * AIProvider provider = aiProviderFactory.getProviderForProject(projectId);
  * AIResponse response = provider.generate("生成一个登录界面");
  * </pre>
  *
@@ -44,7 +51,7 @@ public class AIProviderFactory {
 
     /**
      * 配置的提供商名称（从环境变量AI_PROVIDER读取）
-     * 可选值：qiniu, dashscope
+     * 可选值：qiniu, eca-gateway, dashscope
      * 如果未配置，则自动选择第一个可用的提供商
      */
     @Value("${AI_PROVIDER:}")
@@ -81,8 +88,8 @@ public class AIProviderFactory {
 
         // 注册提供商列表（按优先级排序）
         this.allProviders = List.of(
-                ecaGatewayAIProvider, // 优先级1：ECA Gateway（Gemini，用户指定）
-                qiniuCloudAIProvider, // 优先级2：七牛云（国内访问快）
+                qiniuCloudAIProvider, // 优先级1：七牛云（国内访问快）
+                ecaGatewayAIProvider, // 优先级2：ECA Gateway（Gemini）
                 dashScopeAIProvider // 优先级3：阿里云DashScope（备用）
         );
 
@@ -122,9 +129,23 @@ public class AIProviderFactory {
     }
 
     /**
+     * 获取项目级AI提供商实例
+     *
+     * 选择策略：
+     * 1. 暂不启用项目级覆写，直接使用系统默认Provider（调用getProvider()）
+     *
+     * @param projectId 项目ID
+     * @return 可用的AI提供商实例
+     * @throws AIProvider.AIException 如果没有可用的提供商
+     */
+    public AIProvider getProviderForProject(UUID projectId) throws AIProvider.AIException {
+        return getProvider();
+    }
+
+     /**
      * 根据提供商名称获取实例
      *
-     * @param providerName 提供商名称（qiniu, dashscope）
+     * @param providerName 提供商名称（qiniu, eca-gateway, dashscope）
      * @return 对应的提供商实例，如果未找到返回null
      */
     public AIProvider getProviderByName(String providerName) {
@@ -233,7 +254,7 @@ public class AIProviderFactory {
      */
     public void printProviderStatus() {
         log.info("========== AI提供商状态 ==========");
-        log.info("配置的提供商: {}", configuredProvider.isBlank() ? "未配置（自动选择）" : configuredProvider);
+        log.info("配置的提供商: {}", configuredProvider == null || configuredProvider.isBlank() ? "未配置（自动选择）" : configuredProvider);
 
         for (AIProvider provider : allProviders) {
             String status = provider.isAvailable() ? "✅ 可用" : "❌ 不可用";
@@ -243,6 +264,23 @@ public class AIProviderFactory {
                     status,
                     provider.getDefaultModel());
         }
+
+        log.info("项目级配置: 未启用");
         log.info("===================================");
+    }
+
+    /**
+     * 打印项目级提供商状态（用于调试）
+     *
+     * @param projectId 项目ID
+     */
+    public void printProviderStatusForProject(UUID projectId) {
+        log.info("========== 项目AI提供商状态 ==========");
+        log.info("项目ID: {}", projectId);
+
+        log.info("项目级配置: 未启用（使用系统默认Provider）");
+
+        log.info("系统默认Provider:");
+        printProviderStatus();
     }
 }

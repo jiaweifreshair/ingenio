@@ -64,6 +64,22 @@ export interface Step2Result {
   entities: Entity[];
   /** 实体间的关系 */
   relationships: EntityRelationship[];
+  /**
+   * 是否触发兜底实体补全
+   *
+   * 是什么：标记 Step2 是否使用了兜底实体。
+   * 做什么：让前端展示“已自动补充”提示。
+   * 为什么：避免用户误以为需求分析失败或结果可信度不足。
+   */
+  usedFallback?: boolean;
+  /**
+   * 兜底时的假设说明
+   *
+   * 是什么：记录兜底时补充的假设列表。
+   * 做什么：为用户提供“应补充哪些需求”的指引。
+   * 为什么：降低兜底带来的误解，促进需求澄清。
+   */
+  assumptions?: string[];
 }
 
 /**
@@ -201,6 +217,23 @@ export interface Step5Result {
   designBranch?: string;
   /** 设计置信度 */
   designConfidence?: number;
+
+  /** Step5 推荐风格标识（A-G，可选：用于后端回填/前端默认高亮） */
+  selectedStyleId?: string;
+  /** Step5 推荐风格理由（可选） */
+  selectedStyleReason?: string;
+}
+
+/**
+ * 步骤确认附加信息
+ *
+ * 是什么：用于在“确认步骤”时携带额外上下文（例如 Step5 选择的设计风格）。
+ * 做什么：让前端在确认请求中携带可选字段，后端可据此保存并影响后续步骤。
+ * 为什么：交互设计师步骤需要把用户选择的风格传递给后续蓝图生成，避免结论丢失。
+ */
+export interface StepConfirmPayload {
+  /** 选中的设计风格标识（A-G） */
+  selectedStyleId?: string;
 }
 
 /**

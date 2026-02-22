@@ -78,6 +78,7 @@ public class AppSpecController {
         // 获取当前用户ID和租户ID
         // V2.0修复：与PlanRoutingController保持一致的默认租户逻辑
         String userIdStr = StpUtil.getLoginIdAsString();
+        UUID userId = UUID.fromString(userIdStr);
         var session = StpUtil.getSession(false);
         Object sessionTenantId = session != null ? session.get("tenantId") : null;
         UUID tenantId = sessionTenantId != null
@@ -87,11 +88,7 @@ public class AppSpecController {
         log.info("查询AppSpec详情: id={}, tenantId={}, userId={}", id, tenantId, userIdStr);
 
         // 根据ID和租户ID查询（租户隔离）
-        AppSpecEntity appSpec = appSpecService.getByIdAndTenantId(id, tenantId);
-        if (appSpec == null) {
-            log.warn("AppSpec不存在: id={}", id);
-            throw new BusinessException(ErrorCode.APPSPEC_NOT_FOUND);
-        }
+        AppSpecEntity appSpec = appSpecService.getByIdWithUserFallback(id, tenantId, userId);
 
         AppSpecResponse response = convertToAppSpecResponse(appSpec);
         return Result.success(response);

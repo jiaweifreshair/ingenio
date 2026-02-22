@@ -5,8 +5,11 @@ import com.ingenio.backend.common.exception.BusinessException;
 import com.ingenio.backend.common.exception.ErrorCode;
 import com.ingenio.backend.dto.request.OpenLovableGenerateRequest;
 import com.ingenio.backend.dto.response.OpenLovableGenerateResponse;
+import com.ingenio.backend.service.openlovable.OpenLovableEndpointRouter;
+import com.ingenio.backend.service.openlovable.OpenLovableSandboxRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -48,6 +51,26 @@ public class OpenLovableService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final UIFunctionalValidator uiFunctionalValidator;
+
+    /**
+     * OpenLovable 多实例路由器（可选）
+     *
+     * 是什么：用于将 sandboxId 固定路由到同一 OpenLovable 实例。
+     * 做什么：在多用户并发场景下避免沙箱串线。
+     * 为什么：单个 OpenLovable 进程通常仅维护单活沙箱，需要通过多实例 + 路由实现并行能力。
+     */
+    @Autowired(required = false)
+    private OpenLovableEndpointRouter endpointRouter;
+
+    /**
+     * OpenLovable 沙箱状态注册中心（可选）
+     *
+     * 是什么：多活沙箱统一状态中心。
+     * 做什么：记录服务层创建/保活/回收的 sandbox 状态。
+     * 为什么：让控制层与服务层共享同一份并发治理信息。
+     */
+    @Autowired(required = false)
+    private OpenLovableSandboxRegistry sandboxRegistry;
 
     // 线程池用于异步等待生成完成
     private final ExecutorService executorService = Executors.newCachedThreadPool();
@@ -316,8 +339,9 @@ public class OpenLovableService {
      * @return 沙箱信息 (sandboxId, url, provider)
      */
     private Map<String, Object> createSandbox() {
+        String baseUrl = selectOpenLovableBaseUrlForCreate();
         try {
-            String url = openLovableBaseUrl + "/api/create-ai-sandbox-v2";
+            String url = baseUrl + "/api/create-ai-sandbox-v2";
             log.debug("调用创建沙箱API: {}", url);
 
             @SuppressWarnings("unchecked")
@@ -329,6 +353,11 @@ public class OpenLovableService {
 
                 // 从响应中提取沙箱信息
                 if (body.containsKey("sandboxId") && body.containsKey("url")) {
+                    Object sandboxIdObj = body.get("sandboxId");
+                    if (sandboxIdObj instanceof String sandboxId && !sandboxId.isBlank()) {
+                        bindSandboxEndpoint(sandboxId, baseUrl);
+                        registerSandboxReady(sandboxId, baseUrl);
+                    }
                     return body;
                 } else {
                     log.error("沙箱创建响应格式异常: {}", body);
@@ -352,10 +381,20 @@ public class OpenLovableService {
      *
      * @return 沙箱状态信息
      */
-    private Map<String, Object> getSandboxStatus(String sandboxId) {
+    /**
+     * 获取沙箱状态（公开方法）
+     *
+     * 是什么：查询 open-lovable-cn 的 /api/sandbox-status 接口。
+     * 做什么：返回沙箱的 active/healthy/url/provider 等信息（以 Map 形式透传）。
+     * 为什么：在复用 sandboxId（下载/再次生成）前，需要先判断沙箱是否仍可用，避免“沙箱不可达导致 500”。
+     *
+     * @param sandboxId 沙箱ID
+     * @return 沙箱状态信息；异常时返回空 Map
+     */
+    public Map<String, Object> getSandboxStatus(String sandboxId) {
         try {
             UriComponentsBuilder builder = UriComponentsBuilder
-                    .fromHttpUrl(openLovableBaseUrl + "/api/sandbox-status");
+                    .fromHttpUrl(resolveOpenLovableBaseUrl(sandboxId) + "/api/sandbox-status");
             if (sandboxId != null && !sandboxId.isEmpty()) {
                 builder.queryParam("sandboxId", sandboxId);
             }
@@ -366,6 +405,9 @@ public class OpenLovableService {
             ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
+                if (sandboxId != null && !sandboxId.isBlank()) {
+                    renewSandboxHeartbeat(sandboxId);
+                }
                 return response.getBody();
             } else {
                 log.warn("获取沙箱状态失败: status={}", response.getStatusCode());
@@ -375,6 +417,100 @@ public class OpenLovableService {
         } catch (Exception e) {
             log.warn("查询沙箱状态异常", e);
             return new HashMap<>();
+        }
+    }
+
+    /**
+     * 判断沙箱是否健康
+     *
+     * 是什么：基于 /api/sandbox-status 的 healthy 字段做可用性判定。
+     * 做什么：将各种异常情况统一判定为“不健康”。
+     * 为什么：避免复用“已存在但不响应”的沙箱导致执行/下载链路失败。
+     *
+     * @param sandboxId 沙箱ID
+     * @return true=健康；false=不健康/不可达/无状态
+     */
+    public boolean isSandboxHealthy(String sandboxId) {
+        if (sandboxId == null || sandboxId.isBlank()) {
+            return false;
+        }
+        String requestedSandboxId = sandboxId.trim();
+        Map<String, Object> status = getSandboxStatus(requestedSandboxId);
+
+        boolean healthy = false;
+        Object healthyObj = status.get("healthy");
+        if (healthyObj instanceof Boolean b) {
+            healthy = b;
+        } else if (healthyObj instanceof String s) {
+            healthy = Boolean.parseBoolean(s.trim());
+        }
+
+        // OpenLovable 目前以“单活沙箱”为主：/api/sandbox-status 返回的是当前 active 沙箱
+        // 因此这里同时校验“active sandboxId == requested sandboxId”，避免误把其他沙箱判定为健康
+        String activeSandboxId = null;
+        Object sandboxDataObj = status.get("sandboxData");
+        if (sandboxDataObj instanceof Map<?, ?> sandboxData) {
+            Object activeIdObj = sandboxData.get("sandboxId");
+            if (activeIdObj instanceof String s && !s.isBlank()) {
+                activeSandboxId = s.trim();
+            }
+        }
+        if (activeSandboxId == null) {
+            Object activeIdObj = status.get("sandboxId");
+            if (activeIdObj instanceof String s && !s.isBlank()) {
+                activeSandboxId = s.trim();
+            }
+        }
+
+        return healthy && requestedSandboxId.equals(activeSandboxId);
+    }
+
+    /**
+     * 销毁指定沙箱
+     *
+     * 是什么：调用 open-lovable-cn 的 /api/kill-sandbox 释放资源。
+     * 做什么：用于“沙箱不健康”时的重建前清理，避免上游复用旧沙箱导致后续操作持续失败。
+     * 为什么：OpenLovable 的 create-ai-sandbox-v2 默认会复用已有沙箱；当旧沙箱不可达时需先销毁再重建。
+     *
+     * @param sandboxId 沙箱ID
+     */
+    public void killSandbox(String sandboxId) {
+        if (sandboxId == null || sandboxId.isBlank()) {
+            return;
+        }
+        try {
+            String url = UriComponentsBuilder
+                    .fromHttpUrl(resolveOpenLovableBaseUrl(sandboxId) + "/api/kill-sandbox")
+                    .queryParam("sandboxId", sandboxId)
+                    .toUriString();
+
+            log.info("销毁OpenLovable沙箱: sandboxId={}, url={}", sandboxId, url);
+
+            @SuppressWarnings("unchecked")
+            ResponseEntity<Map> response = restTemplate.postForEntity(url, null, Map.class);
+
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "销毁沙箱失败: HTTP " + response.getStatusCode());
+            }
+
+            Map<?, ?> body = response.getBody() != null ? response.getBody() : Map.of();
+            Object successObj = body.get("success");
+            if (successObj instanceof Boolean success && !success) {
+                String error = body.get("error") instanceof String e ? e : "unknown";
+                throw new BusinessException(ErrorCode.SYSTEM_ERROR, "销毁沙箱失败: " + error);
+            }
+
+            if (endpointRouter != null) {
+                endpointRouter.unbindSandbox(sandboxId);
+            }
+            if (sandboxRegistry != null) {
+                sandboxRegistry.remove(sandboxId);
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("销毁沙箱异常: sandboxId={}", sandboxId, e);
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "销毁沙箱异常: " + e.getMessage());
         }
     }
 
@@ -389,7 +525,7 @@ public class OpenLovableService {
     private void triggerGenerationAsync(String prompt, String aiModel, String sandboxId) {
         executorService.submit(() -> {
             try {
-                String url = openLovableBaseUrl + "/api/generate-ai-code-stream";
+                String url = resolveOpenLovableBaseUrl(sandboxId) + "/api/generate-ai-code-stream";
                 log.info("[异步] 触发代码生成: sandboxId={}, model={}", sandboxId, aiModel);
 
                 // 构建请求体
@@ -441,7 +577,7 @@ public class OpenLovableService {
      */
     private GenerationTriggerOutcome triggerGenerationBlocking(String prompt, String aiModel, String sandboxId,
             int timeoutSeconds) {
-        String url = openLovableBaseUrl + "/api/generate-ai-code-stream";
+        String url = resolveOpenLovableBaseUrl(sandboxId) + "/api/generate-ai-code-stream";
         log.info("[阻塞] 触发代码生成并等待完成: sandboxId={}, model={}, timeout={}s", sandboxId, aiModel, timeoutSeconds);
 
         Future<ResponseEntity<String>> future = null;
@@ -517,7 +653,7 @@ public class OpenLovableService {
     @Deprecated
     private void triggerGeneration(String prompt, String aiModel, String sandboxId) {
         try {
-            String url = openLovableBaseUrl + "/api/generate-ai-code";
+            String url = resolveOpenLovableBaseUrl(sandboxId) + "/api/generate-ai-code";
             log.debug("触发代码生成: url={}, model={}", url, aiModel);
 
             // 构建请求体
@@ -618,7 +754,7 @@ public class OpenLovableService {
      */
     public boolean killSandbox() {
         try {
-            String url = openLovableBaseUrl + "/api/kill-sandbox";
+            String url = resolveOpenLovableBaseUrl(null) + "/api/kill-sandbox";
             log.info("终止沙箱: {}", url);
 
             @SuppressWarnings("unchecked")
@@ -642,7 +778,7 @@ public class OpenLovableService {
      */
     public boolean isHealthy() {
         try {
-            String url = openLovableBaseUrl + "/api/health";
+            String url = resolveOpenLovableBaseUrl(null) + "/api/health";
             ResponseEntity<Map> response = restTemplate.getForEntity(url, Map.class);
 
             boolean healthy = response.getStatusCode().is2xxSuccessful();
@@ -731,7 +867,7 @@ public class OpenLovableService {
             outputStream.write(genProgressEvent.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             outputStream.flush();
 
-            String url = openLovableBaseUrl + "/api/generate-ai-code-stream";
+            String url = resolveOpenLovableBaseUrl(actualSandboxId) + "/api/generate-ai-code-stream";
 
             // 构建请求体
             Map<String, Object> requestBody = new HashMap<>();
@@ -845,4 +981,90 @@ public class OpenLovableService {
             throw e;
         }
     }
+
+
+    /**
+     * 注册沙箱 READY 状态
+     *
+     * 是什么：服务层创建沙箱后的状态同步。
+     * 做什么：将 sandbox 写入状态中心，统一治理。
+     * 为什么：避免服务层直连调用绕过状态管理。
+     */
+    private void registerSandboxReady(String sandboxId, String baseUrl) {
+        if (sandboxRegistry == null || sandboxId == null || sandboxId.isBlank()) {
+            return;
+        }
+        try {
+            sandboxRegistry.registerReady(sandboxId, baseUrl, null, null);
+        } catch (Exception e) {
+            log.debug("[OpenLovableService] 注册沙箱状态失败: sandboxId={}, err={}", sandboxId, e.getMessage());
+        }
+    }
+
+    /**
+     * 续期沙箱心跳
+     */
+    private void renewSandboxHeartbeat(String sandboxId) {
+        if (sandboxRegistry == null || sandboxId == null || sandboxId.isBlank()) {
+            return;
+        }
+        try {
+            sandboxRegistry.renewHeartbeat(sandboxId);
+        } catch (Exception e) {
+            log.debug("[OpenLovableService] 续期心跳失败: sandboxId={}, err={}", sandboxId, e.getMessage());
+        }
+    }
+
+
+    /**
+     * 解析 OpenLovable 目标实例地址
+     *
+     * 是什么：按 sandboxId 解析应访问的 OpenLovable baseUrl。
+     * 做什么：优先从路由器读取绑定关系，避免跨实例访问导致 sandbox 不匹配。
+     * 为什么：支持多实例并行沙箱，避免多用户串线。
+     */
+    private String resolveOpenLovableBaseUrl(String sandboxId) {
+        if (endpointRouter == null) {
+            return normalizeBaseUrl(openLovableBaseUrl);
+        }
+        if (sandboxId != null && !sandboxId.isBlank()) {
+            return endpointRouter.resolveEndpointForSandbox(sandboxId.trim());
+        }
+        return endpointRouter.getDefaultEndpoint();
+    }
+
+    /**
+     * 选择“创建新沙箱”使用的 OpenLovable 实例
+     */
+    private String selectOpenLovableBaseUrlForCreate() {
+        if (endpointRouter == null) {
+            return normalizeBaseUrl(openLovableBaseUrl);
+        }
+        return endpointRouter.selectEndpointForCreate();
+    }
+
+    /**
+     * 绑定 sandbox 到 OpenLovable 实例
+     */
+    private void bindSandboxEndpoint(String sandboxId, String baseUrl) {
+        if (endpointRouter == null || sandboxId == null || sandboxId.isBlank()) {
+            return;
+        }
+        endpointRouter.bindSandbox(sandboxId.trim(), baseUrl);
+    }
+
+    /**
+     * 规范化 baseUrl（去除末尾斜杠）
+     */
+    private String normalizeBaseUrl(String baseUrl) {
+        if (baseUrl == null) {
+            return "http://localhost:3001";
+        }
+        String trimmed = baseUrl.trim();
+        if (trimmed.isBlank()) {
+            return "http://localhost:3001";
+        }
+        return trimmed.replaceAll("/+$", "");
+    }
+
 }

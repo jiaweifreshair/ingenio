@@ -3,10 +3,12 @@ package com.ingenio.backend.agent.g3.impl;
 import com.ingenio.backend.agent.g3.IArchitectAgent;
 import com.ingenio.backend.ai.AIProvider;
 import com.ingenio.backend.ai.AIProviderFactory;
+import com.ingenio.backend.ai.UniaixAIProvider;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.prompt.PromptTemplateService;
+import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
 import com.ingenio.backend.service.blueprint.BlueprintValidator;
 import com.ingenio.backend.service.g3.hooks.G3HookPipeline;
@@ -16,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.UUID;
@@ -44,6 +47,9 @@ class ArchitectAgentImplTest {
     private AIProvider aiProvider;
 
     @Mock
+    private UniaixAIProvider uniaixAIProvider;
+
+    @Mock
     private PromptTemplateService promptTemplateService;
 
     @Mock
@@ -54,6 +60,9 @@ class ArchitectAgentImplTest {
 
     @Mock
     private G3HookPipeline hookPipeline;
+
+    @Mock
+    private ProjectService projectService;
 
     @Mock
     private Consumer<G3LogEntry> logConsumer;
@@ -77,6 +86,7 @@ class ArchitectAgentImplTest {
         lenient().when(promptTemplateService.architectContractTemplate()).thenReturn("OpenAPI %s");
         lenient().when(promptTemplateService.architectSchemaTemplate()).thenReturn("PostgreSQL %s %s");
         lenient().when(hookPipeline.wrapProvider(any(), any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(projectService.findByAppSpecId(any())).thenReturn(null);
     }
 
     /**
@@ -211,7 +221,7 @@ class ArchitectAgentImplTest {
         List<G3ArtifactEntity> artifacts = architectAgent.execute(testJob, logConsumer);
 
         // THEN
-        assertEquals(2, artifacts.size(), "应生成2个产物");
+        assertTrue(artifacts.size() >= 2, "应至少生成2个产物");
 
         G3ArtifactEntity contractArtifact = artifacts.stream()
                 .filter(a -> a.getFilePath().contains("openapi.yaml"))
@@ -226,6 +236,13 @@ class ArchitectAgentImplTest {
                 .findFirst()
                 .orElse(null);
         assertNotNull(schemaArtifact, "应包含Schema产物");
+
+        assertTrue(artifacts.stream().anyMatch(a -> a.getFilePath().contains("docs/task_plan.md")),
+                "应包含任务计划文档");
+        assertTrue(artifacts.stream().anyMatch(a -> a.getFilePath().contains("docs/findings.md")),
+                "应包含分析文档");
+        assertTrue(artifacts.stream().anyMatch(a -> a.getFilePath().contains("docs/progress.md")),
+                "应包含进度文档");
     }
 
     /**
@@ -502,5 +519,39 @@ class ArchitectAgentImplTest {
         assertEquals("ArchitectAgent", exception.getAgentName(), "异常应包含Agent名称");
         assertEquals(G3LogEntry.Role.ARCHITECT, exception.getRole(), "异常应包含Agent角色");
         assertNotNull(exception.getMessage(), "异常应包含错误信息");
+    }
+
+    @Test
+    void resolveProvider_shouldPreferUniaixWhenG3ProviderIsClaude() {
+        // GIVEN
+        ReflectionTestUtils.setField(architectAgent, "g3Provider", "claude");
+        when(uniaixAIProvider.isAvailable()).thenReturn(true);
+
+        // WHEN
+        AIProvider provider = ReflectionTestUtils.invokeMethod(architectAgent, "resolveProvider", testJob);
+
+        // THEN
+        assertSame(uniaixAIProvider, provider);
+        verifyNoInteractions(aiProviderFactory, projectService);
+    }
+
+    /**
+     * 测试：G3配置为网宿时应映射到ECA Gateway
+     * 期望：返回ECA Gateway Provider
+     */
+    @Test
+    void resolveProvider_shouldPreferEcaGatewayWhenG3ProviderIsWangsu() {
+        // GIVEN
+        ReflectionTestUtils.setField(architectAgent, "g3Provider", "wangsu");
+        when(aiProviderFactory.getProviderByName("eca-gateway")).thenReturn(aiProvider);
+        when(aiProvider.isAvailable()).thenReturn(true);
+
+        // WHEN
+        AIProvider provider = ReflectionTestUtils.invokeMethod(architectAgent, "resolveProvider", testJob);
+
+        // THEN
+        assertSame(aiProvider, provider);
+        verify(aiProviderFactory).getProviderByName("eca-gateway");
+        verifyNoInteractions(projectService);
     }
 }

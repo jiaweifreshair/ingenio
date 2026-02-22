@@ -119,6 +119,34 @@ class OpenLovableSandboxFixControllerTest {
         .andExpect(content().string(containsString("src/index.css")))
         .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
 
+    // 5) 依赖检查：node_modules/.vite/deps 不存在，触发安装
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("ls node_modules/.vite/deps")))
+        .andRespond(withSuccess("""
+            {"exitCode":1,"stdout":"ls: cannot access 'node_modules/.vite/deps': No such file or directory","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("pnpm install")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"installed","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("cat node_modules/.vite/deps/_metadata.json")))
+        .andRespond(withSuccess("""
+            {"exitCode":1,"stdout":"No such file or directory","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    // 6) 依赖安装后重启 Vite
+    server.expect(requestTo("http://open-lovable/api/restart-vite"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("sb_123")))
+        .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
     var response = controller.smartFix(Map.of("sandboxId", "sb_123"));
     server.verify();
 
@@ -136,9 +164,108 @@ class OpenLovableSandboxFixControllerTest {
     List<String> filesCreated = (List<String>) data.get("filesCreated");
     @SuppressWarnings("unchecked")
     List<String> filesUpdated = (List<String>) data.get("filesUpdated");
+    @SuppressWarnings("unchecked")
+    Map<String, Object> diagnostics = (Map<String, Object>) data.get("diagnostics");
 
     assertThat(filesCreated).contains("src/App.jsx", "src/index.css");
     assertThat(filesUpdated).contains("index.html", "src/main.jsx");
+    assertThat(diagnostics.get("dependencyInstallAttempted")).isEqualTo(true);
+    assertThat(diagnostics.get("dependencyInstallCommand")).isEqualTo("pnpm install");
+    assertThat(diagnostics.get("viteRestarted")).isEqualTo(true);
+  }
+
+  /**
+   * 是什么：依赖优化缓存重置测试。
+   * 做什么：验证关键依赖缺失优化记录时会清理 .vite 并重启。
+   * 为什么：避免 Vite 优化缺失导致预览资源 404。
+   */
+  @Test
+  void smartFix_shouldResetOptimizeDepsWhenCriticalDepsMissing() {
+    RestTemplate restTemplate = new RestTemplate();
+    OpenLovableSandboxFixController controller = new OpenLovableSandboxFixController(restTemplate);
+    ReflectionTestUtils.setField(controller, "openLovableBaseUrl", "http://open-lovable");
+
+    MockRestServiceServer server = MockRestServiceServer.bindTo(restTemplate).build();
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("cat index.html")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"<!doctype html><html><body><div id=\\"root\\"></div><script type=\\"module\\" src=\\"/src/main.jsx\\"></script></body></html>","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("cat src/main.jsx")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"import ReactDOM from 'react-dom/client'\\nconst root=document.getElementById('root')\\nReactDOM.createRoot(root).render(null)","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("cat src/App.tsx")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"export default function App(){return null}","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("cat src/index.css")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"body{}","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("ls node_modules/.vite/deps")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"node_modules/.vite/deps","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("cat node_modules/.vite/deps/_metadata.json")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"{\\"optimized\\":{}}","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("cat package.json")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"{\\"dependencies\\":{\\"lucide-react\\":\\"^0.1.0\\",\\"recharts\\":\\"^2.0.0\\"}}","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/sandbox/execute"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("rm -rf node_modules/.vite")))
+        .andRespond(withSuccess("""
+            {"exitCode":0,"stdout":"removed","stderr":""}
+            """, MediaType.APPLICATION_JSON));
+
+    server.expect(requestTo("http://open-lovable/api/restart-vite"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(content().string(containsString("sb_456")))
+        .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+    var response = controller.smartFix(Map.of("sandboxId", "sb_456"));
+    server.verify();
+
+    assertThat(response.getStatusCode().is2xxSuccessful()).isTrue();
+    assertThat(response.getBody()).isInstanceOf(Result.class);
+
+    Result<?> body = (Result<?>) response.getBody();
+    assertThat(body.getSuccess()).isTrue();
+    assertThat(body.getData()).isInstanceOf(Map.class);
+
+    @SuppressWarnings("unchecked")
+    Map<String, Object> data = (Map<String, Object>) body.getData();
+    @SuppressWarnings("unchecked")
+    Map<String, Object> diagnostics = (Map<String, Object>) data.get("diagnostics");
+
+    assertThat(data.get("fixed")).isEqualTo(true);
+    assertThat(diagnostics.get("optimizeDepsReset")).isEqualTo(true);
+    assertThat(diagnostics.get("viteRestarted")).isEqualTo(true);
+    assertThat(diagnostics.get("optimizeDepsMissing").toString()).contains("lucide-react");
   }
 }
-

@@ -3,10 +3,12 @@ package com.ingenio.backend.agent.g3.impl;
 import com.ingenio.backend.agent.g3.ICoderAgent;
 import com.ingenio.backend.ai.AIProvider;
 import com.ingenio.backend.ai.AIProviderFactory;
+import com.ingenio.backend.ai.UniaixAIProvider;
 import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.prompt.PromptTemplateService;
+import com.ingenio.backend.service.ProjectService;
 import com.ingenio.backend.service.blueprint.BlueprintPromptBuilder;
 import com.ingenio.backend.service.g3.hooks.G3HookPipeline;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
 import java.util.UUID;
@@ -43,6 +46,9 @@ class BackendCoderAgentImplTest {
     private AIProvider aiProvider;
 
     @Mock
+    private UniaixAIProvider uniaixAIProvider;
+
+    @Mock
     private PromptTemplateService promptTemplateService;
 
     @Mock
@@ -50,6 +56,9 @@ class BackendCoderAgentImplTest {
 
     @Mock
     private G3HookPipeline hookPipeline;
+
+    @Mock
+    private ProjectService projectService;
 
     @Mock
     private com.ingenio.backend.service.g3.G3ContextBuilder contextBuilder;
@@ -123,6 +132,11 @@ class BackendCoderAgentImplTest {
                 .currentRound(0)
                 .build();
 
+        // 是什么：为单测注入AI超时配置。
+        // 做什么：确保safeGenerate不会因未注入@Value而出现0超时。
+        // 为什么：避免异步调用立即超时导致解析结果为空。
+        ReflectionTestUtils.setField(backendCoderAgent, "aiTimeoutMs", 10_000L);
+
         // 提示词模板在单元测试中使用最小可用版本，避免依赖外部资源文件。
         // 说明：部分用例会在参数校验阶段提前返回，这些提示词桩可能不会被使用；使用 lenient 避免 Strict Stubs 报错。
         lenient().when(promptTemplateService.coderStandardsTemplate()).thenReturn("CODE_STANDARDS");
@@ -132,6 +146,7 @@ class BackendCoderAgentImplTest {
         lenient().when(promptTemplateService.coderServiceTemplate()).thenReturn("Service\\n%s\\n%s\\n%s\\n%s");
         lenient().when(promptTemplateService.coderControllerTemplate()).thenReturn("Controller\\n%s\\n%s\\n%s\\n%s");
         lenient().when(hookPipeline.wrapProvider(any(), any(), any())).thenAnswer(invocation -> invocation.getArgument(0));
+        lenient().when(projectService.findByAppSpecId(any())).thenReturn(null);
     }
 
     /**
@@ -292,15 +307,11 @@ class BackendCoderAgentImplTest {
         when(aiProvider.isAvailable()).thenReturn(true);
 
         // Mock AI responses in sequence
-        when(aiProvider.generate(contains("实体类"), any()))
-                .thenReturn(AIProvider.AIResponse.builder().content(entityResponse).model("test").build());
-        when(aiProvider.generate(contains("Mapper"), any()))
-                .thenReturn(AIProvider.AIResponse.builder().content(mapperResponse).model("test").build());
-        when(aiProvider.generate(contains("DTO"), any()))
-                .thenReturn(AIProvider.AIResponse.builder().content(dtoResponse).model("test").build());
-        when(aiProvider.generate(contains("Service"), any()))
-                .thenReturn(AIProvider.AIResponse.builder().content(serviceResponse).model("test").build());
-        when(aiProvider.generate(contains("Controller"), any()))
+        when(aiProvider.generate(anyString(), any()))
+                .thenReturn(AIProvider.AIResponse.builder().content(entityResponse).model("test").build())
+                .thenReturn(AIProvider.AIResponse.builder().content(mapperResponse).model("test").build())
+                .thenReturn(AIProvider.AIResponse.builder().content(dtoResponse).model("test").build())
+                .thenReturn(AIProvider.AIResponse.builder().content(serviceResponse).model("test").build())
                 .thenReturn(AIProvider.AIResponse.builder().content(controllerResponse).model("test").build());
 
         // WHEN
@@ -400,7 +411,7 @@ class BackendCoderAgentImplTest {
      * 期望：返回失败结果
      */
     @Test
-    void generate_whenAIProviderUnavailable_shouldReturnFailure() {
+    void generate_whenAIProviderUnavailable_shouldReturnBaselineArtifacts() {
         // GIVEN
         when(aiProviderFactory.getProvider()).thenReturn(aiProvider);
         when(aiProvider.isAvailable()).thenReturn(false);
@@ -409,8 +420,14 @@ class BackendCoderAgentImplTest {
         ICoderAgent.CoderResult result = backendCoderAgent.generate(testJob, 0, logConsumer);
 
         // THEN
-        assertFalse(result.success(), "应返回失败");
-        assertTrue(result.errorMessage().contains("AI提供商不可用"), "错误信息应说明原因");
+        assertTrue(result.success(), "应返回成功并进入兜底模式");
+        assertNull(result.errorMessage(), "兜底成功时不应包含错误信息");
+        assertFalse(result.artifacts().isEmpty(), "兜底应返回基础产物");
+        assertTrue(result.artifacts().stream().anyMatch(a -> a.getFilePath().contains("entity/")),
+                "兜底应补齐基础实体产物");
+        verify(logConsumer, atLeastOnce()).accept(argThat((G3LogEntry log) ->
+                log.getLevel().equals(G3LogEntry.Level.WARN.getValue())
+        ));
     }
 
     /**
@@ -418,7 +435,7 @@ class BackendCoderAgentImplTest {
      * 期望：返回失败结果，记录错误日志
      */
     @Test
-    void generate_whenAICallFails_shouldReturnFailure() throws AIProvider.AIException {
+    void generate_whenAICallFails_shouldReturnBaselineArtifacts() throws AIProvider.AIException {
         // GIVEN
         when(aiProviderFactory.getProvider()).thenReturn(aiProvider);
         when(aiProvider.isAvailable()).thenReturn(true);
@@ -429,13 +446,11 @@ class BackendCoderAgentImplTest {
         ICoderAgent.CoderResult result = backendCoderAgent.generate(testJob, 0, logConsumer);
 
         // THEN
-        assertFalse(result.success(), "应返回失败");
-        assertNotNull(result.errorMessage(), "应包含错误信息");
-        assertTrue(result.errorMessage().contains("AI调用失败"), "错误信息应说明原因");
-
-        // 验证错误日志
+        assertTrue(result.success(), "应返回成功并进入兜底模式");
+        assertNull(result.errorMessage(), "兜底成功时不应包含错误信息");
+        assertFalse(result.artifacts().isEmpty(), "兜底应返回基础产物");
         verify(logConsumer, atLeastOnce()).accept(argThat((G3LogEntry log) ->
-                log.getLevel().equals(G3LogEntry.Level.ERROR.getValue())
+                log.getLevel().equals(G3LogEntry.Level.WARN.getValue())
         ));
     }
 
@@ -464,6 +479,7 @@ class BackendCoderAgentImplTest {
         when(aiProvider.isAvailable()).thenReturn(true);
         when(aiProvider.generate(anyString(), any()))
                 .thenReturn(AIProvider.AIResponse.builder().content(multiFileResponse).model("test").build())
+                .thenReturn(AIProvider.AIResponse.builder().content("").model("test").build())
                 .thenReturn(AIProvider.AIResponse.builder().content("").model("test").build())
                 .thenReturn(AIProvider.AIResponse.builder().content("").model("test").build())
                 .thenReturn(AIProvider.AIResponse.builder().content("").model("test").build());
@@ -516,6 +532,7 @@ class BackendCoderAgentImplTest {
         when(aiProvider.isAvailable()).thenReturn(true);
         when(aiProvider.generate(anyString(), any()))
                 .thenReturn(AIProvider.AIResponse.builder().content(noSeparatorResponse).model("test").build())
+                .thenReturn(AIProvider.AIResponse.builder().content("").model("test").build())
                 .thenReturn(AIProvider.AIResponse.builder().content("").model("test").build())
                 .thenReturn(AIProvider.AIResponse.builder().content("").model("test").build())
                 .thenReturn(AIProvider.AIResponse.builder().content("").model("test").build());
@@ -703,5 +720,39 @@ class BackendCoderAgentImplTest {
                 assertEquals(generationRound, artifact.getGenerationRound(),
                         "产物的generationRound应为" + generationRound)
         );
+    }
+
+    @Test
+    void resolveProvider_shouldPreferUniaixWhenG3ProviderIsClaude() {
+        // GIVEN
+        ReflectionTestUtils.setField(backendCoderAgent, "g3Provider", "claude");
+        when(uniaixAIProvider.isAvailable()).thenReturn(true);
+
+        // WHEN
+        AIProvider provider = ReflectionTestUtils.invokeMethod(backendCoderAgent, "resolveProvider", testJob);
+
+        // THEN
+        assertSame(uniaixAIProvider, provider);
+        verifyNoInteractions(aiProviderFactory, projectService);
+    }
+
+    /**
+     * 测试：G3配置为网宿时应映射到ECA Gateway
+     * 期望：返回ECA Gateway Provider
+     */
+    @Test
+    void resolveProvider_shouldPreferEcaGatewayWhenG3ProviderIsWangsu() {
+        // GIVEN
+        ReflectionTestUtils.setField(backendCoderAgent, "g3Provider", "wangsu");
+        when(aiProviderFactory.getProviderByName("eca-gateway")).thenReturn(aiProvider);
+        when(aiProvider.isAvailable()).thenReturn(true);
+
+        // WHEN
+        AIProvider provider = ReflectionTestUtils.invokeMethod(backendCoderAgent, "resolveProvider", testJob);
+
+        // THEN
+        assertSame(aiProvider, provider);
+        verify(aiProviderFactory).getProviderByName("eca-gateway");
+        verifyNoInteractions(projectService);
     }
 }

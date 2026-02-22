@@ -174,3 +174,21 @@ export interface G3HealthStatus {
   /** 检查时间 */
   timestamp: string;
 }
+
+/**
+ * G3 失败诊断结果
+ *
+ * 是什么：后端返回的失败诊断摘要与行动项清单。
+ * 做什么：用于前端展示“失败原因 + 修复建议”。
+ * 为什么：让用户在失败场景下能快速补充上下文并继续生成。
+ */
+export interface G3Diagnosis {
+  /** 诊断摘要 */
+  summary: string | null;
+  /** 是否为环境错误 */
+  environmentError: boolean;
+  /** 环境错误原因 */
+  environmentReason: string | null;
+  /** 行动项清单 */
+  actions: string[];
+}

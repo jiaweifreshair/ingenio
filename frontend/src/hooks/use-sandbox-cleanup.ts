@@ -22,6 +22,31 @@
 import { useEffect, useRef } from 'react';
 
 /**
+ * Sandbox清理跳过集合
+ *
+ * 是什么：存放需要跳过自动清理的 sandboxId。
+ * 做什么：在组件卸载时判断是否跳过清理。
+ * 为什么：支持“确认设计后仍需下载”的流程避免误清理。
+ */
+const sandboxCleanupSkipSet = new Set<string>();
+
+/**
+ * 标记沙箱在卸载时跳过清理
+ *
+ * 是什么：把 sandboxId 记录为“可保留”。
+ * 做什么：让 useSandboxCleanup 在卸载时跳过清理并自动移除标记。
+ * 为什么：避免确认设计跳转后导致下载失败。
+ *
+ * @param sandboxId 需要暂时保留的沙箱ID
+ */
+export function preserveSandboxCleanup(sandboxId: string | null) {
+  if (!sandboxId) {
+    return;
+  }
+  sandboxCleanupSkipSet.add(sandboxId);
+}
+
+/**
  * Sandbox清理Hook参数接口
  */
 export interface UseSandboxCleanupOptions {
@@ -146,6 +171,10 @@ export function useSandboxCleanup(options: UseSandboxCleanupOptions) {
 
       // 组件卸载时执行清理
       if (currentSandboxIdRef.current && !cleanedUpRef.current) {
+        if (sandboxCleanupSkipSet.delete(currentSandboxIdRef.current)) {
+          console.log(`[Sandbox清理] 已标记跳过清理: ${currentSandboxIdRef.current}`);
+          return;
+        }
         console.log(`[Sandbox清理] 组件卸载，执行清理: ${currentSandboxIdRef.current}`);
         performCleanup(currentSandboxIdRef.current);
       }

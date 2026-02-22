@@ -5,21 +5,27 @@
 spring:
   datasource:
     # 连接Docker容器中的PostgreSQL (docker-compose.yml暴露的5432端口)
-    url: jdbc:postgresql://localhost:5432/ingenio?stringtype=unspecified
+    # 使用127.0.0.1而非localhost避免DNS解析问题
+    url: jdbc:postgresql://127.0.0.1:5432/ingenio?stringtype=unspecified
     username: postgres
     password: ingenio_20251122
 
   redis:
-    host: localhost
+    host: 127.0.0.1
     port: 6379
 
   ai:
     alibaba:
       api-key: ${DEEPSEEK_API_KEY:sk-your-deepseek-api-key}
 
+  # 禁用邮件自动配置（开发环境不需要）
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.mail.MailSenderAutoConfiguration
+
 # MinIO配置
 minio:
-  endpoint: http://localhost:9000
+  endpoint: http://127.0.0.1:9000
   access-key: minioadmin
   secret-key: minioadmin
   bucket-name: ingenio-dev
@@ -44,4 +50,6 @@ management:
 # Ingenio配置
 ingenio:
   codegen:
-    preview-base-url: http://localhost:3000
+    preview-base-url: http://127.0.0.1:3000
+  tenant:
+    default-tenant-id: 00000000-0000-0000-0000-000000000001

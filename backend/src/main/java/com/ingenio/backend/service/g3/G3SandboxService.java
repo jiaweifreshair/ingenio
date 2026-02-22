@@ -6,7 +6,10 @@ import com.ingenio.backend.entity.g3.G3ArtifactEntity;
 import com.ingenio.backend.entity.g3.G3JobEntity;
 import com.ingenio.backend.entity.g3.G3LogEntry;
 import com.ingenio.backend.entity.g3.G3ValidationResultEntity;
+import com.ingenio.backend.service.openlovable.OpenLovableEndpointRouter;
+import com.ingenio.backend.service.openlovable.OpenLovableSandboxRegistry;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.*;
@@ -66,6 +69,22 @@ public class G3SandboxService {
      */
     @Value("${ingenio.openlovable.base-url:http://localhost:3001}")
     private String openLovableBaseUrl;
+
+    /**
+     * OpenLovable 多实例路由器（可选）
+     */
+    @Autowired(required = false)
+    private OpenLovableEndpointRouter endpointRouter;
+
+    /**
+     * OpenLovable 沙箱状态注册中心（可选）
+     *
+     * 是什么：多活沙箱状态中心。
+     * 做什么：记录 G3 创建的 sandbox 状态与心跳。
+     * 为什么：让回收器与并发控制可以感知 G3 沙箱。
+     */
+    @Autowired(required = false)
+    private OpenLovableSandboxRegistry sandboxRegistry;
 
     /**
      * E2B API Key（可选，如果需要直接调用E2B）
@@ -247,7 +266,8 @@ public class G3SandboxService {
 
         try {
             // 调用Open-Lovable-CN创建沙箱
-            String url = openLovableBaseUrl + "/api/create-ai-sandbox-v2";
+            String targetBaseUrl = selectOpenLovableBaseUrlForCreate();
+            String url = targetBaseUrl + "/api/create-ai-sandbox-v2";
 
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("template", MAVEN_TEMPLATE);
@@ -273,6 +293,8 @@ public class G3SandboxService {
                 String sandboxId = (String) result.get("sandboxId");
                 String sandboxUrl = (String) result.get("url");
                 String provider = (String) result.getOrDefault("provider", sandboxProvider);
+                bindSandboxEndpoint(sandboxId, targetBaseUrl);
+                registerSandboxReady(sandboxId, targetBaseUrl);
 
                 SandboxInfo info = new SandboxInfo(sandboxId, provider, sandboxUrl, Instant.now());
 
@@ -321,7 +343,7 @@ public class G3SandboxService {
             }
 
             // 调用API同步文件
-            String url = openLovableBaseUrl + "/api/sandbox/write-files";
+            String url = resolveOpenLovableBaseUrlBySandboxId(sandboxId) + "/api/sandbox/write-files";
 
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("sandboxId", sandboxId);
@@ -366,7 +388,7 @@ public class G3SandboxService {
 
         try {
             // 调用API执行命令
-            String url = openLovableBaseUrl + "/api/sandbox/execute";
+            String url = resolveOpenLovableBaseUrlBySandboxId(sandboxId) + "/api/sandbox/execute";
 
             // 构建编译命令：不使用-q静默模式，确保能捕获完整错误信息
             // 使用 -e 显示完整错误堆栈，使用 -B 批处理模式
@@ -502,7 +524,7 @@ public class G3SandboxService {
         long startTime = System.currentTimeMillis();
 
         try {
-            String url = openLovableBaseUrl + "/api/sandbox/execute";
+            String url = resolveOpenLovableBaseUrlBySandboxId(sandboxId) + "/api/sandbox/execute";
 
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("sandboxId", sandboxId);
@@ -1569,6 +1591,14 @@ public class G3SandboxService {
             return "沙箱不可用（OpenLovable 活跃沙箱与请求不一致）";
         }
 
+        // Maven 未安装/命令不可用
+        if (normalized.contains("mvn: not found") ||
+                normalized.contains("mvn: command not found") ||
+                normalized.contains("'mvn' is not recognized") ||
+                normalized.contains("mvn 命令不存在")) {
+            return "Maven 未安装或不可用";
+        }
+
         // 依赖下载失败
         if (normalized.contains("could not resolve dependencies") ||
                 normalized.contains("could not transfer artifact") ||
@@ -1710,7 +1740,7 @@ public class G3SandboxService {
         }
 
         try {
-            String url = openLovableBaseUrl + "/api/sandbox/kill";
+            String url = resolveOpenLovableBaseUrlBySandboxId(sandboxId) + "/api/sandbox/kill";
 
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("sandboxId", sandboxId);
@@ -1745,7 +1775,7 @@ public class G3SandboxService {
             // - OpenLovable-CN 的 /api/sandbox-status 当前返回字段为 { active, healthy, sandboxData
             // }
             // - 不支持通过 query 参数精准查询某个 sandboxId，因此这里只能“查询当前活跃沙箱”的健康状态
-            String url = openLovableBaseUrl + "/api/sandbox-status";
+            String url = resolveOpenLovableBaseUrlBySandboxId(sandboxId) + "/api/sandbox-status";
 
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
 
@@ -1780,6 +1810,72 @@ public class G3SandboxService {
         }
 
         return false;
+    }
+
+
+    /**
+     * 解析 sandbox 对应的 OpenLovable baseUrl
+     */
+    private String resolveOpenLovableBaseUrlBySandboxId(String sandboxId) {
+        if (endpointRouter == null) {
+            return normalizeOpenLovableBaseUrl(openLovableBaseUrl);
+        }
+        if (sandboxId != null && !sandboxId.isBlank()) {
+            return endpointRouter.resolveEndpointForSandbox(sandboxId.trim());
+        }
+        return endpointRouter.getDefaultEndpoint();
+    }
+
+    /**
+     * 选择“创建新沙箱”使用的 OpenLovable 实例
+     */
+    private String selectOpenLovableBaseUrlForCreate() {
+        if (endpointRouter == null) {
+            return normalizeOpenLovableBaseUrl(openLovableBaseUrl);
+        }
+        return endpointRouter.selectEndpointForCreate();
+    }
+
+    /**
+     * 绑定 sandbox 与 OpenLovable 实例
+     */
+    private void bindSandboxEndpoint(String sandboxId, String baseUrl) {
+        if (endpointRouter == null || sandboxId == null || sandboxId.isBlank()) {
+            return;
+        }
+        endpointRouter.bindSandbox(sandboxId.trim(), baseUrl);
+    }
+
+    /**
+     * 注册沙箱 READY 状态
+     *
+     * 是什么：G3 创建沙箱后的状态落库动作。
+     * 做什么：写入状态中心，供回收器与并发组件复用。
+     * 为什么：避免 G3 链路创建的沙箱脱离统一治理。
+     */
+    private void registerSandboxReady(String sandboxId, String baseUrl) {
+        if (sandboxRegistry == null || sandboxId == null || sandboxId.isBlank()) {
+            return;
+        }
+        try {
+            sandboxRegistry.registerReady(sandboxId, baseUrl, null, null);
+        } catch (Exception e) {
+            log.debug("[G3SandboxService] 注册沙箱状态失败: sandboxId={}, err={}", sandboxId, e.getMessage());
+        }
+    }
+
+    /**
+     * 规范化 baseUrl（去除末尾斜杠）
+     */
+    private String normalizeOpenLovableBaseUrl(String baseUrl) {
+        if (baseUrl == null) {
+            return "http://localhost:3001";
+        }
+        String trimmed = baseUrl.trim();
+        if (trimmed.isBlank()) {
+            return "http://localhost:3001";
+        }
+        return trimmed.replaceAll("/+$", "");
     }
 
     /**

@@ -274,6 +274,10 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
 
   /**
    * 从 initialContext 派生路由提示
+   *
+   * 修复说明：统一技术栈字段值格式，与后端 TechStackType 枚举保持一致
+   * - 移除空格：'React+SpringBoot' 而非 'React + Spring Boot'
+   * - 确保后端 fromCode() 方法能正确匹配
    */
   const deriveRoutingHints = useCallback((): { complexityHint?: string; techStackHint?: string } => {
     let complexityHint: string | undefined;
@@ -282,13 +286,13 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     if (initialContext?.mode) {
       if (initialContext.mode === 'ENTERPRISE') {
         complexityHint = 'COMPLEX';
-        techStackHint = 'React + Spring Boot';
+        techStackHint = 'React+SpringBoot'; // 修复：移除空格，与后端枚举一致
       } else if (initialContext.mode === 'WEB') {
         complexityHint = 'MEDIUM';
-        techStackHint = 'React + Supabase';
+        techStackHint = 'React+Supabase'; // 修复：移除空格，与后端枚举一致
       } else if (initialContext.mode === 'NATIVE') {
         complexityHint = 'COMPLEX';
-        techStackHint = 'Kuikly + Spring Boot';
+        techStackHint = 'Kuikly'; // 修复：简化为单一值，与后端枚举一致
       }
     }
     return { complexityHint, techStackHint };
@@ -307,14 +311,18 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
    * 是否走Supabase前端直连模式。
    *
    * 是什么：判断当前方案是否无需服务端代码生成。
-   * 做什么：根据技术栈提示决定是否跳过G3服务端流程。
-   * 为什么：Supabase场景下前端直连即可，无需进入G3引擎。
+   * 做什么：优先使用路由结果的技术栈，再回退到前端提示。
+   * 为什么：避免“需求明确Spring Boot但前端提示为Supabase”的误判。
    */
   const isSupabaseDirect = useMemo(() => {
-    const techStack = routingHints.techStackHint;
-    if (!techStack) return false;
-    return techStack.toLowerCase().includes('supabase');
-  }, [routingHints.techStackHint]);
+    const techStackType = routingResult?.techStackType;
+    const techStackCode = routingResult?.techStackCode || routingHints.techStackHint;
+    if (techStackType) {
+      return techStackType === 'REACT_SUPABASE';
+    }
+    if (!techStackCode) return false;
+    return techStackCode.toLowerCase().includes('supabase');
+  }, [routingResult?.techStackType, routingResult?.techStackCode, routingHints.techStackHint]);
 
   /**
    * 是否进入G3服务端生成流程。
@@ -412,12 +420,7 @@ export function SmartWizard({ initialRequirement, onBack, initialContext }: Smar
     }
   }, [requirement, startProcess]);
 
-  // 仅在组件卸载时重置（避免 requirement 变化触发 cleanup，导致 startProcess 被误二次触发）
-  useEffect(() => {
-    return () => {
-      hasStartedRef.current = false;
-    };
-  }, []);
+  // 组件卸载会销毁 ref，无需额外清理，避免 StrictMode 双调用触发重复启动。
 
 
   /**

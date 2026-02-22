@@ -53,18 +53,15 @@ public class ProjectController {
     @SaCheckLogin
     @GetMapping("/stats")
     public Result<ProjectStatsResponse> getStats() {
-        // 获取当前用户ID和租户ID
+        // 获取当前用户ID（只基于 userId 查询，不强制匹配 tenantId）
         String userIdStr = StpUtil.getLoginIdAsString();
         UUID userId = UUID.fromString(userIdStr);
-        String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
-        UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : userId;
 
-        log.info("获取项目统计: userId={}, tenantId={}", userId, tenantId);
+        log.info("获取项目统计: userId={}", userId);
 
         // 查询总应用数
         LambdaQueryWrapper<ProjectEntity> totalWrapper = new LambdaQueryWrapper<>();
-        totalWrapper.eq(ProjectEntity::getUserId, userId)
-                .eq(ProjectEntity::getTenantId, tenantId);
+        totalWrapper.eq(ProjectEntity::getUserId, userId);
         long totalProjects = projectService.count(totalWrapper);
 
         // 查询本月新增应用数
@@ -75,42 +72,36 @@ public class ProjectController {
                 .toInstant();
         LambdaQueryWrapper<ProjectEntity> monthlyWrapper = new LambdaQueryWrapper<>();
         monthlyWrapper.eq(ProjectEntity::getUserId, userId)
-                .eq(ProjectEntity::getTenantId, tenantId)
                 .ge(ProjectEntity::getCreatedAt, monthStart);
         long monthlyNewProjects = projectService.count(monthlyWrapper);
 
         // 查询生成完成的应用数（原 publishedProjects，现改为 COMPLETED 状态）
         LambdaQueryWrapper<ProjectEntity> completedWrapper = new LambdaQueryWrapper<>();
         completedWrapper.eq(ProjectEntity::getUserId, userId)
-                .eq(ProjectEntity::getTenantId, tenantId)
                 .eq(ProjectEntity::getStatus, ProjectEntity.Status.COMPLETED.getValue());
         long completedProjects = projectService.count(completedWrapper);
 
         // 查询草稿应用数
         LambdaQueryWrapper<ProjectEntity> draftWrapper = new LambdaQueryWrapper<>();
         draftWrapper.eq(ProjectEntity::getUserId, userId)
-                .eq(ProjectEntity::getTenantId, tenantId)
                 .eq(ProjectEntity::getStatus, ProjectEntity.Status.DRAFT.getValue());
         long draftProjects = projectService.count(draftWrapper);
 
         // 查询已归档应用数
         LambdaQueryWrapper<ProjectEntity> archivedWrapper = new LambdaQueryWrapper<>();
         archivedWrapper.eq(ProjectEntity::getUserId, userId)
-                .eq(ProjectEntity::getTenantId, tenantId)
                 .eq(ProjectEntity::getStatus, ProjectEntity.Status.ARCHIVED.getValue());
         long archivedProjects = projectService.count(archivedWrapper);
 
         // 查询生成中的项目数（GENERATING 状态）
         LambdaQueryWrapper<ProjectEntity> generatingWrapper = new LambdaQueryWrapper<>();
         generatingWrapper.eq(ProjectEntity::getUserId, userId)
-                .eq(ProjectEntity::getTenantId, tenantId)
                 .eq(ProjectEntity::getStatus, ProjectEntity.Status.GENERATING.getValue());
         long generatingProjects = projectService.count(generatingWrapper);
 
         // 同时查询 generation_tasks 中正在执行的任务数（作为补充）
         LambdaQueryWrapper<GenerationTaskEntity> taskWrapper = new LambdaQueryWrapper<>();
         taskWrapper.eq(GenerationTaskEntity::getUserId, userId)
-                .eq(GenerationTaskEntity::getTenantId, tenantId)
                 .in(GenerationTaskEntity::getStatus,
                         GenerationTaskEntity.Status.PLANNING.getValue(),
                         GenerationTaskEntity.Status.EXECUTING.getValue(),
@@ -289,18 +280,17 @@ public class ProjectController {
         // 获取当前用户ID
         String userIdStr = StpUtil.getLoginIdAsString();
         UUID userId = UUID.fromString(userIdStr);
-        String tenantIdStr = (String) StpUtil.getSession().get("tenantId");
-        UUID tenantId = tenantIdStr != null ? UUID.fromString(tenantIdStr) : userId;
 
         log.info("分页查询用户项目列表: userId={}, current={}, size={}, status={}, keyword={}",
                 userId, current, size, status, keyword);
 
-        // 构建查询条件
+        // 构建查询条件（只基于 userId 查询，不再强制匹配 tenantId）
+        // 说明：个人项目场景下，userId 是唯一标识，tenantId 可能因为
+        // 不同接口路径的认证方式差异而不一致（如 /v2 白名单路径使用默认租户）
         Page<ProjectEntity> page = new Page<>(current, size);
         LambdaQueryWrapper<ProjectEntity> wrapper = new LambdaQueryWrapper<>();
 
-        wrapper.eq(ProjectEntity::getUserId, userId)
-                .eq(ProjectEntity::getTenantId, tenantId);
+        wrapper.eq(ProjectEntity::getUserId, userId);
 
         // 状态筛选
         if (status != null && !status.isBlank()) {

@@ -20,6 +20,7 @@
 'use client';
 
 import { useEffect, useRef } from 'react';
+import { isSandboxNotFound } from '@/lib/openlovable/sandbox-lifecycle';
 
 /**
  * Sandbox心跳Hook参数接口
@@ -64,10 +65,13 @@ async function sendHeartbeat(
       throw new Error(data.error || '心跳请求失败');
     }
 
-    // 校验上游沙箱健康状态：明确未激活/不健康时主动抛错，触发自愈逻辑。
+    // 校验上游沙箱健康状态：明确未激活/不健康/已销毁时主动抛错，触发自愈逻辑。
     const upstream = data?.data;
     if (typeof upstream === 'object' && upstream !== null) {
       const upstreamRecord = upstream as Record<string, unknown>;
+      if (isSandboxNotFound(upstreamRecord)) {
+        throw new Error('Sandbox不可用');
+      }
       const active = upstreamRecord.active;
       const healthy = upstreamRecord.healthy;
       if (typeof active === 'boolean' && !active) {

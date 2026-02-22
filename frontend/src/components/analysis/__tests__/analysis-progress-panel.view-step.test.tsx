@@ -72,11 +72,11 @@ describe('AnalysisProgressPanel', () => {
       </LanguageProvider>
     );
 
-    fireEvent.click(screen.getByText('需求语义解析'));
-    expect(screen.getByText('查看步骤结果：需求语义解析')).toBeInTheDocument();
+    // Step 卡片标题使用“角色名”，而非后端 stepName
+    fireEvent.click(screen.getByText('👩‍💼 产品经理 (PM)'));
+    expect(screen.getByText('查看步骤结果：👩‍💼 产品经理 (PM)')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '关闭' }));
-    expect(screen.queryByText('查看步骤结果：需求语义解析')).not.toBeInTheDocument();
+    expect(screen.queryByText('查看步骤结果：👩‍💼 产品经理 (PM)')).not.toBeInTheDocument();
   });
 });
-

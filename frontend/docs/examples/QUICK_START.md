@@ -129,10 +129,10 @@ vim local.properties
 
 ```properties
 # 阿里云通义千问API密钥（必需）
-QWEN_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+QWEN_API_KEY=your_qwen_api_key_here
 
 # Google Gemini API密钥（可选，用于实时流处理）
-GEMINI_API_KEY=AIzaSyXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+GEMINI_API_KEY=your_gemini_api_key_here
 
 # Supabase配置（可选，用于数据存储）
 SUPABASE_URL=https://your-project.supabase.co

@@ -27,6 +27,7 @@ import {
   executeCodeGeneration,
   type PlanRoutingResult
 } from '@/lib/api/plan-routing';
+import { subscribeToG3Logs } from '@/lib/api/g3';
 import type { UniaixModel } from '@/lib/api/uniaix';
 import type { PhaseType, LoadedTemplate } from '@/types/requirement-form';
 import type { G3LogEntry } from '@/types/g3';
@@ -253,57 +254,90 @@ export function useGenerationFlow({
       // Step 2: 执行代码生成 (Phase 1.5: G3 Visual Overlay)
       console.log('[useGenerationFlow] 调用executeCodeGeneration...');
 
-      // G3 日志流（用于视觉覆盖层：展示后端 Java G3 的实时日志）
-      const logStreamPromise = (async () => {
-        if (!setG3Logs) return;
-        setG3Logs([]);
-        try {
-          const res = await fetch('/api/lab/g3-poc', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              requirement: requirement || "Generating application...",
-              // 传入 appSpecId 以便后端自动加载 Blueprint 上下文（若已绑定）
-              appSpecId: routingResult.appSpecId,
-            })
-          });
-          if (!res.body) return;
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder();
-          let buffer = '';
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const events = buffer.split('\n\n');
-            buffer = events.pop() || '';
-
-            for (const eventText of events) {
-              if (!eventText.trim()) continue;
-
-              const dataLines = eventText
-                .split('\n')
-                .filter((line) => line.startsWith('data:'))
-                .map((line) => line.slice(5).trim());
-              const dataStr = dataLines.join('\n').trim();
-              if (!dataStr) continue;
-
-              try {
-                const logEntry = JSON.parse(dataStr) as G3LogEntry;
-                setG3Logs((prev) => [...prev, logEntry]);
-              } catch {
-                // ignore parse errors
-              }
-            }
-          }
-        } catch (e) { console.error("G3 Stream Error", e); }
-      })();
-
       const codeResult = await executeCodeGeneration(routingResult.appSpecId);
       console.log('[useGenerationFlow] 代码生成结果:', codeResult);
 
-      // Ensure stream completes for visual effect
-      if (setG3Logs) await logStreamPromise;
+      // G3 日志流（使用 executeCodeGeneration 返回的 jobId，避免重复创建任务）
+      if (setG3Logs) {
+        setG3Logs([{
+          timestamp: new Date().toISOString(),
+          role: 'SYSTEM',
+          level: 'info',
+          message: 'G3 任务已提交，正在订阅日志...',
+        }]);
+      }
+
+      const jobId = codeResult.jobId;
+      if (setG3Logs && jobId) {
+        let finished = false;
+        let resolveLogPromise: (() => void) | null = null;
+
+        const logStreamPromise = new Promise<void>((resolve) => {
+          resolveLogPromise = resolve;
+        });
+
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          resolveLogPromise?.();
+        };
+
+        const cancelLogs = subscribeToG3Logs(jobId, {
+          onOpen: (info) => {
+            setG3Logs((prev) => [
+              ...prev,
+              {
+                timestamp: new Date().toISOString(),
+                role: 'SYSTEM',
+                level: 'info',
+                message: `日志连接已建立 (HTTP ${info.status})`,
+              },
+            ]);
+          },
+          onLog: (entry) => {
+            if (entry.level === 'heartbeat') return;
+            setG3Logs((prev) => [...prev, entry]);
+          },
+          onError: (error) => {
+            setG3Logs((prev) => [
+              ...prev,
+              {
+                timestamp: new Date().toISOString(),
+                role: 'SYSTEM',
+                level: 'warn',
+                message: `日志连接异常: ${error}`,
+              },
+            ]);
+            finish();
+          },
+          onComplete: () => {
+            setG3Logs((prev) => [
+              ...prev,
+              {
+                timestamp: new Date().toISOString(),
+                role: 'SYSTEM',
+                level: 'success',
+                message: 'G3 任务已完成',
+              },
+            ]);
+            finish();
+          },
+          onClose: finish,
+        });
+
+        await logStreamPromise;
+        cancelLogs();
+      } else if (setG3Logs && !jobId) {
+        setG3Logs((prev) => [
+          ...prev,
+          {
+            timestamp: new Date().toISOString(),
+            role: 'SYSTEM',
+            level: 'warn',
+            message: '未返回 jobId，无法订阅实时日志',
+          },
+        ]);
+      }
 
       if (codeResult.success) {
         // 显示成功动画

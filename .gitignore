@@ -26,6 +26,7 @@ workers/.env
 # Sensitive configuration files (keep .example versions)
 application-local.yml
 application-dev.yml
+backend/src/main/resources/application.yml
 **/secrets.yml
 **/credentials.yml
 

@@ -162,6 +162,8 @@ function LogEntry({
   const isMilestone = isKeyMilestone(log.content);
   const isAiCall = isAiCallLog(log.content);
   const roleColor = roleColors[log.role] || roleColors.SYSTEM;
+  const isError = log.level === "ERROR";
+  const isFailure = log.content.includes("任务失败") || log.content.includes("FAILED") || log.content.includes("❌");
 
   return (
     <motion.div
@@ -172,6 +174,8 @@ function LogEntry({
         "group flex gap-2 py-1.5 px-2 rounded-lg transition-colors",
         isMilestone
           ? "bg-slate-800/50 border-l-2 border-current"
+          : isError || isFailure
+          ? "bg-red-950/30 border-l-2 border-red-500/50"
           : "hover:bg-slate-800/30"
       )}
     >
@@ -216,22 +220,50 @@ function LogEntry({
           )}
 
           {/* 日志内容 */}
-          <span
-            className={cn(
-              "text-xs leading-relaxed break-all",
-              log.level === "ERROR"
-                ? "text-red-400"
-                : log.level === "SUCCESS"
-                ? "text-emerald-400 font-medium"
-                : log.level === "WARN"
-                ? "text-yellow-400"
-                : "text-slate-300",
-              isAiCall && log.level === "INFO" && "text-violet-200",
-              isMilestone && "font-medium"
+          <div className="flex-1 min-w-0">
+            <span
+              className={cn(
+                "text-xs leading-relaxed break-words",
+                log.level === "ERROR"
+                  ? "text-red-300 font-medium"
+                  : log.level === "SUCCESS"
+                  ? "text-emerald-400 font-medium"
+                  : log.level === "WARN"
+                  ? "text-yellow-400"
+                  : "text-slate-300",
+                isAiCall && log.level === "INFO" && "text-violet-200",
+                isMilestone && "font-medium"
+              )}
+            >
+              {log.content}
+            </span>
+
+            {/* 错误详情卡片 */}
+            {(isError || isFailure) && (
+              <div className="mt-2 p-3 rounded-lg bg-red-950/50 border border-red-500/30">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold text-red-300 mb-1">错误详情</div>
+                    <div className="text-xs text-red-200/80 leading-relaxed break-words whitespace-pre-wrap">
+                      {log.content}
+                    </div>
+                    {log.content.includes("temperature") && log.content.includes("top_p") && (
+                      <div className="mt-2 pt-2 border-t border-red-500/20">
+                        <div className="text-xs text-red-200/60">
+                          💡 <span className="font-medium">可能的解决方案：</span>
+                          <br />
+                          • 该模型不支持同时设置 temperature 和 top_p 参数
+                          <br />
+                          • 系统已自动修复此问题，请重试
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
             )}
-          >
-            {log.content}
-          </span>
+          </div>
 
           {/* 折叠按钮 */}
           {showCollapse && (

@@ -1,11 +1,8 @@
 import { test } from '@playwright/test';
+import { silencePageConsole } from './utils/console-guard';
 
 test('检查wizard完成页面按钮功能', async ({ page }) => {
-  // 监听console输出
-  page.on('console', msg => console.log('PAGE LOG:', msg.text()));
-
-  // 监听页面错误
-  page.on('pageerror', error => console.log('PAGE ERROR:', error.message));
+  silencePageConsole(page);
 
   // 访问页面
   console.log('正在访问wizard页面...');

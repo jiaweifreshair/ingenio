@@ -61,17 +61,14 @@ async function setupPageMonitoring(page: Page, report: TestReport): Promise<void
     // 分类错误和警告
     if (msg.type() === 'error') {
       report.errors.push(`[${logEntry.timestamp.toISOString()}] ${msg.text()}`);
-      console.log(`🔴 [Console Error] ${msg.text()}`);
     } else if (msg.type() === 'warning') {
       report.warnings.push(`[${logEntry.timestamp.toISOString()}] ${msg.text()}`);
-      console.log(`🟡 [Console Warning] ${msg.text()}`);
     }
   });
 
   // 监控页面错误
   page.on('pageerror', (error) => {
     report.errors.push(`[Page Error] ${error.message}`);
-    console.log(`🔴 [Page Error] ${error.message}`);
   });
 
   // 监控请求失败
@@ -79,7 +76,6 @@ async function setupPageMonitoring(page: Page, report: TestReport): Promise<void
     const failure = request.failure();
     if (failure) {
       report.errors.push(`[Request Failed] ${request.url()} - ${failure.errorText}`);
-      console.log(`🔴 [Request Failed] ${request.url()} - ${failure.errorText}`);
     }
   });
 }
@@ -333,6 +329,14 @@ test.describe('实时代码生成质量监控', () => {
     console.log('📍 Step 6: 实时监控代码生成\n');
     console.log('⏳ 等待代码生成（最长180秒）...\n');
 
+    /**
+     * 测试日志静默开关
+     *
+     * 是什么：基于环境变量控制实时输出。
+     * 做什么：在需要静默输出时跳过 stdout 进度写入。
+     * 为什么：减少 Playwright E2E 控制台噪音。
+     */
+    const silenceConsole = process.env.PLAYWRIGHT_SILENCE_CONSOLE !== '0';
     const monitorInterval = setInterval(async () => {
       // 检查iframe状态
       report.iframeStatus = await checkIframeStatus(page);
@@ -380,8 +384,10 @@ test.describe('实时代码生成质量监控', () => {
         // 忽略获取代码时的错误
       }
 
-      // 打印当前状态
-      process.stdout.write(`\r🔄 iframe: ${report.iframeStatus} | 错误: ${report.errors.length} | 警告: ${report.warnings.length} | 文件: ${report.codeFiles.length}`);
+      // 打印当前状态（可静默）
+      if (!silenceConsole) {
+        process.stdout.write(`\r🔄 iframe: ${report.iframeStatus} | 错误: ${report.errors.length} | 警告: ${report.warnings.length} | 文件: ${report.codeFiles.length}`);
+      }
     }, 3000);
 
     // 等待生成完成

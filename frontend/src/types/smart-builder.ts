@@ -4,6 +4,28 @@ import { Globe, Building2, Smartphone, ShoppingBag, GraduationCap, Users, Coffee
 
 export type AppComplexityMode = 'WEB' | 'ENTERPRISE' | 'NATIVE';
 
+/**
+ * 向导启动上下文
+ *
+ * 是什么：启动 SmartWizard 时的可选上下文配置。
+ * 做什么：用于透传技术栈提示、AI 能力选择与 JeecgBoot 能力等信息。
+ * 为什么：保证跨页面启动向导时仍能携带用户意图与集成需求。
+ */
+export interface WizardLaunchContext {
+    /** 行业选择 */
+    industry?: IndustryType | null;
+    /** 复杂度模式 */
+    mode?: AppComplexityMode | null;
+    /** AI能力选择 */
+    capabilities?: AICapabilityType[];
+    /** 技术栈提示（优先级高于 mode 推导） */
+    techStackHint?: string;
+    /** 复杂度提示（用于后端路由） */
+    complexityHint?: string;
+    /** JeecgBoot 能力代码列表 */
+    jeecgCapabilities?: string[];
+}
+
 export interface AppModeConfig {
     id: AppComplexityMode;
     icon: LucideIcon; // Lucide icon

@@ -149,6 +149,19 @@ export const CodeGenerationPreviewPanel: React.FC<CodeGenerationPreviewPanelProp
           : 'idle';
 
   /**
+   * 预览错误处理
+   *
+   * 是什么：接收预览 iframe 失败回调。
+   * 做什么：自动切换到代码视图并显示代码面板。
+   * 为什么：避免预览白屏时用户无从排查。
+   */
+  const handlePreviewError = useCallback((previewError: Error) => {
+    setViewMode('code');
+    setShowCodePanel(true);
+    onError?.(previewError.message);
+  }, [onError]);
+
+  /**
    * 初始化沙箱
    */
   useEffect(() => {
@@ -444,6 +457,7 @@ export const CodeGenerationPreviewPanel: React.FC<CodeGenerationPreviewPanelProp
               onRefresh={async () => {
                 return SandboxManager.refreshPreview();
               }}
+              onPreviewError={handlePreviewError}
             />
           </motion.div>
         )}

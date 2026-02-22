@@ -23,12 +23,24 @@ import { test, expect, type Page, devices } from '@playwright/test';
 // 测试配置
 const BASE_URL = 'http://localhost:3000';
 
+/**
+ * 去除 Playwright 设备配置中的 defaultBrowserType
+ *
+ * 是什么：清理设备配置对象中的 defaultBrowserType 字段。
+ * 做什么：避免 test.use 在 describe 内部因 defaultBrowserType 触发新 worker 报错。
+ * 为什么：保持按设备分组测试的同时兼容当前执行器限制。
+ */
+function stripDefaultBrowserType<T extends Record<string, unknown>>(device: T) {
+  const { defaultBrowserType: _ignored, ...rest } = device;
+  return rest;
+}
+
 // 移动设备配置
 const MOBILE_DEVICES = {
-  iPhoneSE: devices['iPhone SE'],
-  iPhone12: devices['iPhone 12'],
-  pixel5: devices['Pixel 5'],
-  iPad: devices['iPad (gen 7)'],
+  iPhoneSE: stripDefaultBrowserType(devices['iPhone SE']),
+  iPhone12: stripDefaultBrowserType(devices['iPhone 12']),
+  pixel5: stripDefaultBrowserType(devices['Pixel 5']),
+  iPad: stripDefaultBrowserType(devices['iPad (gen 7)']),
 };
 
 // 测试数据

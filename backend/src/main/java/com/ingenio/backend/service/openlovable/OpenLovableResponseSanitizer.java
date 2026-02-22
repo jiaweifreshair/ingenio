@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * OpenLovable AI 输出清洗器（用于 apply 阶段）
@@ -79,6 +80,148 @@ public final class OpenLovableResponseSanitizer {
             "(<file\\s+path=['\"]([^'\"]+)['\"][^>]*>)([\\s\\S]*?)(</file>|$)",
             Pattern.CASE_INSENSITIVE);
 
+    /**
+     * lucide-react CommonJS 引用匹配（解构形式）。
+     *
+     * 是什么：匹配 `const { Icon } = require('lucide-react')` 格式。
+     * 做什么：用于替换为 ESM import 语句。
+     * 为什么：Vite ESM 环境中 require 会导致运行时错误。
+     */
+    private static final Pattern LUCIDE_REQUIRE_DESTRUCTURED_PATTERN = Pattern.compile(
+            "^(\\s*)(const|let|var)\\s*\\{([^}]+)\\}\\s*=\\s*require\\(['\"]lucide-react['\"]\\);?\\s*$",
+            Pattern.MULTILINE);
+
+    /**
+     * lucide-react CommonJS 引用匹配（命名空间形式）。
+     *
+     * 是什么：匹配 `const Icons = require('lucide-react')` 格式。
+     * 做什么：用于替换为 `import * as Icons` 的写法。
+     * 为什么：避免 CommonJS require 触发 ESM 环境崩溃。
+     */
+    private static final Pattern LUCIDE_REQUIRE_NAMESPACE_PATTERN = Pattern.compile(
+            "^(\\s*)(const|let|var)\\s+(\\w+)\\s*=\\s*require\\(['\"]lucide-react['\"]\\);?\\s*$",
+            Pattern.MULTILINE);
+
+    /**
+     * lucide-react ESM import 检测。
+     *
+     * 是什么：匹配任意 import ... from 'lucide-react'。
+     * 做什么：用于判断是否已存在 ESM 导入。
+     * 为什么：已存在 import 时无需重复添加。
+     */
+    private static final Pattern LUCIDE_IMPORT_PATTERN = Pattern.compile(
+            "^\\s*import\\s+.*\\s+from\\s+['\"]lucide-react['\"];?\\s*$",
+            Pattern.MULTILINE);
+
+    /**
+     * lucide-react ESM 解构导入匹配。
+     *
+     * 是什么：匹配 `import { Icon } from 'lucide-react'` 格式。
+     * 做什么：用于移除误导入的 React Hook，避免重复声明。
+     * 为什么：避免 Vite/Babel 报 "Identifier has already been declared"。
+     */
+    private static final Pattern LUCIDE_NAMED_IMPORT_PATTERN = Pattern.compile(
+            "^\\s*import\\s*\\{([^}]+)\\}\\s*from\\s+['\"]lucide-react['\"];?\\s*$",
+            Pattern.MULTILINE);
+
+    /**
+     * React ESM import 匹配。
+     *
+     * 是什么：匹配 `import React, { useState } from 'react'` 等格式。
+     * 做什么：用于补齐 Hook 导入。
+     * 为什么：确保从 lucide-react 移除 Hook 后仍能正常使用。
+     */
+    private static final Pattern REACT_IMPORT_PATTERN = Pattern.compile(
+            "^\\s*import\\s+([^;]+)\\s+from\\s+['\"]react['\"];?\\s*$",
+            Pattern.MULTILINE);
+
+    /**
+     * React Hook 名称集合。
+     *
+     * 是什么：常用 React Hook 的白名单。
+     * 做什么：用于剔除 lucide-react 导入中的 Hook。
+     * 为什么：避免重复声明导致编译失败。
+     */
+    private static final Set<String> REACT_HOOK_NAMES = Set.of(
+            "useState",
+            "useEffect",
+            "useMemo",
+            "useCallback",
+            "useRef",
+            "useReducer",
+            "useContext",
+            "useLayoutEffect",
+            "useId",
+            "useTransition",
+            "useDeferredValue",
+            "useImperativeHandle",
+            "useInsertionEffect",
+            "useSyncExternalStore",
+            "useDebugValue");
+
+    /**
+     * JSX 组件标签匹配。
+     *
+     * 是什么：匹配 JSX 中以大写字母开头的标签名。
+     * 做什么：用于识别潜在的组件/图标引用。
+     * 为什么：补齐 lucide-react 导入时需要知道使用了哪些组件。
+     */
+    private static final Pattern JSX_COMPONENT_PATTERN = Pattern.compile("<([A-Z][A-Za-z0-9_]*)\\b");
+
+    /**
+     * 本地组件定义匹配。
+     *
+     * 是什么：匹配 function/const/class 定义的组件名称。
+     * 做什么：识别本地定义的组件，避免误加到 lucide-react 导入。
+     * 为什么：只应补齐真正缺失的图标导入。
+     */
+    private static final Pattern LOCAL_COMPONENT_DECLARATION_PATTERN = Pattern.compile(
+            "\\b(?:function|class|const)\\s+([A-Z][A-Za-z0-9_]*)\\b");
+
+    /**
+     * ESM import 语句匹配。
+     *
+     * 是什么：匹配 `import ... from '...'` 语句。
+     * 做什么：用于提取已导入的标识符。
+     * 为什么：避免将已导入的组件误加入 lucide-react。
+     */
+    private static final Pattern IMPORT_STATEMENT_PATTERN = Pattern.compile(
+            "^\\s*import\\s+([^;]+?)\\s+from\\s+['\"][^'\"]+['\"];?\\s*$",
+            Pattern.MULTILINE);
+
+    /**
+     * Tailwind @apply 规则匹配。
+     *
+     * 是什么：匹配 `@apply ...;` 语句。
+     * 做什么：用于移除不存在的类（如 bg-subtle-noise）。
+     * 为什么：避免 Tailwind 编译报错导致白屏。
+     */
+    private static final Pattern TAILWIND_APPLY_PATTERN = Pattern.compile("@apply\\s+([^;]+);");
+
+    /**
+     * JSX 保留组件名集合。
+     *
+     * 是什么：React 内置组件名称。
+     * 做什么：用于过滤不应加入 lucide-react 的标识符。
+     * 为什么：避免误将内置组件当作图标导入。
+     */
+    private static final Set<String> RESERVED_COMPONENT_NAMES = Set.of(
+            "Fragment",
+            "Suspense",
+            "StrictMode",
+            "Profiler");
+
+    /**
+     * Supabase 客户端创建语句匹配。
+     *
+     * 是什么：匹配 `const supabase = createClient(...)` 或 `export const supabase = createClient(...)`。
+     * 做什么：用于注入环境变量存在性校验，避免运行时抛出 supabaseUrl 必填错误。
+     * 为什么：Vite 预览中缺失变量时需要降级为 null，避免页面白屏。
+     */
+    private static final Pattern SUPABASE_CLIENT_DECLARATION_PATTERN = Pattern.compile(
+            "^(\\s*)(export\\s+)?(const|let|var)\\s+(\\w+)\\s*=\\s*createClient\\(([^)]*)\\)\\s*;?\\s*$",
+            Pattern.MULTILINE);
+
     private OpenLovableResponseSanitizer() {
     }
 
@@ -92,7 +235,8 @@ public final class OpenLovableResponseSanitizer {
             return new SanitizeResult(response, List.of(), List.of(), List.of());
         }
 
-        Matcher matcher = FILE_BLOCK_PATTERN.matcher(response);
+        String normalizedResponse = normalizeDuplicateScriptExtensions(response);
+        Matcher matcher = FILE_BLOCK_PATTERN.matcher(normalizedResponse);
         StringBuffer buffer = new StringBuffer();
         List<String> removedPaths = new ArrayList<>();
         List<String> mergedPaths = new ArrayList<>();
@@ -105,6 +249,26 @@ public final class OpenLovableResponseSanitizer {
             String closeTag = matcher.group(4);
             String normalizedPath = normalizePath(originalPath);
             String fileName = getFileName(normalizedPath);
+            String normalizedContent = stripMarkdownCodeFence(content);
+
+            if (isScriptFile(normalizedPath)) {
+                normalizedContent = normalizeLucideReactImports(normalizedContent);
+                normalizedContent = normalizeReactHookImports(normalizedContent);
+                normalizedContent = ensureLucideIconImports(normalizedContent);
+                normalizedContent = normalizeSupabaseClient(normalizedContent);
+                normalizedContent = normalizeScenarioApiAliases(normalizedPath, normalizedContent);
+            }
+            if (isCssFile(normalizedPath)) {
+                normalizedContent = normalizeTailwindNoiseApply(normalizedContent);
+            }
+
+            // 空脚本文件视为截断，避免写入空文件导致预览白屏
+            if (isScriptFile(normalizedPath) && isBlankContent(normalizedContent)) {
+                truncatedPaths.add(normalizedPath);
+                log.warn("检测到空脚本文件，视为截断: {}", normalizedPath);
+                matcher.appendReplacement(buffer, "");
+                continue;
+            }
 
             // 检测文件是否被截断
             if (isTruncated(content)) {
@@ -117,7 +281,7 @@ public final class OpenLovableResponseSanitizer {
 
             if ("package.json".equalsIgnoreCase(fileName)) {
                 // 智能合并 package.json
-                String mergedContent = mergePackageJson(content);
+                String mergedContent = mergePackageJson(normalizedContent);
                 if (mergedContent != null) {
                     String replacement = openTag + mergedContent + closeTag;
                     matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
@@ -133,14 +297,15 @@ public final class OpenLovableResponseSanitizer {
                 matcher.appendReplacement(buffer, "");
             } else {
                 // 检测.js文件中的JSX语法，自动修正为.jsx扩展名
-                String correctedPath = correctJsxExtension(normalizedPath, content);
+                String correctedPath = correctJsxExtension(normalizedPath, normalizedContent);
                 if (!correctedPath.equals(normalizedPath)) {
                     String correctedOpenTag = openTag.replace(originalPath, correctedPath);
-                    String replacement = correctedOpenTag + content + closeTag;
+                    String replacement = correctedOpenTag + normalizedContent + closeTag;
                     matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
                     log.info("JSX扩展名修正: {} -> {}", normalizedPath, correctedPath);
                 } else {
-                    matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group(0)));
+                    String replacement = openTag + normalizedContent + closeTag;
+                    matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
                 }
             }
         }
@@ -149,6 +314,181 @@ public final class OpenLovableResponseSanitizer {
 
         return new SanitizeResult(buffer.toString(), List.copyOf(removedPaths), List.copyOf(mergedPaths),
                 List.copyOf(truncatedPaths));
+    }
+
+    /**
+     * 处理脚本扩展名冲突（同一路径存在 .ts/.tsx 与 .js/.jsx 多版本）
+     *
+     * 是什么：对同一 basePath 的多种脚本扩展做去重。
+     * 做什么：优先保留内容更完整的版本，内容相同则偏好 TypeScript。
+     * 为什么：避免 Vite 按扩展名优先级加载到旧版本导致运行时错误。
+     */
+    private static String normalizeDuplicateScriptExtensions(String response) {
+        List<FileBlock> blocks = extractFileBlocks(response);
+        if (blocks.isEmpty()) {
+            return response;
+        }
+
+        List<FileBlock> filtered = dedupeScriptExtensionConflicts(blocks);
+        return buildResponseFromFileBlocks(filtered);
+    }
+
+    /**
+     * 去重同一脚本路径的多扩展名版本
+     *
+     * 是什么：识别 src/App.tsx 与 src/App.jsx 等同路径冲突。
+     * 做什么：按内容长度优先，长度一致时优先 TS/TSX。
+     * 为什么：避免同路径多版本被 Vite 解析到非预期文件。
+     */
+    private static List<FileBlock> dedupeScriptExtensionConflicts(List<FileBlock> blocks) {
+        if (blocks == null || blocks.isEmpty()) {
+            return List.of();
+        }
+
+        Map<String, List<FileBlock>> scriptGroups = new LinkedHashMap<>();
+        for (FileBlock block : blocks) {
+            String path = block.normalizedPath();
+            if (!isScriptFile(path) || isTypeDefinitionFile(path)) {
+                continue;
+            }
+            String basePath = stripScriptExtension(path);
+            scriptGroups.computeIfAbsent(basePath, key -> new ArrayList<>()).add(block);
+        }
+
+        Map<String, FileBlock> preferredByBasePath = new LinkedHashMap<>();
+        for (Map.Entry<String, List<FileBlock>> entry : scriptGroups.entrySet()) {
+            List<FileBlock> candidates = entry.getValue();
+            if (candidates.size() <= 1) {
+                preferredByBasePath.put(entry.getKey(), candidates.get(0));
+                continue;
+            }
+            FileBlock preferred = pickPreferredScriptBlock(candidates);
+            preferredByBasePath.put(entry.getKey(), preferred);
+            log.info("检测到脚本扩展冲突，保留: {}，移除: {}",
+                    preferred.normalizedPath(),
+                    candidates.stream()
+                            .map(FileBlock::normalizedPath)
+                            .filter(path -> !path.equals(preferred.normalizedPath()))
+                            .collect(Collectors.toList()));
+        }
+
+        List<FileBlock> filtered = new ArrayList<>();
+        for (FileBlock block : blocks) {
+            String path = block.normalizedPath();
+            if (!isScriptFile(path) || isTypeDefinitionFile(path)) {
+                filtered.add(block);
+                continue;
+            }
+            String basePath = stripScriptExtension(path);
+            FileBlock preferred = preferredByBasePath.get(basePath);
+            if (preferred != null && preferred.normalizedPath().equals(path)) {
+                filtered.add(block);
+            }
+        }
+
+        return filtered;
+    }
+
+    /**
+     * 选择最优脚本版本
+     *
+     * 是什么：在多扩展名候选中选出最可信的版本。
+     * 做什么：内容更长优先，长度相同时优先 TS/TSX。
+     * 为什么：尽量保留更完整的实现，减少迭代修复成本。
+     */
+    private static FileBlock pickPreferredScriptBlock(List<FileBlock> candidates) {
+        FileBlock best = null;
+        int bestLength = -1;
+        int bestPriority = -1;
+
+        for (FileBlock candidate : candidates) {
+            int length = candidate.content() == null ? 0 : candidate.content().trim().length();
+            int priority = getScriptExtensionPriority(candidate.normalizedPath());
+            if (length > bestLength || (length == bestLength && priority > bestPriority)) {
+                best = candidate;
+                bestLength = length;
+                bestPriority = priority;
+            }
+        }
+
+        return best == null ? candidates.get(0) : best;
+    }
+
+    /**
+     * 识别脚本文件的扩展优先级
+     *
+     * 是什么：不同扩展名的排序规则。
+     * 做什么：在内容长度一致时提供稳定的选择顺序。
+     * 为什么：避免出现不可预测的冲突处理结果。
+     */
+    private static int getScriptExtensionPriority(String filePath) {
+        String extension = getScriptExtension(filePath);
+        return switch (extension) {
+            case ".tsx" -> 3;
+            case ".ts" -> 2;
+            case ".jsx" -> 1;
+            case ".js" -> 0;
+            default -> -1;
+        };
+    }
+
+    /**
+     * 获取脚本文件扩展名
+     *
+     * 是什么：提取 .ts/.tsx/.js/.jsx 后缀。
+     * 做什么：用于扩展优先级与去重逻辑。
+     * 为什么：保证扩展名判断逻辑集中且可维护。
+     */
+    private static String getScriptExtension(String filePath) {
+        if (filePath == null || filePath.isBlank()) {
+            return "";
+        }
+        String lower = filePath.toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".d.ts")) {
+            return ".d.ts";
+        }
+        if (lower.endsWith(".tsx")) {
+            return ".tsx";
+        }
+        if (lower.endsWith(".ts")) {
+            return ".ts";
+        }
+        if (lower.endsWith(".jsx")) {
+            return ".jsx";
+        }
+        if (lower.endsWith(".js")) {
+            return ".js";
+        }
+        return "";
+    }
+
+    /**
+     * 判断是否为类型定义文件
+     *
+     * 是什么：识别 .d.ts 类型声明文件。
+     * 做什么：在脚本去重时跳过类型定义文件。
+     * 为什么：类型文件不应参与“同名脚本版本”冲突处理。
+     */
+    private static boolean isTypeDefinitionFile(String filePath) {
+        if (filePath == null || filePath.isBlank()) {
+            return false;
+        }
+        return filePath.toLowerCase(Locale.ROOT).endsWith(".d.ts");
+    }
+
+    /**
+     * 获取脚本文件的 basePath
+     *
+     * 是什么：去除 .ts/.tsx/.js/.jsx 后缀得到统一路径。
+     * 做什么：用于归并同路径的多扩展版本。
+     * 为什么：便于执行统一去重策略。
+     */
+    private static String stripScriptExtension(String filePath) {
+        String extension = getScriptExtension(filePath);
+        if (extension.isBlank() || ".d.ts".equals(extension)) {
+            return filePath;
+        }
+        return filePath.substring(0, filePath.length() - extension.length());
     }
 
     /**
@@ -189,7 +529,13 @@ public final class OpenLovableResponseSanitizer {
             String normalizedCloseTag = (closeTag == null || closeTag.isBlank()) ? "</file>" : closeTag;
             FileBlock block = new FileBlock(normalizedPath, rawPath, openTag, content, normalizedCloseTag);
 
-            if (orderedBlocks.containsKey(normalizedPath)) {
+            FileBlock existing = orderedBlocks.get(normalizedPath);
+            if (existing != null) {
+                boolean existingBlank = isBlankContent(existing.content());
+                boolean newBlank = isBlankContent(content);
+                if (newBlank && !existingBlank) {
+                    continue;
+                }
                 orderedBlocks.remove(normalizedPath);
             }
             orderedBlocks.put(normalizedPath, block);
@@ -530,6 +876,50 @@ public final class OpenLovableResponseSanitizer {
     }
 
     /**
+     * 合并已有文件与新增文件块
+     *
+     * 是什么：将增量修复输出与沙箱已有文件合并为完整列表。
+     * 做什么：保留新文件内容并补齐缺失文件。
+     * 为什么：避免 patch apply 覆盖导致文件丢失/白屏。
+     */
+    public static List<FileBlock> mergeWithExistingFiles(
+            List<FileBlock> patchBlocks,
+            Map<String, String> existingFiles) {
+        if ((patchBlocks == null || patchBlocks.isEmpty())
+                && (existingFiles == null || existingFiles.isEmpty())) {
+            return List.of();
+        }
+
+        Map<String, FileBlock> merged = new LinkedHashMap<>();
+        if (patchBlocks != null) {
+            for (FileBlock block : patchBlocks) {
+                if (block == null || block.normalizedPath() == null || block.normalizedPath().isBlank()) {
+                    continue;
+                }
+                merged.put(block.normalizedPath(), block);
+            }
+        }
+
+        if (existingFiles != null) {
+            for (Map.Entry<String, String> entry : existingFiles.entrySet()) {
+                String rawPath = entry.getKey();
+                if (rawPath == null || rawPath.isBlank()) {
+                    continue;
+                }
+                String normalizedPath = normalizePath(rawPath);
+                if (normalizedPath.isBlank() || merged.containsKey(normalizedPath)) {
+                    continue;
+                }
+                String content = entry.getValue() != null ? entry.getValue() : "";
+                String openTag = "<file path=\"" + normalizedPath + "\">";
+                merged.put(normalizedPath, new FileBlock(normalizedPath, rawPath, openTag, content, "</file>"));
+            }
+        }
+
+        return List.copyOf(merged.values());
+    }
+
+    /**
      * 智能合并 package.json：保留模板配置，添加AI生成的新依赖
      */
     @SuppressWarnings("unchecked")
@@ -619,6 +1009,648 @@ public final class OpenLovableResponseSanitizer {
         while (normalized.startsWith("/"))
             normalized = normalized.substring(1);
         return normalized;
+    }
+
+    /**
+     * 判断内容是否为空
+     *
+     * 是什么：统一的空内容判断工具。
+     * 做什么：识别 null/空白内容。
+     * 为什么：避免空文件覆盖有效代码。
+     */
+    private static boolean isBlankContent(String content) {
+        return content == null || content.trim().isEmpty();
+    }
+
+    /**
+     * 判断是否为脚本类文件
+     *
+     * 是什么：基于扩展名识别 JS/TS/JSX/TSX 文件。
+     * 做什么：限定导入规范化的作用范围。
+     * 为什么：避免对非脚本文件做无意义处理。
+     */
+    private static boolean isScriptFile(String filePath) {
+        if (filePath == null || filePath.isBlank()) {
+            return false;
+        }
+        String lower = filePath.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".js") || lower.endsWith(".jsx") || lower.endsWith(".ts") || lower.endsWith(".tsx");
+    }
+
+    /**
+     * 判断是否为样式文件。
+     *
+     * 是什么：基于扩展名识别 CSS 文件。
+     * 做什么：限定 Tailwind 规则修复的作用范围。
+     * 为什么：避免对非样式文件做无意义处理。
+     */
+    private static boolean isCssFile(String filePath) {
+        if (filePath == null || filePath.isBlank()) {
+            return false;
+        }
+        String lower = filePath.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".css");
+    }
+
+    /**
+     * 规范化 lucide-react 的 CommonJS require 引用
+     *
+     * 是什么：将 `require('lucide-react')` 转成 ESM import。
+     * 做什么：替换/移除 require 语句，保留图标导入语义。
+     * 为什么：Vite ESM 环境不支持 require，运行时会报错。
+     */
+    private static String normalizeLucideReactImports(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+
+        boolean hasImport = LUCIDE_IMPORT_PATTERN.matcher(content).find();
+        String normalized = content;
+
+        java.util.List<String> destructured = new java.util.ArrayList<>();
+        Matcher destructuredMatcher = LUCIDE_REQUIRE_DESTRUCTURED_PATTERN.matcher(normalized);
+        while (destructuredMatcher.find()) {
+            String group = destructuredMatcher.group(3);
+            if (group != null && !group.isBlank()) {
+                destructured.add(group);
+            }
+        }
+
+        if (!destructured.isEmpty()) {
+            String merged = mergeLucideNames(destructured);
+            String replacement = hasImport
+                    ? ""
+                    : "import { " + merged + " } from 'lucide-react';";
+            normalized = LUCIDE_REQUIRE_DESTRUCTURED_PATTERN.matcher(normalized)
+                    .replaceAll(Matcher.quoteReplacement(replacement));
+            hasImport = true;
+        }
+
+        Matcher namespaceMatcher = LUCIDE_REQUIRE_NAMESPACE_PATTERN.matcher(normalized);
+        if (namespaceMatcher.find()) {
+            String namespace = namespaceMatcher.group(3);
+            String replacement = hasImport
+                    ? ""
+                    : "import * as " + namespace + " from 'lucide-react';";
+            normalized = LUCIDE_REQUIRE_NAMESPACE_PATTERN.matcher(normalized)
+                    .replaceAll(Matcher.quoteReplacement(replacement));
+        }
+
+        return normalized;
+    }
+
+    /**
+     * 清理 lucide-react 导入中误写的 React Hook，并补齐 react 导入。
+     *
+     * 是什么：修复 `import { useState } from 'lucide-react'` 的常见错误。
+     * 做什么：从 lucide-react 导入中移除 Hook，并确保 react 导入包含它们。
+     * 为什么：避免重复声明或非法导入导致编译失败。
+     */
+    private static String normalizeReactHookImports(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+
+        Matcher matcher = LUCIDE_NAMED_IMPORT_PATTERN.matcher(content);
+        StringBuffer buffer = new StringBuffer();
+        List<String> removedHooks = new ArrayList<>();
+
+        while (matcher.find()) {
+            String importList = matcher.group(1);
+            List<String> items = splitImportList(importList);
+            List<String> kept = new ArrayList<>();
+            for (String item : items) {
+                String importName = readImportName(item);
+                if (REACT_HOOK_NAMES.contains(importName)) {
+                    removedHooks.add(importName);
+                    continue;
+                }
+                kept.add(item);
+            }
+
+            String replacement = "";
+            if (!kept.isEmpty()) {
+                replacement = "import { " + String.join(", ", kept) + " } from 'lucide-react';";
+            }
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
+        }
+        matcher.appendTail(buffer);
+
+        if (removedHooks.isEmpty()) {
+            return content;
+        }
+
+        Set<String> uniqueHooks = removedHooks.stream()
+                .filter(name -> name != null && !name.isBlank())
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+
+        return ensureReactHookImports(buffer.toString(), uniqueHooks);
+    }
+
+    /**
+     * 补齐 lucide-react 缺失图标导入。
+     *
+     * 是什么：识别 JSX 中使用但未导入的图标组件。
+     * 做什么：将缺失的图标追加到 lucide-react 的解构导入中。
+     * 为什么：避免运行时出现 “Icon is not defined”。
+     */
+    private static String ensureLucideIconImports(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+
+        Matcher lucideMatcher = LUCIDE_NAMED_IMPORT_PATTERN.matcher(content);
+        if (!lucideMatcher.find()) {
+            return content;
+        }
+
+        String importList = lucideMatcher.group(1);
+        Set<String> lucideImports = collectNamedImportNames(importList);
+        Set<String> usedComponents = collectJsxComponentNames(content);
+        if (usedComponents.isEmpty()) {
+            return content;
+        }
+
+        Set<String> declaredComponents = collectDeclaredComponentNames(content);
+        Set<String> importedNames = collectImportedNames(content);
+        Set<String> missingIcons = new java.util.LinkedHashSet<>();
+
+        for (String name : usedComponents) {
+            if (name == null || name.isBlank()) {
+                continue;
+            }
+            if (RESERVED_COMPONENT_NAMES.contains(name)) {
+                continue;
+            }
+            if (lucideImports.contains(name)) {
+                continue;
+            }
+            if (declaredComponents.contains(name)) {
+                continue;
+            }
+            if (importedNames.contains(name)) {
+                continue;
+            }
+            missingIcons.add(name);
+        }
+
+        if (missingIcons.isEmpty()) {
+            return content;
+        }
+
+        String merged = mergeLucideNames(java.util.List.of(importList, String.join(", ", missingIcons)));
+        String replacement = "import { " + merged + " } from 'lucide-react';";
+
+        Matcher replaceMatcher = LUCIDE_NAMED_IMPORT_PATTERN.matcher(content);
+        StringBuffer buffer = new StringBuffer();
+        boolean replaced = false;
+        while (replaceMatcher.find()) {
+            if (!replaced) {
+                replaceMatcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
+                replaced = true;
+            } else {
+                replaceMatcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
+            }
+        }
+        replaceMatcher.appendTail(buffer);
+
+        return buffer.toString();
+    }
+
+    /**
+     * 提取 JSX 中出现的组件名称。
+     *
+     * 是什么：扫描 JSX 标签，收集以大写字母开头的组件名。
+     * 做什么：构建候选集合供导入补齐使用。
+     * 为什么：确定哪些组件在代码中被实际使用。
+     */
+    private static Set<String> collectJsxComponentNames(String content) {
+        if (content == null || content.isBlank()) {
+            return Set.of();
+        }
+        Matcher matcher = JSX_COMPONENT_PATTERN.matcher(content);
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            if (name != null && !name.isBlank()) {
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
+    /**
+     * 提取本地定义的组件名称。
+     *
+     * 是什么：匹配 function/const/class 定义的组件名。
+     * 做什么：生成本地组件集合，避免误加 lucide 导入。
+     * 为什么：本地组件不应被当作图标处理。
+     */
+    private static Set<String> collectDeclaredComponentNames(String content) {
+        if (content == null || content.isBlank()) {
+            return Set.of();
+        }
+        Matcher matcher = LOCAL_COMPONENT_DECLARATION_PATTERN.matcher(content);
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        while (matcher.find()) {
+            String name = matcher.group(1);
+            if (name != null && !name.isBlank()) {
+                names.add(name);
+            }
+        }
+        return names;
+    }
+
+    /**
+     * 提取 import 中的标识符名称。
+     *
+     * 是什么：解析 ESM import 语句。
+     * 做什么：收集默认导入与命名导入，包含 alias。
+     * 为什么：避免把已导入组件重复加入 lucide-react。
+     */
+    private static Set<String> collectImportedNames(String content) {
+        if (content == null || content.isBlank()) {
+            return Set.of();
+        }
+        Matcher matcher = IMPORT_STATEMENT_PATTERN.matcher(content);
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        while (matcher.find()) {
+            String clause = matcher.group(1);
+            if (clause == null || clause.isBlank()) {
+                continue;
+            }
+            String trimmed = clause.trim();
+            String[] parts = trimmed.split(",", 2);
+            String defaultPart = parts[0].trim();
+            if (!defaultPart.startsWith("{") && !defaultPart.startsWith("* as") && !defaultPart.isBlank()) {
+                names.add(defaultPart);
+            }
+            if (parts.length > 1) {
+                names.addAll(collectNamedImportNames(parts[1]));
+            } else if (defaultPart.startsWith("{")) {
+                names.addAll(collectNamedImportNames(defaultPart));
+            }
+        }
+        return names;
+    }
+
+    /**
+     * 提取命名导入中的标识符名称。
+     *
+     * 是什么：解析 `{ A, B as C }` 形式的导入。
+     * 做什么：同时收集原名与别名，避免误判未导入。
+     * 为什么：别名导入也代表已有引用。
+     */
+    private static Set<String> collectNamedImportNames(String importClause) {
+        if (importClause == null || importClause.isBlank()) {
+            return Set.of();
+        }
+        String trimmed = importClause.trim();
+        int start = trimmed.indexOf('{');
+        int end = trimmed.lastIndexOf('}');
+        if (start < 0 || end <= start) {
+            return Set.of();
+        }
+        String list = trimmed.substring(start + 1, end);
+        List<String> items = splitImportList(list);
+        java.util.LinkedHashSet<String> names = new java.util.LinkedHashSet<>();
+        for (String item : items) {
+            if (item == null || item.isBlank()) {
+                continue;
+            }
+            String[] parts = item.split("\\s+as\\s+");
+            String base = parts[0].trim();
+            if (!base.isBlank()) {
+                names.add(base);
+            }
+            if (parts.length > 1) {
+                String alias = parts[1].trim();
+                if (!alias.isBlank()) {
+                    names.add(alias);
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
+     * 清理 Tailwind @apply 中不存在的噪点背景类。
+     *
+     * 是什么：移除 `bg-subtle-noise` 这类未定义的类名。
+     * 做什么：在 @apply 语句中剔除异常 token。
+     * 为什么：避免 Tailwind 编译报错导致预览白屏。
+     */
+    private static String normalizeTailwindNoiseApply(String content) {
+        if (content == null || content.isBlank() || !content.contains("bg-subtle-noise")) {
+            return content;
+        }
+        Matcher matcher = TAILWIND_APPLY_PATTERN.matcher(content);
+        StringBuffer buffer = new StringBuffer();
+        boolean replaced = false;
+        while (matcher.find()) {
+            String classes = matcher.group(1);
+            if (classes == null || !classes.contains("bg-subtle-noise")) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(matcher.group(0)));
+                continue;
+            }
+            String normalizedClasses = java.util.Arrays.stream(classes.split("\\s+"))
+                    .filter(token -> token != null && !token.isBlank())
+                    .filter(token -> !"bg-subtle-noise".equals(token))
+                    .collect(Collectors.joining(" "));
+            if (normalizedClasses.isBlank()) {
+                matcher.appendReplacement(buffer, "");
+            } else {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement("@apply " + normalizedClasses + ";"));
+            }
+            replaced = true;
+        }
+        matcher.appendTail(buffer);
+        return replaced ? buffer.toString() : content;
+    }
+
+    /**
+     * 解析 import 列表（逗号分隔）。
+     *
+     * 是什么：将 `{ A, B as C }` 解析为条目列表。
+     * 做什么：用于逐项过滤/补齐。
+     * 为什么：便于剔除错误导入并保留原顺序。
+     */
+    private static List<String> splitImportList(String importList) {
+        if (importList == null || importList.isBlank()) {
+            return List.of();
+        }
+        return java.util.Arrays.stream(importList.split(","))
+                .map(String::trim)
+                .filter(item -> !item.isBlank())
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 读取 import 条目的原始名称。
+     *
+     * 是什么：获取 `useState` 或 `useState as Hook` 的主名称。
+     * 做什么：用于匹配 React Hook 白名单。
+     * 为什么：避免 alias 干扰判断。
+     */
+    private static String readImportName(String item) {
+        if (item == null) {
+            return "";
+        }
+        String[] parts = item.split("\\s+as\\s+");
+        return parts.length > 0 ? parts[0].trim() : item.trim();
+    }
+
+    /**
+     * 确保 react 导入包含缺失的 Hook。
+     *
+     * 是什么：补齐 `import { useState } from 'react'`。
+     * 做什么：若已存在 React 导入则合并，否则新增一行。
+     * 为什么：移除 lucide-react 中的 Hook 后依然可用。
+     */
+    private static String ensureReactHookImports(String content, Set<String> hooks) {
+        if (hooks == null || hooks.isEmpty()) {
+            return content;
+        }
+
+        Matcher matcher = REACT_IMPORT_PATTERN.matcher(content);
+        if (!matcher.find()) {
+            String importLine = "import { " + String.join(", ", hooks) + " } from 'react';";
+            int firstImportIndex = content.indexOf("import ");
+            if (firstImportIndex >= 0) {
+                return content.substring(0, firstImportIndex)
+                        + importLine + "\n" + content.substring(firstImportIndex);
+            }
+            return importLine + "\n" + content;
+        }
+
+        String fullImport = matcher.group(0);
+        String importClause = matcher.group(1).trim();
+
+        boolean hasNamespace = importClause.contains("* as");
+        boolean hasNamed = importClause.contains("{") && importClause.contains("}");
+
+        if (hasNamespace && !hasNamed) {
+            String addition = fullImport + "\nimport { " + String.join(", ", hooks) + " } from 'react';";
+            return content.replace(fullImport, addition);
+        }
+
+        String defaultPart = "";
+        String namedPart = "";
+        if (hasNamed) {
+            int start = importClause.indexOf('{');
+            int end = importClause.lastIndexOf('}');
+            namedPart = importClause.substring(start + 1, end);
+            defaultPart = importClause.substring(0, start).trim();
+            if (defaultPart.endsWith(",")) {
+                defaultPart = defaultPart.substring(0, defaultPart.length() - 1).trim();
+            }
+        } else {
+            defaultPart = importClause;
+        }
+
+        List<String> existingNamed = splitImportList(namedPart);
+        Set<String> existingNames = existingNamed.stream()
+                .map(OpenLovableResponseSanitizer::readImportName)
+                .collect(Collectors.toCollection(java.util.LinkedHashSet::new));
+
+        boolean changed = false;
+        for (String hook : hooks) {
+            if (!existingNames.contains(hook)) {
+                existingNamed.add(hook);
+                changed = true;
+            }
+        }
+
+        if (!changed) {
+            return content;
+        }
+
+        StringBuilder newClause = new StringBuilder();
+        if (!defaultPart.isBlank()) {
+            newClause.append(defaultPart);
+        }
+        if (!existingNamed.isEmpty()) {
+            if (newClause.length() > 0) {
+                newClause.append(", ");
+            }
+            newClause.append("{ ").append(String.join(", ", existingNamed)).append(" }");
+        }
+
+        String newImport = "import " + newClause + " from 'react';";
+        return content.replace(fullImport, newImport);
+    }
+
+    /**
+     * 规范化 Supabase 环境变量与 createClient 守护逻辑。
+     *
+     * 是什么：将 Next.js 的 env 变量替换为 Vite 变量，并为 createClient 添加空值保护。
+     * 做什么：把 `process.env.NEXT_PUBLIC_SUPABASE_*` 转为 `import.meta.env.VITE_SUPABASE_*`，并包裹 createClient。
+     * 为什么：OpenLovable 预览在 Vite 环境下运行，缺失变量会直接报错导致预览失败。
+     */
+    private static String normalizeSupabaseClient(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+
+        String normalized = content
+                .replace("process.env.NEXT_PUBLIC_SUPABASE_URL", "import.meta.env.VITE_SUPABASE_URL")
+                .replace("process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY", "import.meta.env.VITE_SUPABASE_ANON_KEY");
+
+        if (!normalized.contains("createClient")
+                || !normalized.contains("supabaseUrl")
+                || !normalized.contains("supabaseAnonKey")) {
+            return normalized;
+        }
+
+        Matcher matcher = SUPABASE_CLIENT_DECLARATION_PATTERN.matcher(normalized);
+        StringBuffer buffer = new StringBuffer();
+        boolean replaced = false;
+        while (matcher.find()) {
+            String originalLine = matcher.group(0);
+            String args = matcher.group(5);
+            if (args == null || !args.contains("supabaseUrl") || !args.contains("supabaseAnonKey")) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(originalLine));
+                continue;
+            }
+            if (originalLine.contains("?") && originalLine.contains("createClient")) {
+                matcher.appendReplacement(buffer, Matcher.quoteReplacement(originalLine));
+                continue;
+            }
+
+            String indent = matcher.group(1) == null ? "" : matcher.group(1);
+            String exportToken = matcher.group(2) == null ? "" : matcher.group(2);
+            String keyword = matcher.group(3);
+            String variableName = matcher.group(4);
+            String replacement = indent + exportToken + keyword + " " + variableName
+                    + " = (supabaseUrl && supabaseAnonKey) ? createClient(" + args.trim() + ") : null;";
+            matcher.appendReplacement(buffer, Matcher.quoteReplacement(replacement));
+            replaced = true;
+        }
+        matcher.appendTail(buffer);
+
+        return replaced ? buffer.toString() : normalized;
+    }
+
+    /**
+     * 移除文件内容外层的 Markdown 代码围栏。
+     *
+     * 是什么：发现内容以 ``` 开头并以 ``` 结束时，剥离外围围栏。
+     * 做什么：清理 AI 偶发输出的 Markdown code fence，避免写入后导致模块解析错误。
+     * 为什么：部分模型在 <file> 标签内仍会输出 ```jsx，导致运行时报错或导出缺失。
+     */
+    private static String stripMarkdownCodeFence(String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+
+        String trimmed = content.trim();
+        if (!trimmed.startsWith("```")) {
+            return content;
+        }
+
+        int lastFenceIndex = trimmed.lastIndexOf("```");
+        if (lastFenceIndex <= 0) {
+            return content;
+        }
+
+        String trailing = trimmed.substring(lastFenceIndex + 3).trim();
+        if (!trailing.isEmpty()) {
+            return content;
+        }
+
+        String inner = trimmed.substring(0, lastFenceIndex);
+        if (inner.startsWith("```")) {
+            inner = inner.substring(3);
+            int newlineIndex = inner.indexOf('\n');
+            if (newlineIndex >= 0) {
+                inner = inner.substring(newlineIndex + 1);
+            } else {
+                inner = inner.replaceFirst("^[a-zA-Z0-9_-]+\\s*", "");
+            }
+        }
+
+        return inner.trim();
+    }
+
+    /**
+     * 规范化场景 API 的 mock 别名。
+     *
+     * 是什么：为 src/services/api.* 中的 scanDevice/generateSolution 补齐 mockScan/mockGenerateSolution。
+     * 做什么：当真实函数存在且 mock 别名缺失时自动注入导出语句。
+     * 为什么：避免前端引用 mockScan 时报错导致预览中断。
+     */
+    private static String normalizeScenarioApiAliases(String normalizedPath, String content) {
+        if (content == null || content.isBlank()) {
+            return content;
+        }
+        if (!isScenarioApiFile(normalizedPath)) {
+            return content;
+        }
+
+        boolean hasScanDevice = content.contains("scanDevice");
+        boolean hasGenerateSolution = content.contains("generateSolution");
+        boolean hasMockScan = content.contains("mockScan");
+        boolean hasMockGenerateSolution = content.contains("mockGenerateSolution");
+
+        if ((!hasScanDevice || hasMockScan) && (!hasGenerateSolution || hasMockGenerateSolution)) {
+            return content;
+        }
+
+        StringBuilder builder = new StringBuilder(content);
+        if (!content.endsWith("\n")) {
+            builder.append("\n");
+        }
+        builder.append("\n");
+        if (hasScanDevice && !hasMockScan) {
+            builder.append("export const mockScan = scanDevice;\n");
+        }
+        if (hasGenerateSolution && !hasMockGenerateSolution) {
+            builder.append("export const mockGenerateSolution = generateSolution;\n");
+        }
+
+        return builder.toString();
+    }
+
+    /**
+     * 判断是否为场景 API 文件。
+     *
+     * 是什么：识别 src/services/api.* 作为场景 API 入口文件。
+     * 做什么：控制 mock 别名注入只发生在目标文件中。
+     * 为什么：避免对非目标脚本进行误修改。
+     */
+    private static boolean isScenarioApiFile(String normalizedPath) {
+        if (normalizedPath == null || normalizedPath.isBlank()) {
+            return false;
+        }
+        String lower = normalizedPath.replace('\\', '/').toLowerCase(Locale.ROOT);
+        return lower.equals("src/services/api.js")
+                || lower.equals("src/services/api.jsx")
+                || lower.equals("src/services/api.ts")
+                || lower.equals("src/services/api.tsx");
+    }
+
+    /**
+     * 合并 lucide-react 的解构导入列表
+     *
+     * 是什么：将多个解构片段合并成一个去重列表。
+     * 做什么：输出稳定、无重复的 import 名称序列。
+     * 为什么：避免生成重复 import 或丢失图标名称。
+     */
+    private static String mergeLucideNames(java.util.List<String> rawNames) {
+        java.util.LinkedHashSet<String> merged = new java.util.LinkedHashSet<>();
+        for (String raw : rawNames) {
+            if (raw == null || raw.isBlank()) {
+                continue;
+            }
+            String[] parts = raw.split(",");
+            for (String part : parts) {
+                String trimmed = part.trim();
+                if (!trimmed.isBlank()) {
+                    merged.add(trimmed);
+                }
+            }
+        }
+        return String.join(", ", merged);
     }
 
     /**

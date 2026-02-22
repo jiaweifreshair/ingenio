@@ -8,14 +8,20 @@ import com.ingenio.backend.dto.request.PlanRoutingRequest;
 import com.ingenio.backend.dto.request.OpenLovableGenerateRequest;
 import com.ingenio.backend.dto.response.OpenLovableGenerateResponse;
 import com.ingenio.backend.entity.AppSpecEntity;
+import com.ingenio.backend.entity.GenerationTaskEntity;
 import com.ingenio.backend.entity.ProjectEntity;
 import com.ingenio.backend.entity.UserEntity;
 import com.ingenio.backend.enums.DesignStyle;
+import com.ingenio.backend.enums.TechStackType;
 import com.ingenio.backend.mapper.UserMapper;
+import com.ingenio.backend.mapper.GenerationTaskMapper;
 import com.ingenio.backend.service.AppSpecService;
 import com.ingenio.backend.service.BillingService;
 import com.ingenio.backend.service.OpenLovableService;
 import com.ingenio.backend.service.ProjectService;
+import com.ingenio.backend.service.VersionSnapshotService;
+import com.ingenio.backend.service.g3.G3OrchestratorService;
+import com.ingenio.backend.dto.VersionType;
 import jakarta.validation.Valid;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -82,7 +88,17 @@ public class PlanRoutingController {
     private final OpenLovableService openLovableService;
     private final UserMapper userMapper;
     private final ProjectService projectService;
+    private final GenerationTaskMapper generationTaskMapper;
+    private final VersionSnapshotService versionSnapshotService;
     private final com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer;
+    /**
+     * G3 编排器服务
+     *
+     * 是什么：G3 引擎任务的统一入口。
+     * 做什么：在 Execute 阶段触发 G3 任务并返回 jobId。
+     * 为什么：保证前端/测试能够基于 jobId 订阅日志与产物。
+     */
+    private final G3OrchestratorService g3OrchestratorService;
 
     /**
      * 路由用户需求（意图识别 + 分支决策 + 生成 AppSpec）
@@ -223,7 +239,7 @@ public class PlanRoutingController {
                             // 关键修复：不强行指定默认模型（避免模型/密钥不匹配导致返回空代码）
                             // 由 open-lovable-cn 侧选择其默认可用模型，必要时再在前端发起 SSE 生成
                             .aiModel(null)
-                            // 克隆/爬取链路可能明显慢于“纯生成”，默认放宽超时，避免过早返回空原型
+                            // 克隆/爬取链路可能明显慢于"纯生成"，默认放宽超时，避免过早返回空原型
                             .timeoutSeconds(180)
                             .build();
                     OpenLovableGenerateResponse preview = openLovableService.generatePrototype(openLovableRequest);
@@ -239,6 +255,19 @@ public class PlanRoutingController {
                 }
             }
         }
+
+        // 2.6) 确定技术栈类型（V2.0新增：根据 complexityHint/techStackHint/需求内容 确定）
+        TechStackType techStack = determineTechStack(
+                request.getComplexityHint(),
+                request.getTechStackHint(),
+                requirement);
+
+        // 将技术栈信息写入 AppSpec metadata
+        metadata.put("techStackType", techStack.name());
+        metadata.put("techStackCode", techStack.getCode());
+        metadata.put("techStackDescription", techStack.getDescription());
+        appSpec.setMetadata(metadata);
+        appSpecService.updateById(appSpec);
 
         // 3) 构建返回结果
         List<StyleVariant> styleVariants = decision.branch == RoutingBranch.DESIGN
@@ -262,10 +291,16 @@ public class PlanRoutingController {
                         StringUtils.hasText(appSpec.getSelectedStyle()) ? appSpec.getSelectedStyle() : selectedStyleId)
                 .nextAction(decision.branch == RoutingBranch.DESIGN ? "请选择您喜欢的设计风格" : "请提供参考网站或选择模板")
                 .requiresUserConfirmation(true)
+                // V2.0新增：技术栈相关字段
+                .techStackType(techStack.name())
+                .techStackCode(techStack.getCode())
+                .techStackDescription(techStack.getDescription())
                 .metadata(Map.of(
                         "tenantId", tenantId.toString(),
                         "userId", userId.toString(),
-                        "projectId", projectId.toString()))
+                        "projectId", projectId.toString(),
+                        "techStackType", techStack.name(),
+                        "techStackCode", techStack.getCode()))
                 .build();
 
         return Result.success(result);
@@ -299,7 +334,7 @@ public class PlanRoutingController {
 
             // Re-analyze intent using NLRequirementAnalyzer
             try {
-                Map<String, Object> intentResult = nlRequirementAnalyzer.analyzeIntent(requirement);
+                Map<String, Object> intentResult = nlRequirementAnalyzer.analyzeIntent(requirement, id);
                 if (intentResult != null && !intentResult.isEmpty()) {
                     String intent = (String) intentResult.get("intent");
                     Object confidenceObj = intentResult.get("confidence");
@@ -549,12 +584,26 @@ public class PlanRoutingController {
             UUID appSpecUuid = UUID.fromString(appSpecId);
             AppSpecEntity appSpec = appSpecService.getById(appSpecUuid);
             if (appSpec != null) {
+                log.info("更新设计确认状态前: appSpecId={}, 当前design_confirmed={}",
+                    appSpecId, appSpec.getDesignConfirmed());
+
                 appSpec.setDesignConfirmed(true);
                 appSpec.setDesignConfirmedAt(Instant.now());
-                appSpecService.updateById(appSpec);
+                appSpec.setUpdatedAt(Instant.now()); // 确保更新时间也被设置
+
+                boolean updateSuccess = appSpecService.updateById(appSpec);
+
+                if (updateSuccess) {
+                    log.info("设计确认状态更新成功: appSpecId={}", appSpecId);
+                } else {
+                    log.error("设计确认状态更新失败（updateById返回false）: appSpecId={}", appSpecId);
+                    // 不再静默失败，记录为错误但继续流程（已经扣费）
+                }
+            } else {
+                log.error("找不到AppSpec: appSpecId={}", appSpecId);
             }
         } catch (Exception e) {
-            log.warn("更新设计确认状态失败: appSpecId={}", appSpecId, e);
+            log.error("更新设计确认状态异常: appSpecId={}", appSpecId, e);
         }
 
         log.info("用户 {} 确认设计成功，已扣除1次生成次数", userId);
@@ -574,10 +623,12 @@ public class PlanRoutingController {
      *
      * 说明：
      * - 若设计未确认，返回 1001 错误码（与前端/测试约定一致）
-     * - 当前仅提供状态校验与占位响应，后续可对接真实 G3 执行
+     * - 创建 generation_tasks 记录以支持版本快照功能
      */
     @PostMapping("/{appSpecId}/execute-code-generation")
-    public Result<Map<String, Object>> executeCodeGeneration(@PathVariable String appSpecId) {
+    public Result<Map<String, Object>> executeCodeGeneration(
+            @PathVariable String appSpecId,
+            @RequestBody(required = false) Map<String, Object> analysisContext) {
         try {
             UUID id = UUID.fromString(appSpecId);
             AppSpecEntity appSpec = appSpecService.getById(id);
@@ -590,16 +641,250 @@ public class PlanRoutingController {
                 return Result.error("1001", "设计未确认");
             }
 
+            // 修复：验证技术栈一致性
+            if (appSpec.getMetadata() != null) {
+                String techStackTypeStr = (String) appSpec.getMetadata().get("techStackType");
+                if (techStackTypeStr != null) {
+                    try {
+                        TechStackType expectedTechStack = TechStackType.valueOf(techStackTypeStr);
+                        validateTechStackConsistency(appSpec, expectedTechStack);
+                    } catch (IllegalArgumentException e) {
+                        log.warn("⚠️ 无效的技术栈类型: {}", techStackTypeStr);
+                    }
+                }
+            }
+
+            // 如有分析上下文，写回 AppSpec 以便 G3 透传使用
+            if (analysisContext != null && !analysisContext.isEmpty()) {
+                Map<String, Object> specContent = appSpec.getSpecContent() != null
+                        ? new HashMap<>(appSpec.getSpecContent())
+                        : new HashMap<>();
+                specContent.put("analysisContext", analysisContext);
+                appSpec.setSpecContent(specContent);
+                appSpecService.updateById(appSpec);
+            }
+
+            // 创建 generation_tasks 记录
+            GenerationTaskEntity task = new GenerationTaskEntity();
+            task.setId(UUID.randomUUID());
+            task.setTenantId(appSpec.getTenantId() != null ? appSpec.getTenantId() : DEFAULT_TENANT_ID);
+            task.setUserId(appSpec.getCreatedByUserId());
+            task.setTaskName("代码生成任务 - " + appSpecId.substring(0, 8));
+            task.setUserRequirement(appSpec.getSpecContent() != null
+                    ? (String) appSpec.getSpecContent().getOrDefault("userRequirement", "")
+                    : "");
+            task.setStatus(GenerationTaskEntity.Status.GENERATING.getValue());
+            task.setCurrentAgent(GenerationTaskEntity.AgentType.GENERATE.getValue());
+            task.setProgress(10);
+            task.setAppSpecId(id);
+            task.setAppSpecContent(appSpec.getSpecContent());
+            task.setStartedAt(Instant.now());
+            task.setCreatedAt(Instant.now());
+            task.setUpdatedAt(Instant.now());
+
+            int insertResult = generationTaskMapper.insert(task);
+            if (insertResult > 0) {
+                log.info("创建 generation_task 成功: taskId={}, appSpecId={}", task.getId(), appSpecId);
+            } else {
+                log.error("创建 generation_task 失败: appSpecId={}", appSpecId);
+            }
+
+            UUID jobId;
+            try {
+                jobId = g3OrchestratorService.submitJob(
+                        task.getUserRequirement(),
+                        task.getUserId(),
+                        task.getTenantId(),
+                        id,
+                        appSpec.getSelectedTemplateId(),
+                        null);
+            } catch (Exception e) {
+                task.setStatus(GenerationTaskEntity.Status.FAILED.getValue());
+                task.setErrorMessage("G3任务提交失败: " + e.getMessage());
+                task.setUpdatedAt(Instant.now());
+                generationTaskMapper.updateById(task);
+                log.error("触发G3任务失败: appSpecId={}", appSpecId, e);
+                return Result.error("500", "执行代码生成失败: " + e.getMessage());
+            }
+
+            // 记录 jobId 到任务与 AppSpec 元数据
+            Map<String, Object> taskMetadata = task.getMetadata() != null
+                    ? new HashMap<>(task.getMetadata())
+                    : new HashMap<>();
+            taskMetadata.put("g3JobId", jobId.toString());
+            task.setMetadata(taskMetadata);
+            generationTaskMapper.updateById(task);
+
+            Map<String, Object> metadata = appSpec.getMetadata() != null
+                    ? new HashMap<>(appSpec.getMetadata())
+                    : new HashMap<>();
+            metadata.put("latestG3JobId", jobId.toString());
+            metadata.put("latestG3JobSubmittedAt", Instant.now().toString());
+            appSpec.setMetadata(metadata);
+            appSpecService.updateById(appSpec);
+
             return Result.success(Map.of(
                     "success", true,
                     "message", "已进入代码生成阶段",
-                    "appSpecId", appSpecId));
+                    "appSpecId", appSpecId,
+                    "taskId", task.getId().toString(),
+                    "jobId", jobId.toString()));
         } catch (IllegalArgumentException e) {
             return Result.error("400", "无效的AppSpec ID");
         } catch (Exception e) {
             log.error("执行代码生成失败: appSpecId={}", appSpecId, e);
             return Result.error("500", "执行代码生成失败: " + e.getMessage());
         }
+    }
+
+    /**
+     * 完成代码生成（前端在 SSE 代码生成完成后调用）
+     *
+     * 功能：
+     * - 更新 generation_tasks 状态为 completed
+     * - 创建版本快照 (generation_versions)
+     * - 更新项目状态为 completed
+     *
+     * @param appSpecId AppSpec ID
+     * @param request 完成请求（包含生成的文件信息）
+     * @return 完成结果
+     */
+    @PostMapping("/{appSpecId}/complete-code-generation")
+    public Result<Map<String, Object>> completeCodeGeneration(
+            @PathVariable String appSpecId,
+            @RequestBody(required = false) CompleteCodeGenerationRequest request) {
+        log.info("完成代码生成: appSpecId={}", appSpecId);
+
+        try {
+            UUID id = UUID.fromString(appSpecId);
+            AppSpecEntity appSpec = appSpecService.getById(id);
+            if (appSpec == null) {
+                return Result.error("404", "AppSpec不存在");
+            }
+
+            // 查找关联的 generation_task
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<GenerationTaskEntity> queryWrapper =
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+            queryWrapper.eq("app_spec_id", id).orderByDesc("created_at").last("LIMIT 1");
+            GenerationTaskEntity task = generationTaskMapper.selectOne(queryWrapper);
+
+            if (task == null) {
+                log.warn("未找到关联的 generation_task，创建新任务: appSpecId={}", appSpecId);
+                // 如果没有找到 task，创建一个
+                task = new GenerationTaskEntity();
+                task.setId(UUID.randomUUID());
+                UUID resolvedTenantId = appSpec.getTenantId() != null ? appSpec.getTenantId() : DEFAULT_TENANT_ID;
+                UUID resolvedUserId = appSpec.getCreatedByUserId() != null
+                        ? appSpec.getCreatedByUserId()
+                        : resolvedTenantId;
+                task.setTenantId(resolvedTenantId);
+                task.setUserId(resolvedUserId);
+                task.setTaskName("代码生成任务 - " + appSpecId.substring(0, 8));
+                task.setAppSpecId(id);
+                task.setAppSpecContent(appSpec.getSpecContent());
+                // 从 appSpec 的 specContent 中提取 userRequirement（必填字段）
+                String userRequirement = "";
+                if (appSpec.getSpecContent() != null) {
+                    Object reqObj = appSpec.getSpecContent().get("userRequirement");
+                    if (reqObj != null) {
+                        userRequirement = reqObj.toString();
+                    }
+                }
+                // 如果仍然为空，使用默认值
+                if (userRequirement.isEmpty()) {
+                    userRequirement = "代码生成任务 - " + appSpecId.substring(0, 8);
+                }
+                task.setUserRequirement(userRequirement);
+                task.setStatus(GenerationTaskEntity.Status.PENDING.getValue());
+                task.setStartedAt(Instant.now());
+                task.setCreatedAt(Instant.now());
+                task.setUpdatedAt(Instant.now());
+                generationTaskMapper.insert(task);
+            }
+
+            // 更新任务状态为完成
+            task.setStatus(GenerationTaskEntity.Status.COMPLETED.getValue());
+            task.setProgress(100);
+            task.setCompletedAt(Instant.now());
+            task.setUpdatedAt(Instant.now());
+
+            // 如果有前端原型 URL，保存到任务中
+            if (appSpec.getFrontendPrototypeUrl() != null) {
+                task.setPreviewUrl(appSpec.getFrontendPrototypeUrl());
+            }
+
+            generationTaskMapper.updateById(task);
+            log.info("更新 generation_task 状态为完成: taskId={}", task.getId());
+
+            // 创建版本快照
+            Map<String, Object> snapshotData = new HashMap<>();
+            snapshotData.put("appSpecId", appSpecId);
+            snapshotData.put("userRequirement", appSpec.getSpecContent() != null
+                    ? appSpec.getSpecContent().getOrDefault("userRequirement", "")
+                    : "");
+            snapshotData.put("selectedStyle", appSpec.getSelectedStyle());
+            snapshotData.put("frontendPrototypeUrl", appSpec.getFrontendPrototypeUrl());
+            snapshotData.put("techStackType", appSpec.getMetadata() != null
+                    ? appSpec.getMetadata().getOrDefault("techStackType", "")
+                    : "");
+
+            // 如果请求中有文件信息，添加到快照数据
+            if (request != null && request.getFiles() != null) {
+                snapshotData.put("generatedFiles", request.getFiles());
+                snapshotData.put("fileCount", request.getFiles().size());
+            }
+
+            try {
+                versionSnapshotService.createSnapshot(
+                        task.getId(),
+                        task.getTenantId(),
+                VersionType.CODE,
+                        snapshotData);
+                log.info("版本快照创建成功: taskId={}, appSpecId={}", task.getId(), appSpecId);
+            } catch (Exception e) {
+                log.error("创建版本快照失败: taskId={}, appSpecId={}", task.getId(), appSpecId, e);
+                // 不阻塞流程，只记录错误
+            }
+
+            // 更新项目状态为 completed
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<ProjectEntity> projectQueryWrapper =
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+            projectQueryWrapper.eq("app_spec_id", id);
+            ProjectEntity project = projectService.getOne(projectQueryWrapper);
+            if (project != null) {
+                project.setStatus("completed");
+                project.setUpdatedAt(Instant.now());
+                projectService.updateById(project);
+                log.info("更新项目状态为 completed: projectId={}", project.getId());
+            }
+
+            return Result.success(Map.of(
+                    "success", true,
+                    "message", "代码生成完成",
+                    "appSpecId", appSpecId,
+                    "taskId", task.getId().toString(),
+                    "versionCreated", true));
+        } catch (IllegalArgumentException e) {
+            return Result.error("400", "无效的AppSpec ID");
+        } catch (Exception e) {
+            log.error("完成代码生成失败: appSpecId={}", appSpecId, e);
+            return Result.error("500", "完成代码生成失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 完成代码生成请求
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CompleteCodeGenerationRequest {
+        /** 生成的文件列表 */
+        private List<Map<String, Object>> files;
+        /** 沙箱 ID */
+        private String sandboxId;
+        /** 预览 URL */
+        private String previewUrl;
     }
 
     /**
@@ -680,17 +965,172 @@ public class PlanRoutingController {
         }
     }
 
+    /**
+     * 自动生成原型并写回 AppSpec（用于补齐 sandboxId / frontendPrototypeUrl）
+     *
+     * 是什么：为缺失原型信息的 AppSpec 触发 OpenLovable 生成，并把 sandboxId/previewUrl 写回。
+     * 做什么：读取 AppSpec 的 userRequirement，调用 OpenLovableService 生成原型，持久化到 AppSpec。
+     * 为什么：支持“下载前端页面”等功能依赖的 sandboxId，避免用户必须手动走“确认并生成原型”才能下载。
+     */
+    @PostMapping("/{appSpecId}/generate-prototype")
+    public Result<Map<String, Object>> generatePrototype(@PathVariable String appSpecId) {
+        log.info("自动生成原型: appSpecId={}", appSpecId);
+
+        try {
+            UUID id = UUID.fromString(appSpecId);
+            AppSpecEntity appSpec = appSpecService.getById(id);
+            if (appSpec == null) {
+                return Result.error("404", "AppSpec不存在");
+            }
+
+            Map<String, Object> metadata = appSpec.getMetadata() != null
+                    ? new HashMap<>(appSpec.getMetadata())
+                    : new HashMap<>();
+            String existingSandboxId = metadata.get("sandboxId") instanceof String s && StringUtils.hasText(s)
+                    ? s
+                    : null;
+            String existingProvider = metadata.get("sandboxProvider") instanceof String s && StringUtils.hasText(s)
+                    ? s
+                    : null;
+
+            boolean hasExistingSandboxId = StringUtils.hasText(existingSandboxId);
+            boolean sandboxHealthy = hasExistingSandboxId && openLovableService.isSandboxHealthy(existingSandboxId);
+
+            // 原型已存在且沙箱健康：直接返回（幂等）
+            if (StringUtils.hasText(appSpec.getFrontendPrototypeUrl()) && hasExistingSandboxId && sandboxHealthy) {
+                return Result.success(Map.of(
+                        "success", true,
+                        "message", "原型已存在，无需重复生成",
+                        "sandboxId", existingSandboxId,
+                        "previewUrl", appSpec.getFrontendPrototypeUrl(),
+                        "provider", existingProvider != null ? existingProvider : "e2b",
+                        "updatedAt", Instant.now().toString()
+                ));
+            }
+
+            // 沙箱不健康：先销毁再重建，避免 OpenLovable 继续复用“已存在但不响应”的沙箱导致下载/执行持续失败
+            if (hasExistingSandboxId && !sandboxHealthy) {
+                log.warn("检测到旧沙箱不可用，准备销毁并重建: appSpecId={}, sandboxId={}", appSpecId, existingSandboxId);
+                try {
+                    openLovableService.killSandbox(existingSandboxId);
+                } catch (Exception e) {
+                    // 销毁失败不应直接阻塞生成：后续仍尝试生成，失败时由上游返回错误
+                    log.warn("销毁旧沙箱失败（将继续尝试生成新原型）: sandboxId={}, reason={}", existingSandboxId, e.getMessage());
+                }
+
+                // 清理旧值，避免前端继续误用旧 sandboxId/previewUrl
+                metadata.remove("sandboxId");
+                metadata.remove("sandboxProvider");
+                appSpec.setMetadata(metadata);
+                appSpec.setFrontendPrototypeUrl(null);
+            }
+
+            String requirement = resolveUserRequirement(appSpec);
+            if (!StringUtils.hasText(requirement)) {
+                return Result.error("400", "未找到用户需求，无法生成原型");
+            }
+
+            List<String> referenceUrls = extractReferenceUrls(requirement);
+            OpenLovableGenerateRequest openLovableRequest = OpenLovableGenerateRequest.builder()
+                    .userRequirement(requirement)
+                    .referenceUrls(referenceUrls)
+                    .needsCrawling(!referenceUrls.isEmpty())
+                    // 快速启动：先创建沙箱并写回 sandboxId/previewUrl，代码生成在后台进行
+                    // 目的：避免同步等待导致接口耗时过长，前端可在需要时再触发刷新/下载。
+                    .streaming(true)
+                    // 由 OpenLovable 侧选择其默认可用模型，避免本地密钥/模型不匹配
+                    .aiModel(null)
+                    // 原型生成可能慢于纯计划路由，放宽超时避免过早失败
+                    .timeoutSeconds(180)
+                    .build();
+
+            OpenLovableGenerateResponse preview = openLovableService.generatePrototype(openLovableRequest);
+            if (preview == null || !preview.isSuccessful()) {
+                String message = preview != null && StringUtils.hasText(preview.getErrorMessage())
+                        ? preview.getErrorMessage()
+                        : "unknown";
+                return Result.error("500", "原型生成失败: " + message);
+            }
+
+            applyPrototypeToAppSpec(appSpec, preview);
+            appSpecService.updateById(appSpec);
+
+            return Result.success(Map.of(
+                    "success", true,
+                    "message", "原型生成已启动",
+                    "sandboxId", preview.getSandboxId(),
+                    "previewUrl", preview.getPreviewUrl(),
+                    "provider", preview.getProvider() != null ? preview.getProvider() : "e2b",
+                    "updatedAt", Instant.now().toString()
+            ));
+        } catch (IllegalArgumentException e) {
+            log.error("无效的AppSpec ID: {}", appSpecId, e);
+            return Result.error("400", "无效的AppSpec ID");
+        } catch (Exception e) {
+            log.error("自动生成原型失败: appSpecId={}", appSpecId, e);
+            return Result.error("500", "自动生成原型失败: " + e.getMessage());
+        }
+    }
+
     private static UUID coerceUuid(UUID value) {
         return value;
     }
 
-    private UUID getLoginUserIdOrNull() {
-        try {
-            String id = StpUtil.getLoginIdAsString();
-            return id != null ? UUID.fromString(id) : null;
-        } catch (Exception ignore) {
+    /**
+     * 从 AppSpec 中解析用户需求
+     *
+     * 是什么：从 AppSpec.specContent 读取 userRequirement。
+     * 做什么：兼容 specContent 缺失或类型不匹配时的空值情况。
+     * 为什么：原型生成依赖需求文本，避免因字段缺失导致 500。
+     */
+    private String resolveUserRequirement(AppSpecEntity appSpec) {
+        if (appSpec == null || appSpec.getSpecContent() == null) {
             return null;
         }
+        Object value = appSpec.getSpecContent().get("userRequirement");
+        if (!(value instanceof String requirement) || !StringUtils.hasText(requirement)) {
+            return null;
+        }
+        return requirement.trim();
+    }
+
+    /**
+     * 获取当前登录用户ID，支持在白名单路径中从token获取
+     *
+     * 由于 /v2/** 路径在 SaTokenConfig 中被排除认证，
+     * StpUtil.getLoginIdAsString() 可能返回 null。
+     * 此方法会尝试：
+     * 1. 先从 Sa-Token 登录状态获取
+     * 2. 如果失败，尝试从 Authorization header 中获取 token 并解析用户ID
+     *
+     * @return 用户ID，如果无法获取则返回 null
+     */
+    private UUID getLoginUserIdOrNull() {
+        try {
+            // 方式1：从 Sa-Token 登录状态获取
+            String id = StpUtil.getLoginIdAsString();
+            if (id != null) {
+                return UUID.fromString(id);
+            }
+        } catch (Exception ignore) {
+            // 继续尝试其他方式
+        }
+
+        try {
+            // 方式2：从 Authorization header 获取 token，然后查询用户ID
+            String token = StpUtil.getTokenValue();
+            if (token != null && !token.isEmpty()) {
+                Object loginId = StpUtil.getLoginIdByToken(token);
+                if (loginId != null) {
+                    log.debug("从 token 解析到用户ID: {}", loginId);
+                    return UUID.fromString(loginId.toString());
+                }
+            }
+        } catch (Exception e) {
+            log.debug("从 token 获取用户ID失败: {}", e.getMessage());
+        }
+
+        return null;
     }
 
     private UUID getSessionTenantIdOrNull() {
@@ -882,6 +1322,203 @@ public class PlanRoutingController {
     }
 
     /**
+     * 根据用户预选和需求内容确定技术栈类型（V2.0新增）
+     *
+     * 优先级：
+     * 1. 用户显式指定的 techStackHint（前端首页选择的技术栈）
+     * 2. 用户预选的 complexityHint（前端首页选择的复杂度分类）
+     * 3. 基于需求内容的智能推断
+     *
+     * @param complexityHint 用户预选的复杂度分类（SIMPLE/MEDIUM/COMPLEX/NEEDS_CONFIRMATION）
+     * @param techStackHint  用户预选的技术栈提示（H5+WebView/React+Supabase/React+SpringBoot/Kuikly）
+     * @param requirement    用户需求描述
+     * @return 确定的技术栈类型
+     */
+    private TechStackType determineTechStack(String complexityHint, String techStackHint, String requirement) {
+        TechStackType explicitTechStack = inferExplicitTechStackFromRequirement(requirement);
+        if (explicitTechStack != null) {
+            log.info("✅ 命中显式技术栈关键词: {}", explicitTechStack);
+            return explicitTechStack;
+        }
+
+        // 优先级1：用户显式指定的技术栈
+        if (StringUtils.hasText(techStackHint)) {
+            TechStackType fromCode = TechStackType.fromCode(techStackHint);
+            if (fromCode != null) {
+                log.info("✅ 使用用户指定的技术栈: techStackHint={} -> {}", techStackHint, fromCode);
+                return fromCode;
+            } else {
+                log.warn("⚠️ 技术栈匹配失败: techStackHint={}, 将尝试其他方式", techStackHint);
+            }
+        }
+
+        // 优先级2：用户预选的复杂度分类
+        if (StringUtils.hasText(complexityHint)) {
+            TechStackType fromComplexity = TechStackType.fromComplexityHint(complexityHint);
+            if (fromComplexity != null) {
+                log.info("✅ 根据复杂度分类确定技术栈: complexityHint={} -> {}", complexityHint, fromComplexity);
+                return fromComplexity;
+            }
+        }
+
+        // 优先级3：基于需求内容的智能推断
+        TechStackType inferred = inferTechStackFromRequirement(requirement);
+        log.info("✅ 基于需求内容推断技术栈: {}", inferred);
+        return inferred;
+    }
+
+    /**
+     * 基于需求文本中的显式技术栈关键词做快速判断
+     *
+     * 是什么：识别明确提到的技术栈名称（如 Spring Boot、Supabase）。
+     * 做什么：当用户需求已明确技术栈时，优先覆盖前端提示。
+     * 为什么：避免“需求明确 + 提示误选”导致的技术栈误判。
+     *
+     * @param requirement 用户需求描述
+     * @return 显式命中的技术栈类型，未命中返回 null
+     */
+    private TechStackType inferExplicitTechStackFromRequirement(String requirement) {
+        if (!StringUtils.hasText(requirement)) {
+            return null;
+        }
+
+        String lower = requirement.toLowerCase();
+
+        if (lower.contains("spring boot") || lower.contains("springboot") ||
+            lower.contains("spring-boot") || lower.contains("jeecg") ||
+            lower.contains("jeecgboot")) {
+            return TechStackType.REACT_SPRING_BOOT;
+        }
+
+        if (lower.contains("supabase") || lower.contains("superbase")) {
+            return TechStackType.REACT_SUPABASE;
+        }
+
+        if (lower.contains("h5") || lower.contains("webview") ||
+            lower.contains("web-view") || lower.contains("web view")) {
+            return TechStackType.H5_WEBVIEW;
+        }
+
+        if (lower.contains("kuikly")) {
+            return TechStackType.KUIKLY;
+        }
+
+        return null;
+    }
+
+    /**
+     * 验证技术栈一致性（V2.0新增）
+     *
+     * 检查 AppSpec 中保存的技术栈是否与预期一致，如果不一致则记录警告并使用用户原始选择
+     *
+     * @param appSpec         AppSpec实体
+     * @param expectedTechStack 预期的技术栈类型
+     */
+    private void validateTechStackConsistency(AppSpecEntity appSpec, TechStackType expectedTechStack) {
+        if (appSpec == null || appSpec.getMetadata() == null || expectedTechStack == null) {
+            return;
+        }
+
+        String actualTechStackType = (String) appSpec.getMetadata().get("techStackType");
+        if (actualTechStackType != null && !expectedTechStack.name().equals(actualTechStackType)) {
+            log.warn("⚠️ 技术栈不一致检测: appSpecId={}, expected={}, actual={}",
+                    appSpec.getId(), expectedTechStack.name(), actualTechStackType);
+            log.warn("⚠️ 将使用用户原始选择: {}", expectedTechStack.name());
+
+            // 修正为用户原始选择
+            Map<String, Object> metadata = new HashMap<>(appSpec.getMetadata());
+            metadata.put("techStackType", expectedTechStack.name());
+            metadata.put("techStackCode", expectedTechStack.getCode());
+            metadata.put("techStackDescription", expectedTechStack.getDescription());
+            metadata.put("techStackCorrectedAt", Instant.now().toString());
+            appSpec.setMetadata(metadata);
+            appSpecService.updateById(appSpec);
+
+            log.info("✅ 技术栈已修正: appSpecId={}, techStackType={}", appSpec.getId(), expectedTechStack.name());
+        } else {
+            log.debug("✅ 技术栈一致性验证通过: appSpecId={}, techStackType={}",
+                    appSpec.getId(), expectedTechStack.name());
+        }
+    }
+
+    /**
+     * 基于需求内容智能推断技术栈（V2.0新增）
+     *
+     * 规则：
+     * - 包含"相机/GPS/蓝牙/NFC/指纹"等原生能力关键词 → KUIKLY
+     * - 包含"高并发/微服务/企业级/复杂业务"等关键词 → REACT_SPRING_BOOT
+     * - 包含"H5/WebView"等关键词 → H5_WEBVIEW
+     * - 包含"静态/展示/落地页/宣传"等关键词 → H5_WEBVIEW
+     * - 默认 → REACT_SUPABASE（BaaS模式，适合大部分Web应用）
+     *
+     * @param requirement 用户需求描述
+     * @return 推断的技术栈类型
+     */
+    private TechStackType inferTechStackFromRequirement(String requirement) {
+        if (!StringUtils.hasText(requirement)) {
+            return TechStackType.REACT_SUPABASE;
+        }
+
+        String lower = requirement.toLowerCase();
+
+        // 原生能力关键词 → KUIKLY
+        if (lower.contains("相机") || lower.contains("摄像头") ||
+            lower.contains("gps") || lower.contains("定位") ||
+            lower.contains("蓝牙") || lower.contains("bluetooth") ||
+            lower.contains("nfc") || lower.contains("指纹") ||
+            lower.contains("人脸识别") || lower.contains("原生") ||
+            lower.contains("离线") || lower.contains("推送通知")) {
+            log.info("需求包含原生能力关键词，推断为 KUIKLY: {}", requirement.substring(0, Math.min(50, requirement.length())));
+            return TechStackType.KUIKLY;
+        }
+
+        // 企业级/复杂应用关键词 → REACT_SPRING_BOOT
+        if (lower.contains("高并发") || lower.contains("微服务") ||
+            lower.contains("企业级") || lower.contains("复杂业务") ||
+            lower.contains("erp") || lower.contains("crm") ||
+            lower.contains("后台管理") || lower.contains("权限管理") ||
+            lower.contains("spring boot") || lower.contains("springboot") ||
+            lower.contains("spring-boot") || lower.contains("jeecg") ||
+            lower.contains("jeecgboot") ||
+            lower.contains("多租户") || lower.contains("工作流") ||
+            lower.contains("城市大脑") || lower.contains("指挥中枢") ||
+            lower.contains("指挥中心") || lower.contains("多智能体") ||
+            lower.contains("态势") || lower.contains("调度")) {
+            log.info("需求包含企业级关键词，推断为 REACT_SPRING_BOOT: {}", requirement.substring(0, Math.min(50, requirement.length())));
+            return TechStackType.REACT_SPRING_BOOT;
+        }
+
+        // H5/WebView 关键词 → H5_WEBVIEW
+        if (lower.contains("h5") || lower.contains("webview") ||
+            lower.contains("web-view") || lower.contains("web view")) {
+            log.info("需求包含H5/WebView关键词，推断为 H5_WEBVIEW: {}", requirement.substring(0, Math.min(50, requirement.length())));
+            return TechStackType.H5_WEBVIEW;
+        }
+
+        boolean isPosterGenerator =
+            (lower.contains("海报") || lower.contains("poster")) &&
+            (lower.contains("生成") || lower.contains("一键生成") ||
+                lower.contains("生成器") || lower.contains("模板") ||
+                lower.contains("下载"));
+        if (isPosterGenerator) {
+            log.info("需求包含海报生成关键词，推断为 REACT_SPRING_BOOT: {}", requirement.substring(0, Math.min(50, requirement.length())));
+            return TechStackType.REACT_SPRING_BOOT;
+        }
+
+        // 简单静态页面关键词 → H5_WEBVIEW
+        if (lower.contains("静态") || lower.contains("纯展示") ||
+            lower.contains("落地页") || lower.contains("宣传页") ||
+            lower.contains("产品介绍") || lower.contains("简单网页")) {
+            log.info("需求包含静态页面关键词，推断为 H5_WEBVIEW: {}", requirement.substring(0, Math.min(50, requirement.length())));
+            return TechStackType.H5_WEBVIEW;
+        }
+
+        // 默认：BaaS模式，适合博客、商城、Dashboard等常见Web应用
+        log.info("默认使用 REACT_SUPABASE (BaaS模式): {}", requirement.substring(0, Math.min(50, requirement.length())));
+        return TechStackType.REACT_SUPABASE;
+    }
+
+    /**
      * 路由分支枚举（与 shared/types/plan-routing.types.ts 保持一致）
      */
     public enum RoutingBranch {
@@ -900,6 +1537,11 @@ public class PlanRoutingController {
 
     /**
      * 路由结果（与 shared/types/plan-routing.types.ts:1 对齐）
+     *
+     * V2.0新增字段：
+     * - techStackType: 技术栈类型（H5_WEBVIEW / REACT_SUPABASE / REACT_SPRING_BOOT / KUIKLY）
+     * - techStackCode: 技术栈代码（用于前端展示）
+     * - techStackDescription: 技术栈描述
      */
     @Data
     @Builder
@@ -919,6 +1561,24 @@ public class PlanRoutingController {
         private String nextAction;
         private boolean requiresUserConfirmation;
         private Map<String, Object> metadata;
+
+        /**
+         * 技术栈类型（V2.0新增）
+         * 取值：H5_WEBVIEW / REACT_SUPABASE / REACT_SPRING_BOOT / KUIKLY
+         */
+        private String techStackType;
+
+        /**
+         * 技术栈代码（V2.0新增）
+         * 取值：H5+WebView / React+Supabase / React+SpringBoot / Kuikly
+         */
+        private String techStackCode;
+
+        /**
+         * 技术栈描述（V2.0新增）
+         * 中文描述，用于前端展示
+         */
+        private String techStackDescription;
     }
 
     /**

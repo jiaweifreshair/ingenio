@@ -8,6 +8,7 @@ import { useCallback, useRef, useState } from 'react';
 import { getToken } from '@/lib/auth/token';
 import { getApiBaseUrl } from '@/lib/api/base-url';
 import { AnalysisProgressMessage } from './use-analysis-sse';
+import type { StepConfirmPayload } from '@/types/analysis-step-results';
 
 export interface InteractiveAnalysisState {
   sessionId: string | null;
@@ -273,7 +274,7 @@ export function useInteractiveAnalysisSse() {
     });
   }, []);
 
-  const confirmStep = useCallback(async (step: number) => {
+  const confirmStep = useCallback(async (step: number, payload?: StepConfirmPayload) => {
     if (!state.sessionId) return;
 
     const baseUrl = getApiBaseUrl();
@@ -286,7 +287,10 @@ export function useInteractiveAnalysisSse() {
           'Content-Type': 'application/json',
           ...(token ? { 'Authorization': token } : {})
         },
-        body: JSON.stringify({ step })
+        body: JSON.stringify({
+          step,
+          ...(payload?.selectedStyleId ? { selectedStyleId: payload.selectedStyleId } : {})
+        })
       });
 
       if (!response.ok) {

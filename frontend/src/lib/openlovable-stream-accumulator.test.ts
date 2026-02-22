@@ -4,6 +4,7 @@ import {
   applyOpenLovableSseMessage,
   getInitialOpenLovableAccumulationState,
   getOpenLovableCodeForApply,
+  shouldFinalizeOpenLovableStream,
 } from './openlovable-stream-accumulator';
 
 describe('openlovable-stream-accumulator', () => {
@@ -100,5 +101,23 @@ describe('openlovable-stream-accumulator', () => {
 
     expect(s1.streamedText).toBe(code);
     expect(getOpenLovableCodeForApply(s1)).toBe(code);
+  });
+
+  it('complete 未提供 generatedCode，但已有完整 <file> 时应允许终止流', () => {
+    const s0 = getInitialOpenLovableAccumulationState();
+    const code = '<file path="src/App.jsx">OK</file>';
+    const s1 = applyOpenLovableSseMessage(s0, { type: 'stream', text: code });
+    const completeMessage = { type: 'complete', generatedCode: '' };
+    const s2 = applyOpenLovableSseMessage(s1, completeMessage);
+
+    expect(shouldFinalizeOpenLovableStream(s1, s2, completeMessage)).toBe(true);
+  });
+
+  it('complete 未提供 generatedCode 且无有效代码时不应终止流', () => {
+    const s0 = getInitialOpenLovableAccumulationState();
+    const completeMessage = { type: 'complete', generatedCode: '' };
+    const s1 = applyOpenLovableSseMessage(s0, completeMessage);
+
+    expect(shouldFinalizeOpenLovableStream(s0, s1, completeMessage)).toBe(false);
   });
 });

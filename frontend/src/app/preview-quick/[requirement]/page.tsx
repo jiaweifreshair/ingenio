@@ -38,7 +38,8 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { getToken } from '@/lib/auth/token';
 import { TypewriterCode } from '@/components/ui/typewriter-code';
-import { parseFilesFromResponse, type GeneratedFile } from '@/lib/ai-stream-parser';
+import { parseFilesFromResponse, mergeGeneratedFiles, type GeneratedFile } from '@/lib/ai-stream-parser';
+import { buildExistingFilesPayload } from '@/lib/openlovable-existing-files';
 import {
   applyOpenLovableSseMessage,
   getInitialOpenLovableAccumulationState,
@@ -47,6 +48,11 @@ import {
 import { parseSseEvent, splitSseBuffer } from '@/lib/sse/sse-parser';
 import LivePreviewIframe from '@/components/code-generation/live-preview-iframe';
 import type { SandboxStatus } from '@/lib/sandbox/sandbox-manager';
+import {
+  shouldApplyScoutTemplateContext,
+  type ScoutTemplateSummary,
+} from '@/lib/scout/template-context';
+import { buildRepairContext } from '../repair-utils';
 
 /**
  * 验证URL是否合法
@@ -108,89 +114,6 @@ interface AIMessage {
 }
 
 /**
- * Scout 模板摘要结构
- * 用途：只抽取前端生成提示需要的字段，避免强依赖后端完整结构。
- */
-interface ScoutTemplateSummary {
-  name: string;
-  description: string;
-  matchScore?: number;
-  analysisReason: string;
-}
-
-/**
- * 青少年压力/心理领域关键词
- * 用途：当需求命中该领域时，阻断明显不相关的模板上下文注入。
- */
-const YOUTH_STRESS_KEYWORDS = [
-  '压力',
-  '情绪',
-  '心理',
-  '青少年',
-  '学生',
-  '班主任',
-  '心理老师',
-  '焦虑',
-  '抑郁',
-  'stress',
-  'mental',
-  'mood',
-  'emotion',
-  'counselor',
-  'teen',
-];
-
-/**
- * 旅行/住宿类模板关键词
- * 用途：识别与心理健康需求明显不匹配的模板场景。
- */
-const TRAVEL_TEMPLATE_KEYWORDS = [
-  '民宿',
-  '预订',
-  '住宿',
-  '酒店',
-  'airbnb',
-  'booking',
-  '房源',
-  '短租',
-  '旅行',
-  '旅游',
-];
-
-/**
- * 判断是否应用 Scout 模板上下文
- * 说明：当需求与模板领域明显不匹配时，跳过注入，避免模型跑偏。
- */
-function shouldApplyScoutTemplateContext(
-  requirementText: string,
-  template: ScoutTemplateSummary,
-): boolean {
-  const requirement = requirementText.toLowerCase();
-  const templateText = `${template.name} ${template.description} ${template.analysisReason}`.toLowerCase();
-  const isYouthStress = YOUTH_STRESS_KEYWORDS.some((keyword) => requirement.includes(keyword));
-  const isTravelTemplate = TRAVEL_TEMPLATE_KEYWORDS.some((keyword) => templateText.includes(keyword));
-
-  if (typeof template.matchScore === 'number' && template.matchScore < 0.55) {
-    return false;
-  }
-
-  if (isYouthStress && isTravelTemplate) {
-    return false;
-  }
-
-  if (isYouthStress) {
-    const overlap = YOUTH_STRESS_KEYWORDS.filter(
-      (keyword) => requirement.includes(keyword) && templateText.includes(keyword),
-    );
-    if (overlap.length === 0) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-/**
  * 生成阶段
  */
 type GenerationStage = 'init' | 'scouting' | 'sandbox' | 'generating' | 'complete' | 'error';
@@ -218,7 +141,6 @@ function getSyntaxLanguage(type: string): string {
 }
 
 export default function QuickPreviewPage() {
-  console.log('DEBUG: QuickPreviewPage mounted');
   const params = useParams();
   const router = useRouter();
   const requirement = decodeURIComponent(params.requirement as string);
@@ -273,11 +195,11 @@ export default function QuickPreviewPage() {
   /**
    * 解析并更新文件状态
    */
-  const updateFilesFromStream = useCallback((text: string) => {
+  const updateFilesFromStream = useCallback((text: string, shouldMerge: boolean) => {
     const { files, currentFile: current } = parseFilesFromResponse(text);
 
     if (files.length > 0) {
-      setGeneratedFiles(files);
+      setGeneratedFiles(prev => (shouldMerge ? mergeGeneratedFiles(prev, files) : files));
       // 自动选择第一个文件
       if (!selectedFile && files.length > 0) {
         setSelectedFile(files[0].path);
@@ -363,6 +285,91 @@ export default function QuickPreviewPage() {
   }, [stage, startTime, totalTime]);
 
   /**
+   * 智能修复请求封装。
+   *
+   * 是什么：统一调用 smart-refresh 接口的请求函数。
+   * 做什么：支持传入错误日志与用户修复意图。
+   * 为什么：避免修复请求触发全量重新生成。
+   */
+  const requestSmartRepair = async (payload: {
+    errorLog?: unknown;
+    userRequest?: string;
+    reason?: string;
+  }): Promise<{
+    fixed?: boolean;
+    filesCreated?: string[];
+    filesUpdated?: string[];
+    message?: string;
+  } | null> => {
+    const currentSandboxId = sandboxInfo?.sandboxId;
+    if (!currentSandboxId) {
+      return null;
+    }
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
+    const token = getToken();
+    const errorPayload = payload.errorLog instanceof Error
+      ? { message: payload.errorLog.message, stack: payload.errorLog.stack }
+      : payload.errorLog;
+    const existingFiles = buildExistingFilesPayload(generatedFiles);
+
+    const smartRefreshResponse = await fetch(`${API_BASE_URL}/v1/openlovable/sandbox/smart-refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': token } : {}),
+      },
+      body: JSON.stringify({
+        sandboxId: currentSandboxId,
+        model: 'deepseek-v3',
+        errorLog: errorPayload,
+        userRequest: payload.userRequest,
+        reason: payload.reason,
+        url: sandboxInfo?.url,
+        ...(existingFiles ? { existingFiles } : {}),
+      }),
+    });
+
+    if (!smartRefreshResponse.ok) {
+      throw new Error(`智能修复失败: ${smartRefreshResponse.statusText}`);
+    }
+
+    const smartRefreshResult = await smartRefreshResponse.json();
+    if (!smartRefreshResult?.success) {
+      throw new Error(smartRefreshResult?.message || '智能修复失败');
+    }
+
+    return smartRefreshResult.data ?? smartRefreshResult;
+  };
+
+  /**
+   * 重启 Vite 开发服务器。
+   *
+   * 是什么：统一封装重启接口调用。
+   * 做什么：在修复后刷新预览。
+   * 为什么：确保修复代码被沙箱服务重新加载。
+   */
+  const restartViteServer = async (sandboxId?: string | null): Promise<void> => {
+    if (!sandboxId) {
+      throw new Error('缺少 sandboxId，无法重启预览服务');
+    }
+    const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
+    const token = getToken();
+
+    const response = await fetch(`${API_BASE_URL}/v1/openlovable/restart-vite`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { 'Authorization': token } : {}),
+      },
+      body: JSON.stringify({ sandboxId }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`重启失败: ${response.statusText}`);
+    }
+  };
+
+  /**
    * 🆕 重新加载预览（智能修复 + 重启Vite服务器）
    * 1. 调用 smart-refresh API 检测并自动修复代码错误
    * 2. 重启 Vite 服务器
@@ -371,60 +378,44 @@ export default function QuickPreviewPage() {
   const reloadPreview = async (): Promise<boolean> => {
     try {
       const currentSandboxId = sandboxInfo?.sandboxId;
-      const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
-      const token = getToken();
 
       // Step 1: 智能修复（自动检测并修复代码错误）
       addLog(`🔍 正在检测代码错误... (sandbox: ${currentSandboxId || 'unknown'})`);
       
       try {
-        const smartRefreshResponse = await fetch(`${API_BASE_URL}/v1/openlovable/sandbox/smart-refresh`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(token ? { 'Authorization': token } : {}),
-          },
-          body: JSON.stringify({
-            sandboxId: currentSandboxId,
-            model: 'deepseek-v3',  // 使用稳定模型
-            errorLog: runtimeError, // 🆕 将捕获的错误日志传给后端
-            url: sandboxInfo?.url,  // 🆕 传递当前沙箱 URL 供后端读取文件
-          }),
+        const smartRefreshResult = await requestSmartRepair({
+          errorLog: runtimeError,
+          reason: 'runtime-error',
         });
 
-        if (smartRefreshResponse.ok) {
-          const smartRefreshResult = await smartRefreshResponse.json();
-          
-          if (smartRefreshResult.success && smartRefreshResult.data) {
-            // 如果修复成功，清除错误状态
-            if (smartRefreshResult.data.fixed) {
-               setRuntimeError(null);
-            }
-            const { fixed, filesCreated, filesUpdated, message } = smartRefreshResult.data;
-            
-            if (fixed) {
-              const createdCount = Array.isArray(filesCreated) ? filesCreated.length : 0;
-              const updatedCount = Array.isArray(filesUpdated) ? filesUpdated.length : 0;
-              
-              addLog(`🛠️ AI 自动修复完成: ${createdCount} 个文件创建, ${updatedCount} 个文件更新`);
-              
-              if (createdCount > 0) {
-                addLog(`   📁 创建: ${(filesCreated as string[]).join(', ')}`);
-              }
-              if (updatedCount > 0) {
-                addLog(`   ✏️ 更新: ${(filesUpdated as string[]).join(', ')}`);
-              }
-              
-              toast({
-                title: 'AI 自动修复',
-                description: message || `已修复 ${createdCount + updatedCount} 个文件`,
-              });
-            } else {
-              addLog('✅ 代码检测通过，无需修复');
-            }
+        if (smartRefreshResult) {
+          if (smartRefreshResult.fixed) {
+            setRuntimeError(null);
           }
-        } else {
-          addLog('⚠️ 智能修复跳过（服务不可用）');
+          const createdCount = Array.isArray(smartRefreshResult.filesCreated)
+            ? smartRefreshResult.filesCreated.length
+            : 0;
+          const updatedCount = Array.isArray(smartRefreshResult.filesUpdated)
+            ? smartRefreshResult.filesUpdated.length
+            : 0;
+
+          if (smartRefreshResult.fixed) {
+            addLog(`🛠️ AI 自动修复完成: ${createdCount} 个文件创建, ${updatedCount} 个文件更新`);
+
+            if (createdCount > 0) {
+              addLog(`   📁 创建: ${(smartRefreshResult.filesCreated as string[]).join(', ')}`);
+            }
+            if (updatedCount > 0) {
+              addLog(`   ✏️ 更新: ${(smartRefreshResult.filesUpdated as string[]).join(', ')}`);
+            }
+
+            toast({
+              title: 'AI 自动修复',
+              description: smartRefreshResult.message || `已修复 ${createdCount + updatedCount} 个文件`,
+            });
+          } else {
+            addLog('✅ 代码检测通过，无需修复');
+          }
         }
       } catch (smartRefreshErr) {
         // 智能修复失败不阻塞后续流程
@@ -433,21 +424,7 @@ export default function QuickPreviewPage() {
 
       // Step 2: 重启 Vite 服务器
       addLog(`🔄 正在重启开发服务器...`);
-      
-      const response = await fetch(`${API_BASE_URL}/v1/openlovable/restart-vite`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { 'Authorization': token } : {}),
-        },
-        body: JSON.stringify({
-          sandboxId: currentSandboxId,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`重启失败: ${response.statusText}`);
-      }
+      await restartViteServer(currentSandboxId);
 
       addLog('✅ 开发服务器重启成功');
       
@@ -477,6 +454,7 @@ export default function QuickPreviewPage() {
   const startQuickGeneration = async () => {
     try {
       addLog('🚀 启动快速Web预览生成...');
+      scoutContextRef.current = '';
       
       // Step 0: G3 Scout 智能侦察
       setStage('scouting');
@@ -571,7 +549,7 @@ export default function QuickPreviewPage() {
       setCurrentFile(null);
       addLog('🤖 AI正在生成代码（流式输出）...');
 
-      const responseToApply = await generateCodeStream(requirement, 'pending', scoutContextRef.current);
+      const responseToApply = await generateCodeStream(requirement, 'pending', scoutContextRef.current, { isEdit: false });
 
       // Step 2: 代码生成完成后创建沙箱
       setStage('sandbox');
@@ -691,8 +669,17 @@ export default function QuickPreviewPage() {
 
   /**
    * SSE流式生成代码
+   *
+   * 是什么：通过后端 SSE 接口生成代码内容。
+   * 做什么：支持传入编辑模式以保持既有代码结构。
+   * 为什么：让“用户修复/微调”尽量走增量编辑而非全量重生成。
    */
-  const generateCodeStream = async (userMessage: string, sandboxId: string, templateContext?: string): Promise<string> => {
+  const generateCodeStream = async (
+    userMessage: string,
+    sandboxId: string,
+    templateContext?: string,
+    options?: { isEdit?: boolean }
+  ): Promise<string> => {
     return new Promise((resolve, reject) => {
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080/api';
       const apiUrl = `${API_BASE_URL}/v1/openlovable/generate/stream`;
@@ -710,13 +697,16 @@ export default function QuickPreviewPage() {
       const isRecord = (value: unknown): value is Record<string, unknown> =>
         !!value && typeof value === 'object' && !Array.isArray(value);
       
-      const requestBody: { userMessage: string; sandboxId: string; templateContext?: string } = {
+      const requestBody: { userMessage: string; sandboxId: string; templateContext?: string; isEdit?: boolean } = {
         userMessage,
         sandboxId,
       };
       
       if (templateContext) {
         requestBody.templateContext = templateContext;
+      }
+      if (options?.isEdit) {
+        requestBody.isEdit = true;
       }
 
       fetch(apiUrl, {
@@ -740,6 +730,8 @@ export default function QuickPreviewPage() {
           const decoder = new TextDecoder();
           let buffer = '';
 
+          const shouldMergeFiles = Boolean(options?.isEdit);
+
           const applyAndUpdateState = (data: AIMessage) => {
             const nextState = applyOpenLovableSseMessage(accumulationState, data);
             if (
@@ -748,7 +740,7 @@ export default function QuickPreviewPage() {
             ) {
               accumulationState = nextState;
               setStreamedCode(accumulationState.streamedText);
-              updateFilesFromStream(accumulationState.streamedText);
+              updateFilesFromStream(accumulationState.streamedText, shouldMergeFiles);
             }
           };
 
@@ -834,7 +826,7 @@ export default function QuickPreviewPage() {
                   }
 
                   // 最终解析文件（无论是否部署沙箱，都确保文件视图可用）
-                  updateFilesFromStream(responseToApply);
+                  updateFilesFromStream(responseToApply, shouldMergeFiles);
                   setCurrentFile(null);
 
                   // sandboxId='pending'：仅生成代码，不做 apply（用于先生成后创建沙箱的流程）
@@ -845,9 +837,8 @@ export default function QuickPreviewPage() {
                   }
 
                   // 🔍 调试日志：记录发送到apply API的内容长度
-                  console.log('[preview-quick] responseToApply length:', responseToApply.length);
-                  console.log('[preview-quick] responseToApply preview:', responseToApply.substring(0, 500));
                   addLog(`📝 正在将代码应用到Sandbox... (响应长度: ${responseToApply.length} 字符)`);
+                  const existingFilesPayload = shouldMergeFiles ? buildExistingFilesPayload(generatedFiles) : null;
 
                   const applyResponse = await fetch(`${API_BASE_URL}/v1/openlovable/apply`, {
                     method: 'POST',
@@ -857,7 +848,9 @@ export default function QuickPreviewPage() {
                     },
                     body: JSON.stringify({
                       sandboxId,
-                      response: responseToApply
+                      response: responseToApply,
+                      ...(shouldMergeFiles ? { mergeMode: 'patch' } : {}),
+                      ...(existingFilesPayload ? { existingFiles: existingFilesPayload } : {}),
                     })
                   });
 
@@ -954,39 +947,109 @@ export default function QuickPreviewPage() {
   };
 
   /**
+   * 预览加载失败处理
+   *
+   * 是什么：处理 iframe 加载失败或白屏场景。
+   * 做什么：记录日志并自动切换到代码视图。
+   * 为什么：避免用户在白屏时无从定位问题。
+   */
+  const handlePreviewError = useCallback((previewError: Error) => {
+    setRuntimeError(previewError);
+    addLog(`❌ 预览加载失败: ${previewError.message}`);
+    setViewMode('code');
+  }, [addLog]);
+
+  /**
+   * 运行时错误处理
+   *
+   * 是什么：接收沙箱运行时错误回调。
+   * 做什么：记录错误并切换到代码视图便于排查。
+   * 为什么：确保错误发生时不再停留白屏。
+   */
+  const handleRuntimeError = useCallback((previewError: Error) => {
+    setRuntimeError(previewError);
+    addLog(`❌ 运行时错误: ${previewError.message}`);
+    setViewMode('code');
+  }, [addLog]);
+
+  /**
    * 发送聊天消息（迭代修改）
    */
   const sendMessage = async () => {
     if (!currentMessage.trim() || !sandboxInfo) return;
 
     try {
-      addLog(`💬 用户: ${currentMessage}`);
-      let userMsg = currentMessage;
-
-      // Intent Recognition: 如果处于错误状态，自动注入错误上下文
-      if (stage === 'error' && error) {
-        addLog(`🤖 意图识别: 修复模式 (已自动注入错误上下文)`);
-        userMsg = `Context: The previous code generation or application failed with the following error: "${error}".\n\nUser Request: ${currentMessage}\n\nPlease fix the code based on the error and the user's request. Ensure the code is complete and correct.`;
-      }
-
+      const message = currentMessage;
+      const repairContext = buildRepairContext({
+        stage,
+        error,
+        runtimeError,
+        message,
+      });
+      addLog(`💬 用户: ${message}`);
       setCurrentMessage('');
       setStreamedCode('');
       setCurrentFile(null);
       setError(null);
+
+      if (repairContext) {
+        addLog(`🤖 意图识别: 修复模式 (${repairContext.reason})`);
+        setStage('generating');
+
+        const smartRefreshResult = await requestSmartRepair({
+          errorLog: repairContext.errorLog,
+          userRequest: repairContext.userRequest,
+          reason: repairContext.reason,
+        });
+
+        if (smartRefreshResult?.fixed) {
+          setRuntimeError(null);
+        }
+
+        if (smartRefreshResult) {
+          const createdCount = Array.isArray(smartRefreshResult.filesCreated)
+            ? smartRefreshResult.filesCreated.length
+            : 0;
+          const updatedCount = Array.isArray(smartRefreshResult.filesUpdated)
+            ? smartRefreshResult.filesUpdated.length
+            : 0;
+
+          if (smartRefreshResult.fixed) {
+            addLog(`🛠️ AI 修复完成: ${createdCount} 个文件创建, ${updatedCount} 个文件更新`);
+          } else {
+            addLog('✅ 代码检测通过，无需修复');
+          }
+        }
+
+        addLog('🔄 正在重启开发服务器...');
+        await restartViteServer(sandboxInfo.sandboxId);
+        addLog('✅ 开发服务器重启成功');
+
+        toast({
+          title: '修复完成',
+          description: '已完成修复并刷新预览',
+        });
+
+        setStage('complete');
+        setPreviewKey(prev => prev + 1);
+        return;
+      }
+
       setStage('generating');
+      await generateCodeStream(message, sandboxInfo.sandboxId, undefined, { isEdit: true });
 
-      await generateCodeStream(userMsg, sandboxInfo.sandboxId);
+      toast({
+        title: '修改成功',
+        description: '代码已更新，刷新预览查看效果',
+      });
 
-	      toast({
-	        title: '修改成功',
-	        description: '代码已更新，刷新预览查看效果',
-	      });
+      // 通过重挂载预览组件强制刷新
+      setPreviewKey(prev => prev + 1);
 
-	      // 通过重挂载预览组件强制刷新
-	      setPreviewKey(prev => prev + 1);
-
-	    } catch (error) {
+    } catch (error) {
       console.error('发送消息失败:', error);
+      setStage('error');
+      setError(error instanceof Error ? error.message : '未知错误');
       toast({
         title: '修改失败',
         description: error instanceof Error ? error.message : '未知错误',
@@ -1134,7 +1197,9 @@ export default function QuickPreviewPage() {
 
           <div className="flex items-center gap-2">
             {/* 状态指示器 */}
-            <div className={cn(
+            <div
+              data-testid="preview-quick-status"
+              className={cn(
               'px-3 py-1 rounded-full text-sm font-medium flex items-center gap-2',
               stage === 'init' && 'bg-gray-200 text-gray-700',
               stage === 'scouting' && 'bg-orange-100 text-orange-700',
@@ -1238,7 +1303,8 @@ export default function QuickPreviewPage() {
                       '正在加载预览...'
                     }
                     onRefresh={reloadPreview}
-                    onRuntimeError={setRuntimeError}
+                    onRuntimeError={handleRuntimeError}
+                    onPreviewError={handlePreviewError}
                     className="h-full border-0 rounded-none"
                     title="应用预览"
                     showDeviceSwitcher={true}
@@ -1430,10 +1496,3 @@ export default function QuickPreviewPage() {
     </div>
   );
 }
-          // ... existing code ...
-        // 查找 <LivePreviewIframe ... /> 并添加 onRuntimeError={setRuntimeError}
-        // 由于无法确定 render 部分的行号，这里可能通过 MultiReplace 比较困难。
-        // 将尝试使用宽泛的上下文匹配。
-        // 鉴于 page.tsx 通常很大，我先不在此处替换 render，而是先确保逻辑部分正确。
-        // 实际上 LivePreviewIframe 的调用在 JSX 中。
-        // 我需要再读取一次 page.tsx 的后半部分来定位 JSX。

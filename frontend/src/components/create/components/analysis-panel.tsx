@@ -31,6 +31,8 @@ export interface AnalysisPanelProps {
   requirement: string;
   /** 选中的AI模型 */
   selectedModel: UniaixModel;
+  /** Step5 风格确认回调（用于原型生成） */
+  onStyleSelected?: (styleCode: string) => void;
   /** 当前阶段 */
   currentPhase: PhaseType;
 
@@ -62,6 +64,7 @@ export interface AnalysisPanelProps {
 export function AnalysisPanel({
   requirement,
   selectedModel,
+  onStyleSelected,
   currentPhase,
   messages,
   isConnected,
@@ -109,6 +112,8 @@ export function AnalysisPanel({
             currentPhase={currentPhase}
             onConfirmPlan={onConfirmPlan}
             onModifyPlan={onModifyPlan}
+            onStyleSelected={onStyleSelected}
+            showStyleSelectionInPlan={true}
           />
         </div>
       </div>

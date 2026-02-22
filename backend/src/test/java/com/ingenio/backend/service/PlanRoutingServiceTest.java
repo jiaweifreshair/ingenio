@@ -3,9 +3,11 @@ package com.ingenio.backend.service;
 import com.ingenio.backend.common.response.Result;
 import com.ingenio.backend.controller.PlanRoutingController;
 import com.ingenio.backend.mapper.UserMapper;
+import com.ingenio.backend.mapper.GenerationTaskMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
+import com.ingenio.backend.service.VersionSnapshotService;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -34,8 +36,12 @@ class PlanRoutingServiceTest {
         OpenLovableService openLovableService = Mockito.mock(OpenLovableService.class);
         UserMapper userMapper = Mockito.mock(UserMapper.class);
         ProjectService projectService = Mockito.mock(ProjectService.class);
+        GenerationTaskMapper generationTaskMapper = Mockito.mock(GenerationTaskMapper.class);
+        VersionSnapshotService versionSnapshotService = Mockito.mock(VersionSnapshotService.class);
         com.ingenio.backend.service.NLRequirementAnalyzer nlRequirementAnalyzer = Mockito
                 .mock(com.ingenio.backend.service.NLRequirementAnalyzer.class);
+        com.ingenio.backend.service.g3.G3OrchestratorService g3OrchestratorService = Mockito
+                .mock(com.ingenio.backend.service.g3.G3OrchestratorService.class);
 
         PlanRoutingController controller = new PlanRoutingController(
                 appSpecService,
@@ -43,7 +49,10 @@ class PlanRoutingServiceTest {
                 openLovableService,
                 userMapper,
                 projectService,
-                nlRequirementAnalyzer);
+                generationTaskMapper,
+                versionSnapshotService,
+                nlRequirementAnalyzer,
+                g3OrchestratorService);
 
         Mockito.when(appSpecService.getById(Mockito.any())).thenReturn(null);
 

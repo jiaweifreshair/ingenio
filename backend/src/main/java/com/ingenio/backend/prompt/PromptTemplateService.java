@@ -94,6 +94,24 @@ public class PromptTemplateService {
         return load(promptProperties.getCoach().getFixPomXml());
     }
 
+    /**
+     * 读取 GEO E-E-A-T 审校提示词模板。
+     *
+     * 是什么：GEO 工作台审校阶段的提示词模板读取入口。
+     * 做什么：从配置路径加载审校模板内容。
+     * 为什么：提示词需要快速迭代，必须可配置与可版本化管理。
+     */
+    public String geoReviewTemplate() {
+        return load(promptProperties.getGeo().getReview());
+    }
+
+    /**
+     * 读取 GEO 关键词挖掘提示词模板。
+     */
+    public String geoKeywordMiningTemplate() {
+        return load(promptProperties.getGeo().getKeywords());
+    }
+
     private String load(String location) {
         if (location == null || location.isBlank()) {
             throw new IllegalStateException("提示词路径不能为空");

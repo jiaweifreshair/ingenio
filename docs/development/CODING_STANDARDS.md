@@ -1406,8 +1406,8 @@ user.setPassword(request.getPassword());
 String encodedPassword = passwordEncoder.encode(request.getPassword());
 user.setPasswordHash(encodedPassword);
 
-// ❌ 错误：API Key硬编码
-String apiKey = "sk-1234567890abcdef";
+// ❌ 错误：凭证硬编码
+String credential = "hardcoded-sensitive-value";
 
 // ✅ 正确：从环境变量读取
 @Value("${deepseek.api-key}")
