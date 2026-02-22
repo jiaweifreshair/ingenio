@@ -30,6 +30,18 @@ Ingenio (妙构) 是一个颠覆性的 AI 编程平台。不同于市面上仅�
 
 ---
 
+## 📸 产品截图
+
+<div align="center">
+
+### 首页 - Smart Builder
+
+<img src="docs/screenshots/homepage.png" alt="Ingenio 首页" width="100%" />
+
+</div>
+
+---
+
 ## ✨ 核心特性
 
 ### 🎮 G3 红蓝博弈引擎 (The G3 Engine)
